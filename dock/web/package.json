@@ -1,0 +1,28 @@
+{
+  "name": "mydock-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Interface tactile du dock MyDock (1024x600, thème sombre, Svelte 5)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json --threshold warning",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "shots": "MYDOCK_SHOTS=1 playwright test"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@lucide/svelte": "^1.64.0",
+    "@playwright/test": "1.63.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "22.20.5",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.7",
+    "typescript": "6.0.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}
