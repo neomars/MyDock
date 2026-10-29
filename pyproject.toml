@@ -1,0 +1,33 @@
+# Configuration des outils de développement (ce fichier n'est pas un paquet :
+# les paquets installables sont common/, agent/ et dock/server/).
+
+[tool.pytest.ini_options]
+testpaths = ["common/tests", "agent/tests", "dock/server/tests", "scripts/tests"]
+addopts = "-ra --import-mode=importlib"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "slow: tests longs (mesure du CPU au repos, etc.), lancés par défaut mais désactivables avec -m 'not slow'",
+]
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["dock/web", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "RUF", "PT"]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # le français (apostrophes, espaces insécables) est voulu
+    "SIM105",                      # contextlib.suppress moins lisible que try/except ici
+    "E501",                        # le formateur gère la mise en page ; les messages FR restent entiers
+    "ASYNC109",                    # paramètres « timeout » assumés (on utilise asyncio.timeout)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mydock_agent", "mydock_common", "mydock_dock"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["B011", "RUF012"]
+"**/testing.py" = ["ASYNC109", "ASYNC110"]  # aides de test : attente active assumée

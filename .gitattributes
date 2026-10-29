@@ -1,0 +1,5 @@
+# L'interface compilée est commitée (pas de Node sur le Pi) : on la replie dans les diffs.
+dock/web/dist/** linguist-generated=true -diff
+* text=auto eol=lf
+*.png binary
+*.woff2 binary

@@ -1,0 +1,32 @@
+[Unit]
+Description=MyDock - serveur du dock tactile
+Documentation=https://github.com/neomars/MyDock
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mydock
+Group=mydock
+ExecStart=@VENV@/bin/mydock-dock run --config @ETC@/dock.toml
+Restart=always
+RestartSec=2
+# Ce service tient le jeton de l'agent : on le garde le plus isolé possible.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=@STATE@ @ETC@
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

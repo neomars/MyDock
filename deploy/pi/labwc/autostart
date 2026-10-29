@@ -1,0 +1,2 @@
+# Géré par MyDock : le seul programme lancé est le navigateur du dock, en kiosque.
+@SRC@/deploy/pi/kiosk-browser.sh &

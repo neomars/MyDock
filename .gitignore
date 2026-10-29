@@ -1,0 +1,26 @@
+# Environnements et caches
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+node_modules/
+dock/web/test-results/
+dock/web/playwright-report/
+dock/web/.vite/
+
+# Secrets et configuration locale : ne jamais committer.
+# Les vrais fichiers vivent hors du dépôt (~/.config/mydock/agent.toml sur le PC,
+# /etc/mydock/dock.toml sur le Pi) en droits 600.
+agent.toml
+dock.toml
+*.local.toml
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*

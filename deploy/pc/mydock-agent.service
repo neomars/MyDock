@@ -1,0 +1,21 @@
+[Unit]
+Description=MyDock - agent de pilotage du PC (dock tactile)
+Documentation=https://github.com/neomars/MyDock
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@VENV@/bin/mydock-agent run
+Restart=on-failure
+RestartSec=3
+# L'agent reste discret : le PC garde la priorité.
+Nice=5
+# Durcissement sans gêner le lancement des applications de l'utilisateur.
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=graphical-session.target
