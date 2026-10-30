@@ -144,6 +144,61 @@ export interface MusicData {
   unavailable?: string
 }
 
+/** Famille d'un périphérique audio, pour choisir son icône. */
+export type AudioKind =
+  | 'speakers'
+  | 'headphones'
+  | 'bluetooth'
+  | 'hdmi'
+  | 'usb'
+  | 'microphone'
+  | 'line'
+  | 'other'
+
+/** Une sortie (haut-parleurs, casque, HDMI…) ou une entrée (micro). `id` est son nom stable côté PC. */
+export interface AudioDevice {
+  id: string
+  /** Nom français affiché ; `detail` garde le nom que donne l'appareil quand il diffère. */
+  label: string
+  detail: string | null
+  kind: AudioKind
+  /** % du canal le plus fort ; peut dépasser 100 si le volume a été amplifié ailleurs. */
+  volume: number | null
+  muted: boolean
+}
+
+/** Une application qui joue du son (un flux de lecture). */
+export interface AudioApp {
+  id: string
+  name: string
+  volume: number
+  muted: boolean
+  /** Faux : le flux existe mais est en pause. */
+  playing: boolean
+  /** Identifiant de la sortie sur laquelle elle joue. */
+  sink: string | null
+}
+
+/** Une application qui écoute un micro en ce moment. */
+export interface AudioRecorder {
+  id: string
+  name: string
+  source: string
+}
+
+/** Thème « audio » (agent) : le son du PC. */
+export interface AudioData {
+  /** Volume maximal que le dock accorde (en %). */
+  max: number
+  default_sink: string | null
+  default_source: string | null
+  sinks: AudioDevice[]
+  sources: AudioDevice[]
+  apps: AudioApp[]
+  recorders: AudioRecorder[]
+  unavailable?: string
+}
+
 export interface WolInfo {
   mac: string | null
   source: 'auto' | 'manual' | null

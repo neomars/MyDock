@@ -19,7 +19,7 @@ const HOST = {
   kernel: '7.0.0-38-generic',
   arch: 'x86_64',
   python: '3.14.4',
-  agent: { version: '0.2.0', proto: 1, demo: false },
+  agent: { version: '0.3.0', proto: 1, demo: false },
   boot_time: Math.floor(Date.now() / 1000) - 3 * 3600,
   session: { type: 'wayland', desktop: 'GNOME' },
   interfaces: [],
@@ -78,13 +78,13 @@ async function mockDock(
 
   await page.routeWebSocket(/\/ws$/, (ws) => {
     current = ws
-    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.2.0' } }))
+    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.3.0' } }))
     snap(ws, 'link', {
       state: 'connected', detail: 'Connecté.', since: Date.now(), attempt: 0, next_retry_at: null,
-      resolved: '127.0.0.1', agent: { version: '0.2.0', demo: false }, host: '127.0.0.1', port: 8765,
+      resolved: '127.0.0.1', agent: { version: '0.3.0', demo: false }, host: '127.0.0.1', port: 8765,
     }) // prettier-ignore
     snap(ws, 'dock', {
-      version: '0.2.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
+      version: '0.3.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
       pc: { host: '127.0.0.1', port: 8765, token_set: true, name: 'portable' },
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
     }) // prettier-ignore
@@ -356,4 +356,172 @@ test('Système : un refus de l’agent est affiché tel quel', async ({ page, st
   await page.getByTestId('kill-7').tap()
   await page.getByTestId('confirm-ok').tap()
   await expect(page.getByTestId('toast')).toContainText('ce n’est plus le même processus')
+})
+
+// --- Son -----------------------------------------------------------------------------------------
+
+function audioDevice(id: string, label: string, extra: Record<string, unknown> = {}) {
+  return { id, label, detail: null, kind: 'speakers', volume: 50, muted: false, ...extra }
+}
+
+function audioData(extra: Record<string, unknown> = {}) {
+  return {
+    max: 100,
+    default_sink: 'sortie',
+    default_source: 'micro',
+    sinks: [audioDevice('sortie', 'Haut-parleurs')],
+    sources: [audioDevice('micro', 'Micro intégré', { kind: 'microphone', volume: 70 })],
+    apps: [],
+    recorders: [],
+    ...extra,
+  }
+}
+
+const audioApp = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+  id, name, volume: 60, muted: false, playing: true, sink: 'sortie', ...extra,
+}) // prettier-ignore
+
+const refuse = (msg: string) => ({ ok: false, r: undefined, e: { code: 'failed', msg } })
+
+test('Son : pactl absent ou serveur de son arrêté, le message de l’agent est affiché', async ({ page, stack }) => {
+  const message = 'pactl est introuvable : installe le paquet pulseaudio-utils (sudo apt install pulseaudio-utils). Nouvelle tentative dans 5 s.'
+  await mockDock(page, { audio: { unavailable: message } }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('sound-unavailable')).toContainText('Son indisponible')
+  await expect(page.getByTestId('sound-unavailable')).toContainText('pulseaudio-utils')
+  await expect(page.getByTestId('sound-page')).toHaveCount(0)
+  await shot(page, '05-son-indisponible', 'c')
+})
+
+test('Son : ni sortie, ni micro, ni application : trois explications, rien de cassé', async ({ page, stack }) => {
+  await mockDock(page, { audio: audioData({ default_sink: null, default_source: null, sinks: [], sources: [] }) }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('out-none')).toContainText('Aucune sortie audio détectée')
+  await expect(page.getByTestId('mic-none')).toContainText('Aucun micro détecté')
+  await expect(page.getByTestId('apps-empty')).toContainText('Aucune application ne joue de son')
+  await expect(page.getByTestId('out-slider')).toHaveCount(0)
+  await noPageScroll(page)
+  await shot(page, '06-son-vide', 'c')
+})
+
+test('Son : un volume amplifié ailleurs s’affiche tel quel et le curseur reste en bout de course', async ({ page, stack }) => {
+  await mockDock(page, { audio: audioData({ sinks: [audioDevice('sortie', 'Haut-parleurs', { volume: 130 })] }) }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('out-value')).toHaveText(/^130\s%$/)
+  await expect(page.getByTestId('out-slider')).toHaveAttribute('aria-valuenow', '130')
+  const track = (await page.getByTestId('out-slider').boundingBox())!
+  const thumb = (await page.getByTestId('out-slider').locator('.thumb').boundingBox())!
+  expect(thumb.x + thumb.width / 2).toBeCloseTo(track.x + track.width - 19, 0) // bout de course, pas au-delà
+  await shot(page, '08-son-amplifie', 'c')
+})
+
+test('Son : beaucoup d’applications, des noms longs et des homonymes : la liste défile dans sa carte', async ({ page, stack }) => {
+  const apps = [
+    audioApp('1', 'Spotify'),
+    audioApp('2', 'Brave'),
+    audioApp('3', 'Brave', { playing: false }),
+    audioApp('4', 'Une application au nom vraiment extraordinairement long pour un écran de sept pouces'),
+    ...Array.from({ length: 10 }, (_, i) => audioApp(String(10 + i), `Lecteur ${i + 1}`)),
+  ]
+  await mockDock(page, { audio: audioData({ apps }) }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('apps-card')).toContainText('Applications (14)')
+  await expect(page.getByTestId('app-2-name')).toHaveText('Brave 1')
+  await expect(page.getByTestId('app-3-name')).toHaveText('Brave 2')
+  await noPageScroll(page)
+  const list = page.locator('[data-testid="apps-card"] .list')
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  await shot(page, '07-son-beaucoup-d-applications', 'c')
+  // Le nom trop long est coupé, il ne pousse ni le curseur ni le bouton hors de la ligne.
+  const row = (await page.getByTestId('app-4').boundingBox())!
+  const mute = (await page.getByTestId('app-4-mute').boundingBox())!
+  expect(mute.x + mute.width).toBeLessThanOrEqual(row.x + row.width + 1)
+  // Au bout de la liste on atteint la dernière application, et la page n'a pas bougé.
+  await list.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  await expect(page.getByTestId('app-19')).toBeInViewport()
+  await noPageScroll(page)
+})
+
+test('Son : glisser un curseur n’envoie que quelques réglages, et le dernier est la valeur finale', async ({ page, stack }) => {
+  const mock = await mockDock(page, { audio: audioData() }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  const box = (await page.getByTestId('out-slider').boundingBox())!
+  const y = box.y + box.height / 2
+  const at = (value: number) => box.x + 19 + (box.width - 38) * (value / 100)
+  await page.mouse.move(at(10), y)
+  await page.mouse.down()
+  await page.mouse.move(at(90), y, { steps: 40 })
+  await page.mouse.up()
+  await page.waitForTimeout(500)
+  const sent = mock.acts.filter((a) => a.a === 'audio.set_volume')
+  expect(sent.length).toBeGreaterThanOrEqual(2)
+  expect(sent.length).toBeLessThanOrEqual(8) // au plus dix par seconde, pas une salve de 40
+  expect(sent.at(-1)!.p).toEqual({ kind: 'sink', id: 'sortie', percent: 90 })
+  expect(sent.map((a) => (a.p.percent as number))).toEqual([...sent.map((a) => a.p.percent as number)].sort((x, y) => x - y))
+})
+
+test('Son : un refus du PC rétablit l’affichage et le dit à l’écran', async ({ page, stack }) => {
+  await mockDock(page, { audio: audioData() }, { startPage: 'sound', onAct: (act) => (act.a.startsWith('audio.') ? refuse('Le serveur de son a refusé la commande.') : undefined) })
+  await page.goto(stack.url)
+  await page.getByTestId('out-mute').tap()
+  await expect(page.getByTestId('toast')).toContainText('Le serveur de son a refusé la commande.')
+  await expect(page.getByTestId('out-mute')).toHaveAttribute('aria-pressed', 'false') // l'affichage provisoire est annulé
+  await expect(page.getByTestId('out-value')).toHaveText(/^50\s%$/)
+})
+
+test('Son : un réglage jamais confirmé par l’agent ne reste pas affiché indéfiniment', async ({ page, stack }) => {
+  // Le PC accuse réception mais l'état publié ne change pas : après 2 s on revient à ce que dit l'agent.
+  await mockDock(page, { audio: audioData() }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  await page.getByTestId('out-mute').tap()
+  await expect(page.getByTestId('out-value')).toHaveText('Muet')
+  await expect(page.getByTestId('out-value')).toHaveText(/^50\s%$/, { timeout: 4_000 })
+})
+
+test('Son : l’agent confirme un réglage, l’état publié prend le relais', async ({ page, stack }) => {
+  const mock = await mockDock(page, { audio: audioData({ apps: [audioApp('7', 'Spotify')] }) }, {
+    startPage: 'sound',
+    onAct: (act) => {
+      if (act.a === 'audio.set_mute') {
+        mock.push('audio', audioData({ apps: [audioApp('7', 'Spotify', { muted: act.p.muted })] }))
+      }
+      return undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('app-7-mute').tap()
+  await expect(page.getByTestId('app-7-value')).toHaveText('Muet')
+  await page.waitForTimeout(2_500)
+  await expect(page.getByTestId('app-7-value')).toHaveText('Muet') // confirmé par l'agent : ça dure
+  expect(mock.acts.filter((a) => a.a === 'audio.set_mute').map((a) => a.p)).toEqual([{ kind: 'app', id: '7', muted: true }])
+})
+
+test('Son : le micro utilisé par plusieurs applications les nomme toutes', async ({ page, stack }) => {
+  const recorders = ['Discord', 'Brave', 'OBS Studio', 'Zoom'].map((name, i) => ({ id: String(i), name, source: 'micro' }))
+  await mockDock(page, { audio: audioData({ recorders }) }, { startPage: 'sound' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('mic-recording')).toHaveText('Micro utilisé par Discord, Brave et 2 autres')
+})
+
+test('Musique : le volume reste utilisable quand la sortie est coupée ou absente', async ({ page, stack }) => {
+  await mockDock(
+    page,
+    { music: { players: [player()], active: 'spotify' }, audio: audioData({ sinks: [audioDevice('sortie', 'Haut-parleurs', { muted: true })] }) },
+    { startPage: 'music' },
+  )
+  await page.goto(stack.url)
+  await expect(page.getByTestId('music-vol-value')).toHaveText('Muet')
+  await expect(page.getByTestId('music-vol-mute')).toHaveAttribute('aria-pressed', 'true')
+  await noPageScroll(page)
+})
+
+test('Musique : sans sortie audio, la ligne de volume n’est pas affichée', async ({ page, stack }) => {
+  await mockDock(
+    page,
+    { music: { players: [player()], active: 'spotify' }, audio: audioData({ default_sink: null, sinks: [] }) },
+    { startPage: 'music' },
+  )
+  await page.goto(stack.url)
+  await expect(page.getByTestId('music-title')).toHaveText('Morceau')
+  await expect(page.getByTestId('music-volume')).toHaveCount(0)
 })

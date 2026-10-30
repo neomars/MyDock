@@ -19,6 +19,7 @@
   // Pages complètes à cette étape ; les autres affichent ce qu'elles offriront (Soon).
   const loaders: Partial<Record<PageId, () => Promise<{ default: Component }>>> = {
     music: () => import('./pages/Music.svelte'),
+    sound: () => import('./pages/Sound.svelte'),
     system: () => import('./pages/System.svelte'),
     power: () => import('./pages/Power.svelte'),
     settings: () => import('./pages/Settings.svelte'),

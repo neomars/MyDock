@@ -6,9 +6,12 @@
   import SkipForward from '@lucide/svelte/icons/skip-forward'
   import { onMount } from 'svelte'
   import Progress from '../components/Progress.svelte'
+  import VolumeBar from '../components/VolumeBar.svelte'
+  import { audio } from '../lib/audio.svelte'
   import { music } from '../lib/music.svelte'
   import { subtitle } from '../lib/music'
   import type { PlayerInfo } from '../lib/protocol'
+  import { sock } from '../lib/socket.svelte'
 
   const player = $derived(music.active)
   const players = $derived(music.data?.players ?? [])
@@ -35,6 +38,10 @@
   $effect(() => {
     void music.ensureArt(player?.art ?? null)
   })
+
+  // Le volume réglé ici est celui de la sortie du PC : la page suit aussi le thème « audio ».
+  onMount(() => sock.subscribe(['audio']))
+  const output = $derived(audio.output)
 
   /** Deux instances du même navigateur portent le même nom : on les numérote. */
   function chipLabel(p: PlayerInfo): string {
@@ -90,6 +97,12 @@
           <SkipForward size={34} aria-hidden="true" />
         </button>
       </div>
+
+      {#if output}
+        <div class="volume" data-testid="music-volume">
+          <VolumeBar kind="sink" id={output.id} name={output.label} volume={output.volume} muted={output.muted} testid="music-vol" />
+        </div>
+      {/if}
 
       {#if players.length > 1}
         <div class="chips" role="tablist" aria-label="Lecteurs" data-testid="music-players">
@@ -196,6 +209,9 @@
   }
   .round.main:active {
     background: #8ccbff;
+  }
+  .volume {
+    margin-top: 2px;
   }
   .chips {
     display: flex;

@@ -80,7 +80,7 @@ export function formatMs(ms: number): string {
   return `${text} ms`
 }
 
-const NBSP = '\u00a0'
+export const NBSP = '\u00a0'
 const decimal = (value: number, digits: number): string =>
   value.toFixed(digits).replace('.', ',')
 
