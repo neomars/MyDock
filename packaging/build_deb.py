@@ -36,6 +36,7 @@ PYTHON_DIST = "usr/lib/python3/dist-packages"
 # Paquet PyPI -> paquet Debian. Une dépendance absente d'ici fait échouer la construction : il
 # faut alors décider consciemment quel paquet de la distribution la fournit.
 DEBIAN_NAMES = {
+    "dbus-fast": "python3-dbus-fast",
     "fastapi": "python3-fastapi",
     "psutil": "python3-psutil",
     "pydantic": "python3-pydantic",

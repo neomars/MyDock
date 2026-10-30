@@ -17,3 +17,5 @@ anyio==4.11.0
 h11==0.14.0
 typing-extensions==4.15.0
 httpx==0.28.1
+dbus-fast==4.0.0
+pillow==12.1.1

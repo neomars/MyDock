@@ -219,3 +219,78 @@ def test_confirm_store_caps_pending_tokens():
     tokens = [store.issue(1, "power.poweroff", {}) for _ in range(5)]
     assert not store.redeem(1, "power.poweroff", {}, tokens[0])  # les plus anciens sont oubliés
     assert store.redeem(1, "power.poweroff", {}, tokens[-1])
+
+
+# --- libellé de confirmation dynamique ------------------------------------------------------------
+
+
+class NamedKill(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pid: int = Field(ge=2)
+
+
+async def kill_handler(_ctx, params: NamedKill):
+    return {"pid": params.pid}
+
+
+async def test_the_confirmation_label_can_describe_the_exact_target():
+    reg = ActionRegistry()
+    reg.register(
+        "system.kill",
+        kill_handler,
+        params=NamedKill,
+        sensitive=True,
+        label=lambda params: f"Terminer le processus {params.pid}",
+    )
+    first = await reg.invoke(act("system.kill", {"pid": 1234}), ctx())
+    assert first["e"]["code"] == ErrorCode.CONFIRM_REQUIRED
+    assert first["confirm"]["label"] == "Terminer le processus 1234"
+    other = await reg.invoke(act("system.kill", {"pid": 99}), ctx())
+    assert other["confirm"]["label"] == "Terminer le processus 99"
+
+
+async def test_a_label_function_receives_validated_params_only():
+    seen = []
+    reg = ActionRegistry()
+    reg.register(
+        "system.kill",
+        kill_handler,
+        params=NamedKill,
+        sensitive=True,
+        label=lambda params: seen.append(params) or "ok",
+    )
+    await reg.invoke(act("system.kill", {"pid": 0}), ctx())  # refusé avant d'arriver au libellé
+    assert seen == []
+    await reg.invoke(act("system.kill", {"pid": 7}), ctx())
+    assert [type(p) for p in seen] == [NamedKill]
+
+
+async def test_a_broken_label_function_never_blocks_the_confirmation():
+    def broken(_params):
+        raise RuntimeError("boum")
+
+    reg = ActionRegistry()
+    reg.register("system.kill", kill_handler, params=NamedKill, sensitive=True, label=broken)
+    first = await reg.invoke(act("system.kill", {"pid": 5}), ctx())
+    assert first["e"]["code"] == ErrorCode.CONFIRM_REQUIRED
+    assert first["confirm"]["label"] == "system.kill"  # jamais de fenêtre sans texte
+
+
+async def test_a_dynamic_label_does_not_weaken_the_binding_to_the_parameters():
+    reg = ActionRegistry()
+    reg.register(
+        "system.kill",
+        kill_handler,
+        params=NamedKill,
+        sensitive=True,
+        label=lambda params: f"Terminer {params.pid}",
+    )
+    token = (await reg.invoke(act("system.kill", {"pid": 10}), ctx()))["confirm"]["token"]
+    swapped = await reg.invoke(act("system.kill", {"pid": 11}, confirm=token), ctx())
+    assert swapped["e"]["code"] == ErrorCode.CONFIRM_INVALID
+
+
+def test_a_sensitive_action_still_needs_some_label():
+    reg = ActionRegistry()
+    with pytest.raises(ValueError, match="libellé"):
+        reg.register("system.kill", kill_handler, params=NamedKill, sensitive=True)

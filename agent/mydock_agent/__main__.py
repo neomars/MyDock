@@ -21,8 +21,6 @@ import uvicorn
 
 from mydock_agent import __version__
 from mydock_agent.access import AccessGate
-from mydock_agent.builtin_actions import register_builtin
-from mydock_agent.collectors.host import HostProvider
 from mydock_agent.config import (
     DEFAULT_PORT,
     AgentConfig,
@@ -30,13 +28,13 @@ from mydock_agent.config import (
     init_config,
     load_config,
 )
-from mydock_agent.demo import DEMO_TOKEN, DemoHostProvider
+from mydock_agent.demo import DEMO_TOKEN
 from mydock_agent.doctor import run_doctor
 from mydock_agent.hub import Hub
+from mydock_agent.runtime import build_runtime
 from mydock_agent.server import create_app
 from mydock_agent.session import detect_session
 from mydock_agent.setup import run_setup
-from mydock_common.actions import ActionRegistry
 from mydock_common.config import ConfigError
 from mydock_common.protocol import MAX_MESSAGE_BYTES
 
@@ -150,9 +148,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     host = args.host or config.bind_host
     port = args.port or config.port
-    hub = Hub([DemoHostProvider() if args.demo else HostProvider()])
-    registry = ActionRegistry()
-    register_builtin(registry, demo=args.demo)
+    providers, registry = build_runtime(demo=args.demo)
+    hub = Hub(providers)
     gate = AccessGate(config.token, config.allowed_clients)
     app = create_app(hub=hub, registry=registry, gate=gate, demo=args.demo)
 

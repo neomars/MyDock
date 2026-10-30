@@ -42,6 +42,10 @@ from mydock_dock.wol import send_magic_packet
 log = logging.getLogger(__name__)
 
 MAX_INFLIGHT_ACTIONS = 32
+#: Thèmes que le dock suit tant qu'il est connecté à l'agent, même sans navigateur qui les demande :
+#: « host » (nom du PC) et « system » (l'agent garde l'historique de 60 s, la page Système l'affiche
+#: aussitôt ouverte). Les autres ne sont suivis que quand une page les montre.
+BASELINE_TOPICS = frozenset({"host", "system"})
 MAX_CONSECUTIVE_BAD_MESSAGES = 10
 LOOPBACK_NAMES = {"127.0.0.1", "localhost"}
 CSP = (
@@ -140,7 +144,7 @@ class DockServer:
     # --- cycle de vie --------------------------------------------------------------------
 
     def start(self) -> None:
-        self.link.set_subscriptions({"host"})
+        self.link.set_subscriptions(set(BASELINE_TOPICS))
         self._link_task = asyncio.create_task(self._run_link(), name="agent-link")
 
     async def _run_link(self) -> None:
@@ -273,7 +277,7 @@ class DockServer:
         self._sync_upstream()
 
     def _sync_upstream(self) -> None:
-        wanted = {"host"}.union(*(c.topics for c in self.browsers))
+        wanted = set(BASELINE_TOPICS).union(*(c.topics for c in self.browsers))
         self.link.set_subscriptions(wanted)
 
     def detach(self, conn: BrowserConn) -> None:

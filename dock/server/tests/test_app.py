@@ -410,6 +410,19 @@ async def test_upstream_subscriptions_follow_the_browsers(stack):
     assert hub.subscriber_count("host") == 1  # « host » reste toujours demandé
 
 
+async def test_the_dock_always_follows_system_so_the_history_is_ready_when_the_page_opens(stack):
+    hub = stack.agent.hub
+    # Aucun navigateur connecté : le dock suit quand même « system » (l'agent garde 60 s d'historique).
+    await eventually(lambda: hub.subscriber_count("system") == 1)
+    assert hub.subscriber_count("procs") == 0  # les processus, eux, seulement page Système ouverte
+    async with stack.dock.connect() as browser:
+        await send_json(browser, {"t": "sub", "topics": ["procs"]})
+        await eventually(lambda: hub.subscriber_count("procs") == 1)
+        assert hub.subscriber_count("system") == 1  # toujours une seule demande
+    await eventually(lambda: hub.subscriber_count("procs") == 0)
+    assert hub.subscriber_count("system") == 1
+
+
 # --- sécurité du serveur local --------------------------------------------------------------
 
 

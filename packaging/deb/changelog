@@ -1,3 +1,14 @@
+mydock-agent (0.2.0) unstable; urgency=medium
+
+  * Étape b : thèmes « system » (processeur, mémoire, carte graphique sans réveiller la
+    carte NVIDIA endormie, réseau, disques, températures, batterie, historique de 60 s),
+    « procs » (processus) et « music » (lecteurs MPRIS : Spotify, navigateurs, VLC…).
+  * Action « system.kill » : arrêt d'un processus de l'utilisateur, avec confirmation à
+    l'écran et jeton à usage unique ; processus de la session protégés.
+  * Nouvelles dépendances : python3-dbus-fast ; recommandé : python3-pil (pochettes).
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 14:00:00 +0000
+
 mydock-agent (0.1.0) unstable; urgency=medium
 
   * Première version du paquet : agent, service systemd utilisateur, commande

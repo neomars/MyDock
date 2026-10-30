@@ -148,7 +148,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 0.1.0")
+    assert version.stdout.startswith("mydock-agent 0.2.0")
 
 
 @pytest.mark.slow
@@ -290,7 +290,7 @@ def test_pi_install_writes_everything_where_the_services_expect_it(pi_install):
     assert (prefix / "opt/mydock/src/deploy/pi/kiosk-browser.sh").stat().st_mode & stat.S_IXUSR
     assert (prefix / "opt/mydock/venv/bin/mydock-dock").exists()
     version = sh([prefix / "opt/mydock/venv/bin/mydock-dock", "--version"], env=pi_install["env"])
-    assert version.stdout.startswith("mydock-dock 0.1.0")
+    assert version.stdout.startswith("mydock-dock 0.2.0")
     # les tests et les sources inutiles n'encombrent pas le Pi
     assert not list((prefix / "opt/mydock/src").rglob("tests"))
 

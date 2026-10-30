@@ -4,7 +4,7 @@ Architecture: all
 Maintainer: neomars <neomars@users.noreply.github.com>
 Installed-Size: @INSTALLED_SIZE@
 Depends: @DEPENDS@
-Recommends: libglib2.0-bin, libgtk-3-bin, pulseaudio-utils, ethtool, python3-dbus-fast
+Recommends: libglib2.0-bin, libgtk-3-bin, pulseaudio-utils, ethtool, python3-pil
 Section: utils
 Priority: optional
 Homepage: https://github.com/neomars/MyDock

@@ -26,13 +26,13 @@ fi
 # fastapi 0.118.0 borne starlette < 0.49 alors qu'Ubuntu livre 0.50.0 avec lui : on reproduit la
 # combinaison d'Ubuntu en installant fastapi après les autres, sans réévaluer ses dépendances.
 pip_install -c "$CONSTRAINTS" starlette uvicorn websockets psutil pydantic tomli-w anyio h11 \
-  typing-extensions httpx
+  typing-extensions httpx dbus-fast
 pip_install -c "$CONSTRAINTS" --no-deps fastapi
 pip_install -c "$CONSTRAINTS" --no-deps -e "$ROOT/common" -e "$ROOT/agent" -e "$ROOT/dock/server"
-pip_install -c "$CONSTRAINTS" pytest pytest-asyncio ruff
+pip_install -c "$CONSTRAINTS" pytest pytest-asyncio ruff pillow
 "$VENV/bin/python" - <<'PY'
 from importlib.metadata import version
 
-for name in ("fastapi", "starlette", "uvicorn", "websockets", "psutil", "pydantic", "tomli-w"):
+for name in ("fastapi", "starlette", "uvicorn", "websockets", "psutil", "pydantic", "tomli-w", "dbus-fast", "pillow"):
     print(f"  {name:12} {version(name)}")
 PY

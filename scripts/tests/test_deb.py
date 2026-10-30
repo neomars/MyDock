@@ -103,7 +103,7 @@ def test_dependencies_come_from_the_pyproject_files(deb):
 
 def test_optional_features_are_recommended_not_required(deb):
     recommends = field(deb, "Recommends")
-    for package in ("libglib2.0-bin", "pulseaudio-utils", "ethtool", "python3-dbus-fast"):
+    for package in ("libglib2.0-bin", "pulseaudio-utils", "ethtool", "python3-pil"):
         assert package in recommends
         assert package not in field(deb, "Depends")
 
