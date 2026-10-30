@@ -18,6 +18,7 @@
 
   // Pages complètes à cette étape ; les autres affichent ce qu'elles offriront (Soon).
   const loaders: Partial<Record<PageId, () => Promise<{ default: Component }>>> = {
+    music: () => import('./pages/Music.svelte'),
     system: () => import('./pages/System.svelte'),
     power: () => import('./pages/Power.svelte'),
     settings: () => import('./pages/Settings.svelte'),
@@ -33,10 +34,11 @@
     void sock.act('dock.ui.set', { last_page: id })
   }
 
-  // Le nom du PC est toujours affiché dans la barre du haut : on s'abonne à « host » en permanence.
+  // La barre du haut montre toujours le nom du PC (« host ») et le mini-lecteur (« music ») : on s'abonne
+  // à ces deux thèmes en permanence ; les pages suivent les autres (system, procs…) tant qu'elles sont ouvertes.
   onMount(() => {
     sock.connect()
-    return sock.subscribe(['host'])
+    return sock.subscribe(['host', 'music'])
   })
 
   // Quand le PC répond enfin, le « réveil en cours » est terminé.
@@ -57,7 +59,7 @@
 </script>
 
 <div class="app">
-  <TopBar />
+  <TopBar onOpenMusic={() => select('music')} />
 
   <main class="page" data-testid="page-{currentId}">
     {#if dockLost}
@@ -101,7 +103,7 @@
   .page {
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 16px 20px 20px;
+    padding: 12px 20px 14px;
     overscroll-behavior: contain;
   }
   .lost {

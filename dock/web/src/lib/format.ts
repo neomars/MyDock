@@ -79,3 +79,63 @@ export function formatMs(ms: number): string {
   const text = ms < 10 ? ms.toFixed(1).replace('.', ',') : String(Math.round(ms))
   return `${text} ms`
 }
+
+const NBSP = '\u00a0'
+const decimal = (value: number, digits: number): string =>
+  value.toFixed(digits).replace('.', ',')
+
+/** « 12 % » (espace insécable, comme en typographie française). */
+export const formatPercent = (value: number): string => `${Math.round(value)}${NBSP}%`
+
+/** Taille en octets : « 512 o », « 12 Ko », « 612 Mo », « 1,4 Go ». Base 1024. */
+export function formatBytes(bytes: number): string {
+  const n = Math.max(0, bytes)
+  const units = ['o', 'Ko', 'Mo', 'Go', 'To']
+  let value = n
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  const digits = unit === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 1
+  return `${decimal(value, digits).replace(/,0$/, '')}${NBSP}${units[unit]}`
+}
+
+/** Débit : « 0 o/s », « 120 Ko/s », « 1,8 Mo/s ». */
+export const formatRate = (bytesPerSecond: number): string => `${formatBytes(bytesPerSecond)}/s`
+
+export const formatTemp = (celsius: number): string => `${Math.round(celsius)}${NBSP}°C`
+
+/** « 3,2 GHz » au-delà de 1000 MHz, sinon « 900 MHz ». */
+export function formatFreq(mhz: number): string {
+  return mhz >= 1000 ? `${decimal(mhz / 1000, 1)}${NBSP}GHz` : `${Math.round(mhz)}${NBSP}MHz`
+}
+
+export const formatWatts = (watts: number): string => `${decimal(watts, 1)}${NBSP}W`
+
+/** Durée d'un morceau : « 3:42 », « 1:02:15 ». */
+export function formatTrackTime(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = String(total % 60).padStart(2, '0')
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
+    : `${minutes}:${seconds}`
+}
+
+/** « 11,4 / 32 Go » : l'unité est celle du total, écrite une seule fois (tient dans une petite tuile). */
+export function formatUsage(used: number, total: number): string {
+  const units = ['o', 'Ko', 'Mo', 'Go', 'To']
+  let unit = 0
+  let scaled = Math.max(0, total)
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024
+    unit += 1
+  }
+  const part = (value: number): string => {
+    const x = value / 1024 ** unit
+    return decimal(x, x >= 100 || unit === 0 ? 0 : 1).replace(/,0$/, '')
+  }
+  return `${part(used)}${NBSP}/${NBSP}${part(total)}${NBSP}${units[unit]}`
+}

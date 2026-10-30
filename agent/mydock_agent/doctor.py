@@ -16,7 +16,10 @@ import psutil
 
 from mydock_agent import __version__, firewall
 from mydock_agent.access import local_lan_networks
+from mydock_agent.collectors import gpu as gpu_module
+from mydock_agent.collectors import music as music_module
 from mydock_agent.collectors.host import list_interfaces
+from mydock_agent.collectors.system import Sensors, cpu_temperature, disk_temperature
 from mydock_agent.config import AgentConfig, default_config_path, load_config
 from mydock_agent.session import GRAPHICAL_VARS, detect_session, user_manager_environment
 from mydock_common.auth import bearer_headers
@@ -250,6 +253,102 @@ def check_from_pi(report: Report, config: AgentConfig) -> None:
     report.add(INFO, "« Connection refused » = mauvaise adresse ou port, ou agent arrêté")
 
 
+def check_sensors(report: Report, sensors: Sensors | None = None) -> None:
+    """Ce que l'agent saura mesurer sur ce PC : températures, batterie, cœurs."""
+    report.section("Capteurs")
+    sensors = sensors or Sensors()
+    cores = len(sensors.cpu_percent() or [])
+    report.add(OK if cores else WARN, f"Processeur : {cores} cœur(s) vus")
+    temps = sensors.temperatures()
+    cpu = cpu_temperature(temps)
+    if cpu is None:
+        report.add(INFO, "Température du processeur : aucun capteur lisible (rien ne s'affichera)")
+    else:
+        report.add(OK, f"Température du processeur : {cpu:.0f} °C")
+    ssd = disk_temperature(temps)
+    if ssd is not None:
+        report.add(OK, f"Température du SSD : {ssd:.0f} °C")
+    battery = sensors.battery()
+    if battery is None:
+        report.add(INFO, "Pas de batterie (PC fixe)")
+    else:
+        source = "sur secteur" if battery["plugged"] else "sur batterie"
+        report.add(OK, f"Batterie : {battery['percent']} % ({source})")
+
+
+def check_gpus(report: Report, read: Callable[[], list[dict]] = gpu_module.read_gpus) -> None:
+    """Cartes graphiques, lues sans réveiller une carte NVIDIA endormie."""
+    report.section("Cartes graphiques")
+    gpus = read()
+    if not gpus:
+        report.add(INFO, "Aucune carte graphique détectée dans /sys/bus/pci")
+        return
+    for card in gpus:
+        if card["state"] == "suspended":
+            report.add(
+                OK, f"{card['name']} : en veille (économie d'énergie) ; le dock ne la réveille pas"
+            )
+        elif card.get("note"):
+            report.add(WARN, f"{card['name']} : {card['note']}")
+        elif card["util"] is not None:
+            report.add(OK, f"{card['name']} : active, charge {card['util']} %")
+        else:
+            freq = f", {card['freq_mhz']} MHz" if card["freq_mhz"] else ""
+            report.add(OK, f"{card['name']} : active{freq}")
+
+
+async def _list_players(factory: Callable[[], music_module.Bus]) -> list[tuple[str, str]]:
+    bus = factory()
+    await bus.connect()
+    try:
+        (names,) = await bus.call(
+            music_module.DBUS_NAME, "/org/freedesktop/DBus", music_module.DBUS_NAME, "ListNames"
+        )
+        players = []
+        for name in names:
+            if not name.startswith(music_module.MPRIS_PREFIX):
+                continue
+            try:
+                (root,) = await bus.call(
+                    name,
+                    music_module.OBJECT_PATH,
+                    music_module.PROPS_IFACE,
+                    "GetAll",
+                    "s",
+                    [music_module.ROOT_IFACE],
+                )
+                players.append(
+                    (name.removeprefix(music_module.MPRIS_PREFIX), str(root.get("Identity", "")))
+                )
+            except music_module.BusError:
+                players.append((name.removeprefix(music_module.MPRIS_PREFIX), ""))
+        return players
+    finally:
+        await bus.disconnect()
+
+
+def check_music(
+    report: Report, factory: Callable[[], music_module.Bus] = music_module.DbusFastBus
+) -> None:
+    """Le bus de session D-Bus et les lecteurs MPRIS ouverts en ce moment."""
+    report.section("Musique (MPRIS)")
+    try:
+        players = asyncio.run(_list_players(factory))
+    except (music_module.BusError, OSError) as exc:
+        report.add(
+            WARN,
+            f"{exc} Lance le diagnostic depuis un terminal de ta session graphique : l'agent a "
+            "besoin du bus de session D-Bus pour voir les lecteurs.",
+        )
+        return
+    if not players:
+        report.add(INFO, "Bus de session joignable ; aucun lecteur ouvert pour l'instant")
+        return
+    report.add(OK, "Bus de session joignable ; lecteurs ouverts :")
+    for player_id, identity in players:
+        report.add(INFO, f"    {player_id}" + (f"  ({identity})" if identity else ""))
+
+
 def check_tools(report: Report) -> None:
     report.section("Outils système")
     for name, why, required in (
@@ -336,6 +435,9 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
         check_firewall(report, config)
     check_service(report)
     check_tools(report)
+    check_sensors(report)
+    check_gpus(report)
+    check_music(report)
     if config is not None:
         check_running(report, config, cpu_seconds)
         check_from_pi(report, config)

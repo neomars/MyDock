@@ -76,3 +76,106 @@ async def test_idle_agent_uses_less_than_2_percent_cpu():
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+# --- l'étape b : le vrai agent (vrais capteurs), comme le dock le sollicite -------------------------
+
+
+async def measure_real_agent(topics: list[str], seconds: float = 10.0) -> tuple[float, float]:
+    """CPU (%) et mémoire (Mo) du vrai agent (hors démo) pendant que `topics` sont suivis."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        config = Path(tmp) / "agent.toml"
+        subprocess.run(  # noqa: ASYNC221 - préparation avant toute mesure
+            [
+                sys.executable,
+                "-m",
+                "mydock_agent",
+                "init",
+                "--config",
+                str(config),
+                "--allow",
+                "127.0.0.1",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        token = subprocess.run(  # noqa: ASYNC221 - préparation avant toute mesure
+            [sys.executable, "-m", "mydock_agent", "show-token", "--config", str(config)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        port = free_port()
+        process = subprocess.Popen(  # noqa: ASYNC220 - lancement unique, avant toute mesure
+            [
+                sys.executable,
+                "-m",
+                "mydock_agent",
+                "run",
+                "--config",
+                str(config),
+                "--port",
+                str(port),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            async with asyncio.timeout(15):
+                while True:
+                    try:
+                        socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                        break
+                    except OSError:
+                        await asyncio.sleep(0.1)
+            async with connect(
+                f"ws://127.0.0.1:{port}/ws", additional_headers=bearer_headers(token), proxy=None
+            ) as ws:
+                await recv_json(ws)
+                await send_json(ws, {"t": "sub", "topics": topics})
+                await asyncio.sleep(3)  # démarrage des fournisseurs
+                proc = psutil.Process(process.pid)
+                before = proc.cpu_times()
+                started = time.monotonic()
+                try:
+                    async with asyncio.timeout(seconds):
+                        while True:
+                            await ws.recv()  # vide la file comme le ferait le dock
+                except TimeoutError:
+                    pass  # la fin de la mesure
+                elapsed = time.monotonic() - started
+                after = proc.cpu_times()
+                used = (after.user + after.system) - (before.user + before.system)
+                return used / elapsed * 100, proc.memory_info().rss / 1e6
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+
+
+@pytest.mark.slow
+async def test_real_agent_following_the_system_stays_under_2_percent_cpu():
+    """Ce que le dock demande en permanence : « host », « system » (1 mesure/s) et « music »."""
+    percent, rss = await measure_real_agent(["host", "system", "music"])
+    print(f"\nagent réel (host + system + music) : {percent:.2f} % CPU, {rss:.0f} Mo RSS")
+    assert percent < 2.0, f"{percent:.2f} % de CPU"
+    assert rss < 150
+
+
+@pytest.mark.slow
+async def test_real_agent_with_the_system_page_open_on_a_busy_machine():
+    """Page Système ouverte (« procs » toutes les 2 s) sur une machine chargée de 300 processus."""
+    crowd = [subprocess.Popen(["sleep", "40"]) for _ in range(300)]  # noqa: ASYNC220
+    try:
+        percent, rss = await measure_real_agent(["host", "system", "music", "procs"])
+        count = len(psutil.pids())
+    finally:
+        for process in crowd:
+            process.kill()
+        for process in crowd:
+            process.wait()
+    print(f"\nagent réel + page Système, {count} processus : {percent:.2f} % CPU, {rss:.0f} Mo RSS")
+    assert percent < 5.0, f"{percent:.2f} % de CPU avec {count} processus"
+    assert rss < 150

@@ -2,11 +2,11 @@
 
 Un dock tactile pour piloter un PC Ubuntu : un Raspberry Pi 4 avec un écran 7" (1024×600) posé à côté du PC affiche son état et permet de le commander. Le dock reste utile PC éteint : horloge, bourse, et bouton **Allumer le PC** (Wake-on-LAN).
 
-| PC allumé | PC éteint |
+| Système | Musique |
 |---|---|
-| ![Page Système](docs/etapes/a/01-systeme.png) | ![PC hors ligne](docs/etapes/a/06-hors-ligne.png) |
+| ![Page Système](docs/etapes/b/01-systeme.png) | ![Page Musique](docs/etapes/b/04-musique.png) |
 
-*Captures prises en mode démo (fausses données), en 1024×600 tactile.*
+*Captures prises en mode démo (fausses données), en 1024×600 tactile. PC éteint : [écran « PC hors ligne »](docs/etapes/a/06-hors-ligne.png).*
 
 ## Où en est le projet
 
@@ -15,7 +15,7 @@ La livraison se fait par étapes, chacune utilisable.
 | Étape | Contenu | État |
 |---|---|---|
 | **a** | Squelette : agent sécurisé, serveur du dock, kiosque, écran « PC hors ligne », Wake-on-LAN, Réglages | **livrée** ([rapport](docs/etapes/a/RAPPORT.md)) |
-| b | Système (CPU, mémoire, GPU, processus) et Musique (MPRIS) | à venir |
+| **b** | Système (CPU, mémoire, GPU sans réveiller la carte NVIDIA, réseau, disques, historique de 60 s, processus avec arrêt confirmé) et Musique (MPRIS, pochette, progression glissable, mini-lecteur) | **livrée** ([rapport](docs/etapes/b/RAPPORT.md)) |
 | c | Son (sorties, volume par application, micro) | à venir |
 | d | Lanceur d'applications, Steam, LibreOffice | à venir |
 | e | Bourse (crypto et actions) | à venir |
@@ -117,19 +117,20 @@ sudo ./deploy/pi/install-dock.sh                                                
 
 ## Utilisation
 
-Neuf onglets en bas ; le nom du PC, son état et l'horloge en haut (le mini-lecteur s'y ajoutera à l'étape b). Textes d'au moins 20 px (légendes 16 px), cibles tactiles d'au moins 56 px, thème sombre.
+Neuf onglets en bas ; en haut, le nom du PC et son état, le **mini-lecteur** (pochette, titre, précédent, lecture/pause, suivant : présent sur toutes les pages) et l'horloge. Textes d'au moins 16 px (courant 20 px), cibles tactiles d'au moins 48 px, thème sombre.
 
-- **Système** : identité du PC, session (Wayland/X11), durée depuis le démarrage, interfaces réseau.
+- **Musique** : pochette, titre, artiste · album, progression que l'on **fait glisser** (appliquée au relâchement), précédent / lecture-pause / suivant. Tous les lecteurs MPRIS (Spotify, VLC, Firefox, Brave…) ; avec plusieurs, des pastilles choisissent celui qu'on pilote (par défaut celui qui joue, Spotify d'abord).
+- **Système** : processeur (charge, fréquence, température), mémoire, **carte graphique**, réseau ↓↑, graphique des 60 dernières secondes (charge ou réseau), une barre par cœur, disques, batterie, et les 8 processus les plus gourmands avec un bouton ✕ qui demande **confirmation** avant d'arrêter un processus (« Forcer » s'il résiste). Sur un portable hybride, la carte NVIDIA endormie s'affiche « En veille » : le dock ne la réveille jamais.
 - **Alimentation** : Wake-on-LAN. Les commandes verrouiller / veille / redémarrer / éteindre arrivent à l'étape f.
-- **Réglages** : adresse, port et jeton du PC (clavier tactile AZERTY intégré), test de connexion, adresse MAC du réveil, mesure de latence.
-- **PC éteint ou injoignable** : l'écran dit pourquoi — *PC hors ligne* (éteint, en veille, pare-feu), *PC allumé, agent arrêté* (session fermée ?), *Connexion refusée* (jeton ou adresse du Pi non autorisée) — compte à rebours de la prochaine tentative, bouton **Allumer le PC**. Bourse et Réglages restent utilisables.
+- **Réglages** : adresse, port et jeton du PC (clavier tactile AZERTY intégré), test de connexion, adresse MAC du réveil, mesure de latence, adresse(s) du Pi.
+- **PC éteint ou injoignable** : l'écran dit pourquoi, **en nommant l'adresse essayée** — *PC hors ligne* (éteint, en veille, pare-feu), *PC allumé, agent arrêté* (session fermée ?), *Connexion refusée* (jeton ou adresse du Pi non autorisée) — compte à rebours de la prochaine tentative, bouton **Allumer le PC**. Bourse et Réglages restent utilisables.
 - **`?debug=1`** ajouté à l'adresse (ou `chromium.flags`) affiche les images par seconde et l'état des liaisons.
 
 ## Sécurité
 
 - **Jeton** de 256 bits généré à l'installation, dans un fichier en droits 600 de chaque côté (le programme refuse de démarrer s'ils sont plus ouverts). Envoyé dans l'en-tête `Authorization`, jamais dans une URL, jamais journalisé, jamais envoyé au navigateur.
 - **Réseau** : l'agent refuse en silence toute adresse hors de `allowed_clients` (idéalement l'IP du Pi) avant même de regarder le jeton, et bloque une minute une adresse qui échoue 8 fois. Il n'écoute qu'en IPv4. Le serveur du dock n'écoute que sur `127.0.0.1` et refuse toute autre origine (contre les sites malveillants et le « DNS rebinding »).
-- **Actions** : jamais de commande venue du dock, seulement des actions nommées d'une liste blanche, aux paramètres validés (champs inconnus refusés). Les actions sensibles exigent une confirmation à l'écran **et** un jeton de confirmation à usage unique côté agent, lié à la connexion, à l'action et à ses paramètres (10 s).
+- **Actions** : jamais de commande venue du dock, seulement des actions nommées d'une liste blanche, aux paramètres validés (champs inconnus refusés). Les actions sensibles exigent une confirmation à l'écran **et** un jeton de confirmation à usage unique côté agent, lié à la connexion, à l'action et à ses paramètres (10 s). Arrêter un processus (`system.kill`) est la seule action sensible de l'étape b : l'agent revérifie lui-même que c'est le même processus (heure de démarrage), qu'il appartient à ton utilisateur et que ce n'est ni lui-même ni un processus de session (gnome-shell, pipewire…). Les pochettes de musique ne sont lues que si le fichier est une image, ou en https vers une machine publique (jamais le réseau local).
 - **Séparation des privilèges sur le Pi** : le serveur (qui détient le jeton) et le navigateur tournent sous deux utilisateurs système différents ; un navigateur compromis ne lit pas le jeton.
 - **Secrets** : jamais dans le dépôt (`.gitignore`, et un test vérifie qu'aucun secret n'y est suivi). Les clés d'API de la bourse (étape e) iront dans le fichier de configuration du Pi, en droits 600.
 
@@ -152,6 +153,9 @@ Allumer un PC **éteint** à distance n'est possible qu'en **Ethernet** : la car
 | « PC allumé, agent arrêté » | Session fermée (l'agent vit dans ta session) ; service arrêté | `mydock-agent doctor` (section « Service systemd »), `journalctl --user -u mydock-agent -e` |
 | « Connexion refusée » | Jeton différent, ou IP du Pi absente de `allowed_clients` | Réglages → Jeton ; `mydock-agent doctor` ; `mydock-agent setup --pi IP_DU_PI` sur le PC (le message dit quelle adresse le PC voit arriver) |
 | Le nom `ubuntu.local` change ou ne répond pas | Deux machines nommées « ubuntu » | `sudo hostnamectl set-hostname mon-pc`, ou utiliser l'IP (idéalement réservée dans la box) |
+| Page Musique : « Aucun lecteur ouvert » alors que Spotify joue | Le lecteur ne parle pas MPRIS (Spotify en Flatpak/Snap : accès au bus bloqué) ou l'agent n'a pas la session D-Bus | Sur le PC : `mydock-agent doctor` (section « Musique (MPRIS) » : lecteurs vus) ou `playerctl -l` ; `journalctl --user -u mydock-agent -e` |
+| Page Musique : « Musique indisponible » | Bus de session D-Bus injoignable (agent lancé hors session graphique) | Lancer l'agent par le service (`systemctl --user restart mydock-agent`), pas depuis un terminal SSH |
+| Système : la carte graphique dit « En veille » | La carte NVIDIA dort pour économiser la batterie : c'est voulu, le dock ne la réveille pas | Lancer un programme sur la carte (`prime-run …`) : sa charge apparaît |
 | « Allumer le PC » n'a aucun effet | Pas d'Ethernet, BIOS, câble débranché à l'extinction | Voir la section Wake-on-LAN ; Réglages → vérifier l'adresse MAC |
 | Écran noir au démarrage du Pi | Compositeur ou Chromium ne démarre pas | `journalctl -u mydock-kiosk -e` (Lite) ; vérifier `chromium` et `labwc` installés ; essayer `--force-mode 1024x600@60` |
 | Écran à la mauvaise résolution | Mode non détecté | `sudo ./deploy/pi/install-dock.sh --force-mode 1024x600@60` ; ou `video=HDMI-A-1:1024x600@60` dans `/boot/firmware/cmdline.txt` |
@@ -177,7 +181,7 @@ make web           # recompile l'interface (dock/web/dist est commité : pas de 
 
 ```
 common/   protocole WebSocket, jeton, configuration 600, registre d'actions   (partagé)
-agent/    service du PC : serveur, hub d'état, collecteurs, mode démo, doctor
+agent/    service du PC : serveur, hub d'état, collecteurs (système, GPU, processus, musique), mode démo, doctor
 dock/
   server/ serveur du Pi : liaison avec l'agent, Wake-on-LAN, configuration
   web/    interface Svelte 5 + Vite + TypeScript (dist/ compilé et commité)

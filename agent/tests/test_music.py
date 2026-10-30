@@ -26,6 +26,7 @@ from mydock_agent.testing import eventually, png_bytes
 from mydock_common.actions import ActionContext, ActionRegistry
 from mydock_common.protocol import Act
 
+FAKE_KEY_HEADER = "-----BEGIN OPENSSH PRIVATE KEY-----"  # pas un secret : en-tête de test
 SPOTIFY = "org.mpris.MediaPlayer2.spotify"
 BRAVE = "org.mpris.MediaPlayer2.brave.instance9888"
 
@@ -672,7 +673,7 @@ def test_images_are_recognised_by_their_content_not_their_name():
     assert music.sniff_image(b"\xff\xd8\xff\xe0JFIF") == "image/jpeg"
     assert music.sniff_image(b"GIF89a....") == "image/gif"
     assert music.sniff_image(b"RIFF\x00\x00\x00\x00WEBPVP8 ") == "image/webp"
-    assert music.sniff_image(b"-----BEGIN OPENSSH PRIVATE KEY-----") is None
+    assert music.sniff_image(FAKE_KEY_HEADER.encode()) is None
     assert music.sniff_image(b"") is None
 
 
@@ -685,7 +686,7 @@ def test_a_local_cover_file_is_read(tmp_path):
 
 def test_a_cover_url_may_not_expose_other_files(tmp_path):
     secret = tmp_path / "id_ed25519"
-    secret.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nxxx\n")
+    secret.write_text(FAKE_KEY_HEADER + "\nxxx\n")
     with pytest.raises(music.ArtError, match="pas une image"):
         music.fetch_art(secret.as_uri())
     with pytest.raises(music.ArtError):

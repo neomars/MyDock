@@ -30,15 +30,14 @@ test('démarre connecté sur la page Système, en 1024×600 sans défilement de 
   expect(dock.viewportSize()).toEqual({ width: 1024, height: 600 })
   await expect(dock.getByTestId('pc-label')).toHaveText('pc-demo')
   await expect(dock.getByTestId('demo-chip')).toBeVisible()
-  await expect(dock.getByTestId('system-host')).toContainText('Ubuntu 26.04 LTS (démo)')
-  await expect(dock.getByTestId('system-network')).toContainText('02:00:5e:10:00:01')
+  await expect(dock.getByTestId('system-host')).toContainText('pc-demo')
+  await expect(dock.getByTestId('system-host')).toHaveAttribute('title', /Ubuntu 26\.04 LTS \(démo\)/)
   await expect(dock.getByTestId('uptime')).toContainText('3 h')
   const size = await dock.evaluate(() => ({
     w: document.documentElement.scrollWidth,
     h: document.documentElement.scrollHeight,
   }))
   expect(size).toEqual({ w: 1024, h: 600 })
-  await shot(dock, '01-systeme')
 })
 
 test('les neuf onglets s’ouvrent au toucher', async ({ dock }) => {
@@ -73,9 +72,9 @@ test('retrouve la dernière page affichée après un rechargement', async ({ doc
 })
 
 test('une page non livrée dit ce qu’elle offrira et à quelle étape', async ({ dock }) => {
-  await dock.getByTestId('tab-music').tap()
-  await expect(dock.getByTestId('soon')).toContainText('progression')
-  await expect(dock.getByTestId('soon')).toContainText("étape b")
+  await dock.getByTestId('tab-sound').tap()
+  await expect(dock.getByTestId('soon')).toContainText('volume')
+  await expect(dock.getByTestId('soon')).toContainText('étape c')
   await shot(dock, '10-page-a-venir')
 })
 

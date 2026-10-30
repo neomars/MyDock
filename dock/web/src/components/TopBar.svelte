@@ -2,7 +2,10 @@
   import { clock } from '../lib/clock.svelte'
   import { formatClock } from '../lib/format'
   import { sock } from '../lib/socket.svelte'
+  import MiniPlayer from './MiniPlayer.svelte'
   import StatusDot from './StatusDot.svelte'
+
+  let { onOpenMusic }: { onOpenMusic: () => void } = $props()
 
   const state = $derived(sock.link?.state ?? null)
   const label = $derived.by(() => {
@@ -33,8 +36,10 @@
     <span class="name" data-testid="pc-label">{label}</span>
     {#if sock.link?.agent?.demo}<span class="chip accent" data-testid="demo-chip">DÉMO</span>{/if}
   </div>
-  <!-- Le mini-lecteur (lecture/pause + volume) s'affichera ici à l'étape b. -->
-  <div class="mini"></div>
+  <!-- Mini-lecteur : toujours accessible, quelle que soit la page (absent quand le PC l'est). -->
+  <div class="mini">
+    {#if sock.connected}<MiniPlayer onOpen={onOpenMusic} />{/if}
+  </div>
   <time class="clock" data-testid="clock">{formatClock(clock.now)}</time>
 </header>
 
@@ -59,6 +64,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .mini {
+    min-width: 0;
+    display: flex;
+    justify-content: center;
   }
   .clock {
     justify-self: end;
