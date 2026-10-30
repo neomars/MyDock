@@ -19,7 +19,7 @@ const HOST = {
   kernel: '7.0.0-38-generic',
   arch: 'x86_64',
   python: '3.14.4',
-  agent: { version: '0.3.0', proto: 1, demo: false },
+  agent: { version: '0.4.0', proto: 1, demo: false },
   boot_time: Math.floor(Date.now() / 1000) - 3 * 3600,
   session: { type: 'wayland', desktop: 'GNOME' },
   interfaces: [],
@@ -67,7 +67,11 @@ const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQD
 async function mockDock(
   page: Page,
   topics: Topics,
-  options: { startPage: string; onAct?: (act: Mock['acts'][number], ws: WebSocketRoute) => unknown },
+  options: {
+    startPage: string
+    pinned?: string[]
+    onAct?: (act: Mock['acts'][number], ws: WebSocketRoute) => unknown
+  },
 ): Promise<Mock> {
   const subscribed = new Set<string>()
   const acts: Mock['acts'] = []
@@ -78,17 +82,17 @@ async function mockDock(
 
   await page.routeWebSocket(/\/ws$/, (ws) => {
     current = ws
-    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.3.0' } }))
+    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.4.0' } }))
     snap(ws, 'link', {
       state: 'connected', detail: 'Connecté.', since: Date.now(), attempt: 0, next_retry_at: null,
-      resolved: '127.0.0.1', agent: { version: '0.3.0', demo: false }, host: '127.0.0.1', port: 8765,
+      resolved: '127.0.0.1', agent: { version: '0.4.0', demo: false }, host: '127.0.0.1', port: 8765,
     }) // prettier-ignore
     snap(ws, 'dock', {
-      version: '0.3.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
+      version: '0.4.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
       pc: { host: '127.0.0.1', port: 8765, token_set: true, name: 'portable' },
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
     }) // prettier-ignore
-    snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [] })
+    snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [] })
     ws.onMessage((raw) => {
       const message = JSON.parse(String(raw))
       if (message.t === 'sub') {
@@ -111,7 +115,7 @@ async function mockDock(
     acts,
     push(topic, payload) {
       data[topic] = payload
-      if (current && subscribed.has(topic)) snap(current, topic, payload)
+      if (current && (['link', 'dock', 'ui'].includes(topic) || subscribed.has(topic))) snap(current, topic, payload)
     },
   }
 }
@@ -524,4 +528,204 @@ test('Musique : sans sortie audio, la ligne de volume n’est pas affichée', as
   await page.goto(stack.url)
   await expect(page.getByTestId('music-title')).toHaveText('Morceau')
   await expect(page.getByTestId('music-volume')).toHaveCount(0)
+})
+
+// --- Applis, Steam, Office ------------------------------------------------------------------------
+
+const appInfo = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id, name, generic: null, icon: null, ...extra })
+const appsTopic = (apps: ReturnType<typeof appInfo>[]) => ({ count: apps.length, apps })
+const ui = (page: string, pinned: string[]) => ({ last_page: page, order: [], hidden: [], pinned_apps: pinned })
+
+test('Applis : une application désinstallée reste à sa place, grisée, sans pouvoir la lancer', async ({ page, stack }) => {
+  const mock = await mockDock(
+    page,
+    { apps: appsTopic([appInfo('a.desktop', 'Firefox'), appInfo('c.desktop', 'Calculatrice')]) },
+    { startPage: 'apps', pinned: ['a.desktop', 'org.disparue.App.desktop', 'c.desktop'] },
+  )
+  await page.goto(stack.url)
+  expect(await page.locator('[data-testid="apps-grid"] .name').allInnerTexts()).toEqual(['Firefox', 'org.disparue.App', 'Calculatrice'])
+  const gone = page.getByTestId('launch-org.disparue.App.desktop')
+  await expect(gone).toBeDisabled()
+  await expect(gone).toContainText('Introuvable')
+  await page.getByTestId('launch-c.desktop').tap()
+  await expect(page.getByTestId('toast')).toContainText('se lance')
+  expect(mock.acts.filter((a) => a.a === 'apps.launch').map((a) => a.p)).toEqual([{ id: 'c.desktop' }])
+})
+
+test('Applis : un refus de l’agent est affiché et la tuile redevient disponible', async ({ page, stack }) => {
+  await mockDock(page, { apps: appsTopic([appInfo('a.desktop', 'Firefox')]) }, {
+    startPage: 'apps',
+    pinned: ['a.desktop'],
+    onAct: (act) => (act.a === 'apps.launch' ? refuse('Le lancement de « Firefox » a échoué (code 1).') : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('launch-a.desktop').tap()
+  await expect(page.getByTestId('toast')).toContainText('a échoué (code 1)')
+  await expect(page.getByTestId('launching-a.desktop')).toHaveCount(0)
+})
+
+test('Applis : deux appuis rapprochés ne lancent l’application qu’une fois', async ({ page, stack }) => {
+  const mock = await mockDock(page, { apps: appsTopic([appInfo('a.desktop', 'Firefox')]) }, { startPage: 'apps', pinned: ['a.desktop'] })
+  await page.goto(stack.url)
+  const tile = page.getByTestId('launch-a.desktop')
+  await tile.tap()
+  await tile.tap({ force: true })
+  await tile.tap({ force: true })
+  await page.waitForTimeout(400)
+  expect(mock.acts.filter((a) => a.a === 'apps.launch')).toHaveLength(1)
+})
+
+test('Applis : vingt-quatre applications aux noms démesurés tiennent sans déborder', async ({ page, stack }) => {
+  const apps = Array.from({ length: 24 }, (_, i) => appInfo(`a${i}.desktop`, `Application numéro ${i + 1} au nom vraiment très long pour une tuile`))
+  await mockDock(page, { apps: appsTopic(apps) }, { startPage: 'apps', pinned: apps.map((a) => a.id) })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('apps-count')).toHaveText('24 applications')
+  const size = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+  expect(size).toEqual({ w: 1024, h: 600 })
+  const lines = await page.locator('[data-testid="launch-a0.desktop"] .name').evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).lineHeight)))
+  expect(lines).toBeLessThanOrEqual(2)
+  await shot(page, '08-applis-24', 'd')
+})
+
+test('Applis : une icône qui manque ou qui échoue laisse la pastille, sans redemander en boucle', async ({ page, stack }) => {
+  const mock = await mockDock(page, { apps: appsTopic([appInfo('a.desktop', 'Firefox', { icon: 'aaaaaaaaaaaaaaaa' }), appInfo('b.desktop', 'Brave', { icon: 'bbbbbbbbbbbbbbbb' })]) }, {
+    startPage: 'apps',
+    pinned: ['a.desktop', 'b.desktop'],
+    onAct: (act) => {
+      if (act.a !== 'apps.icon') return undefined
+      return act.p.icon === 'aaaaaaaaaaaaaaaa' ? { r: { mime: 'image/png', data: PIXEL } } : refuse('Icône introuvable dans le thème.')
+    },
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('launch-a.desktop').locator('img')).toHaveAttribute('src', /^data:image\/png/)
+  await expect(page.getByTestId('launch-b.desktop').locator('b')).toHaveText('B')
+  await page.waitForTimeout(500)
+  expect(mock.acts.filter((a) => a.a === 'apps.icon').map((a) => a.p.icon).sort()).toEqual(['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb'])
+})
+
+test('Sélecteur : à vingt-quatre applications on ne peut plus qu’en retirer', async ({ page, stack }) => {
+  const apps = Array.from({ length: 30 }, (_, i) => appInfo(`a${String(i).padStart(2, '0')}.desktop`, `Appli ${String(i).padStart(2, '0')}`))
+  const pinned = apps.slice(0, 24).map((a) => a.id)
+  const mock = await mockDock(page, { apps: appsTopic(apps) }, {
+    startPage: 'apps',
+    pinned,
+    onAct: (act, _ws) => {
+      if (act.a === 'dock.ui.set') mock.push('ui', ui('apps', act.p.pinned_apps as string[]))
+      return act.a === 'dock.ui.set' ? { r: {} } : undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('apps-edit').tap()
+  await expect(page.getByTestId('picker-chosen')).toContainText('24/24')
+  for (const id of ['a24.desktop', 'a29.desktop']) await expect(page.getByTestId(`pick-${id}`)).toBeDisabled()
+  await expect(page.getByTestId('pick-a00.desktop')).toBeEnabled() // retirer reste possible
+  await shot(page, '09-selecteur-plein', 'd')
+  await page.getByTestId('pick-a00.desktop').tap()
+  await expect(page.getByTestId('picker-chosen')).toContainText('23/24')
+  await expect(page.getByTestId('pick-a24.desktop')).toBeEnabled()
+  await page.getByTestId('pick-a24.desktop').tap()
+  await expect(page.getByTestId('picker-chosen')).toContainText('24/24')
+  expect(mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => (a.p.pinned_apps as string[]).length)).toEqual([23, 24])
+})
+
+const game = (appid: number, name: string, played: number | null = null) => ({ appid, name, size: 1_000_000_000, played })
+
+test('Steam : pas installé, la page le dit au lieu de rester vide', async ({ page, stack }) => {
+  const message = "Steam n'est pas installé sur ce PC (aucun dossier Steam trouvé)."
+  await mockDock(page, { steam: { unavailable: message, games: [], client: false, running: null } }, { startPage: 'steam' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('steam-unavailable')).toContainText('Steam indisponible')
+  await expect(page.getByTestId('steam-unavailable')).toContainText(message)
+  await shot(page, '10-steam-absent', 'd')
+})
+
+test('Steam : installé mais sans jeu, un jeu en cours inconnu de la liste reste signalé', async ({ page, stack }) => {
+  await mockDock(page, { steam: { games: [], client: true, running: 123 } }, { startPage: 'steam' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('steam-empty')).toContainText('Aucun jeu installé')
+  await expect(page.getByTestId('steam-running')).toContainText('jeu n° 123')
+})
+
+test('Steam : cent cinquante jeux, les jaquettes ne sont demandées qu’au fil du défilement', async ({ page, stack }) => {
+  const games = Array.from({ length: 150 }, (_, i) => game(1000 + i, `Jeu ${String(i).padStart(3, '0')}`, 1_700_000_000 - i * 1000))
+  const mock = await mockDock(page, { steam: { games, client: false, running: null } }, {
+    startPage: 'steam',
+    onAct: (act) => (act.a === 'steam.cover' ? { r: { mime: 'image/png', data: PIXEL } } : undefined),
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('steam-count')).toHaveText('150 jeux')
+  await page.waitForTimeout(800)
+  const first = mock.acts.filter((a) => a.a === 'steam.cover').length
+  expect(first).toBeGreaterThan(5)
+  expect(first).toBeLessThan(40) // pas 150 d'un coup : seulement ce qui est visible, avec une marge
+  await page.getByTestId('page-steam').evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  await page.waitForTimeout(800)
+  const later = mock.acts.filter((a) => a.a === 'steam.cover').map((a) => a.p.appid)
+  expect(later.length).toBeGreaterThan(first)
+  expect(later).toContain(1149) // le dernier jeu, arrivé à l'écran
+  expect(new Set(later).size).toBe(later.length) // jamais deux fois la même jaquette
+})
+
+test('Steam : un jeu sans jaquette garde son nom, et on ne la redemande pas', async ({ page, stack }) => {
+  const mock = await mockDock(page, { steam: { games: [game(1, 'Sans pochette'), game(2, 'Avec pochette')], client: false, running: null } }, {
+    startPage: 'steam',
+    onAct: (act) => {
+      if (act.a !== 'steam.cover') return undefined
+      return act.p.appid === 2 ? { r: { mime: 'image/png', data: PIXEL } } : { ok: false, e: { code: 'no_cover', msg: 'Pas de jaquette dans le cache de Steam.' } }
+    },
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('game-2').locator('img')).toHaveAttribute('src', /^data:image\/png/)
+  await expect(page.getByTestId('game-1').locator('.plain')).toHaveText('Sans pochette')
+  await page.waitForTimeout(600)
+  expect(mock.acts.filter((a) => a.a === 'steam.cover' && a.p.appid === 1)).toHaveLength(1)
+})
+
+test('Steam : le jeu en cours passe en tête, un refus de lancement est affiché', async ({ page, stack }) => {
+  await mockDock(page, { steam: { games: [game(1, 'Premier', 900), game(2, 'Deuxième', 100), game(3, 'Troisième', 500)], client: true, running: 2 } }, {
+    startPage: 'steam',
+    onAct: (act) => (act.a === 'steam.launch' ? refuse('Impossible de démarrer Steam : « steam » est introuvable.') : undefined),
+  })
+  await page.goto(stack.url)
+  const order = await page.locator('[data-testid="steam-grid"] .game').evaluateAll((els) => els.map((el) => el.getAttribute('title')))
+  expect(order).toEqual(['Deuxième', 'Premier', 'Troisième']) // celui qui tourne d'abord, puis les plus récents
+  await expect(page.getByTestId('badge-2')).toHaveText('En cours')
+  await page.getByTestId('game-1').tap()
+  await expect(page.getByTestId('toast')).toContainText('« steam » est introuvable')
+  await expect(page.getByTestId('badge-1')).toHaveCount(0)
+})
+
+test('Office : LibreOffice absent, la page le dit', async ({ page, stack }) => {
+  await mockDock(page, { office: { unavailable: "LibreOffice n'est pas installé sur ce PC.", kinds: [], recent: [] } }, { startPage: 'office' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('office-unavailable')).toContainText('LibreOffice indisponible')
+  await expect(page.getByTestId('office-new')).toHaveCount(0)
+  await shot(page, '11-office-absent', 'd')
+})
+
+test('Office : sans document récent, les trois boutons restent utilisables', async ({ page, stack }) => {
+  const mock = await mockDock(page, { office: { kinds: ['writer', 'calc', 'impress'], recent: [] } }, { startPage: 'office' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('office-none')).toContainText('Aucun document récent')
+  for (const kind of ['writer', 'calc', 'impress']) await page.getByTestId(`new-${kind}`).tap()
+  expect(mock.acts.filter((a) => a.a === 'office.new').map((a) => a.p.kind)).toEqual(['writer', 'calc', 'impress'])
+})
+
+test('Office : des noms de document démesurés sont coupés et la liste défile dans sa carte', async ({ page, stack }) => {
+  const recent = Array.from({ length: 12 }, (_, i) => ({
+    id: i.toString(16).padStart(16, '0'),
+    name: `Document ${i + 1} — compte rendu détaillé de la réunion annuelle des copropriétaires de la résidence.odt`,
+    kind: ['writer', 'calc', 'impress', 'draw', 'other'][i % 5],
+    where: '~/Documents/Administratif/Copropriété/2026/Assemblées générales',
+    modified: i === 3 ? null : Math.floor(Date.now() / 1000) - 3600 * (i + 1),
+  }))
+  await mockDock(page, { office: { kinds: ['writer', 'calc', 'impress'], recent } }, { startPage: 'office' })
+  await page.goto(stack.url)
+  const size = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+  expect(size).toEqual({ w: 1024, h: 600 })
+  const list = page.locator('[data-testid="office-recent"] .list')
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  const row = (await page.getByTestId(`recent-${recent[0].id}`).boundingBox())!
+  const when = (await page.getByTestId(`recent-${recent[0].id}`).locator('.when').boundingBox())!
+  expect(when.x + when.width).toBeLessThanOrEqual(row.x + row.width + 1)
 })

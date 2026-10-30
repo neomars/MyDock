@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from 'svelte'
   import { onMount } from 'svelte'
+  import AppPicker from './components/AppPicker.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import DebugOverlay from './components/DebugOverlay.svelte'
   import Keyboard from './components/Keyboard.svelte'
@@ -20,6 +21,9 @@
   const loaders: Partial<Record<PageId, () => Promise<{ default: Component }>>> = {
     music: () => import('./pages/Music.svelte'),
     sound: () => import('./pages/Sound.svelte'),
+    apps: () => import('./pages/Apps.svelte'),
+    steam: () => import('./pages/Steam.svelte'),
+    office: () => import('./pages/Office.svelte'),
     system: () => import('./pages/System.svelte'),
     power: () => import('./pages/Power.svelte'),
     settings: () => import('./pages/Settings.svelte'),
@@ -90,6 +94,7 @@
   <TabBar {pages} current={currentId} onSelect={select} />
 </div>
 
+<AppPicker />
 <Keyboard />
 <ConfirmDialog />
 <Toast />

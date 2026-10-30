@@ -5,6 +5,7 @@
 // Les pochettes sont demandées une fois par morceau (`music.art`) et gardées en mémoire.
 
 import { activePlayer, positionNow } from './music'
+import { pictureUrl } from './pictures.svelte'
 import type { MusicData, PlayerInfo } from './protocol'
 import { sock } from './socket.svelte'
 import { notify } from './toast.svelte'
@@ -47,8 +48,9 @@ class MusicStore {
     this.asking.add(art)
     const ack = await sock.act('music.art', { art }, { timeoutMs: 20_000 })
     this.asking.delete(art)
-    if (ack.ok && ack.r) {
-      this.arts = { ...this.arts, [art]: `data:${ack.r.mime};base64,${ack.r.data}` }
+    const url = ack.ok ? pictureUrl(ack.r) : null
+    if (url) {
+      this.arts = { ...this.arts, [art]: url }
     } else {
       this.failed.add(art) // pas de nouvel essai à chaque instantané : le titre suffit
     }

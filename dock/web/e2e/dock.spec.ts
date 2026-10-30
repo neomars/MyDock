@@ -72,9 +72,9 @@ test('retrouve la dernière page affichée après un rechargement', async ({ doc
 })
 
 test('une page non livrée dit ce qu’elle offrira et à quelle étape', async ({ dock }) => {
-  await dock.getByTestId('tab-steam').tap()
-  await expect(dock.getByTestId('soon')).toContainText('jaquettes')
-  await expect(dock.getByTestId('soon')).toContainText('étape d')
+  await dock.getByTestId('tab-markets').tap()
+  await expect(dock.getByTestId('soon')).toContainText('cotations')
+  await expect(dock.getByTestId('soon')).toContainText('étape e')
   await shot(dock, '10-page-a-venir')
 })
 

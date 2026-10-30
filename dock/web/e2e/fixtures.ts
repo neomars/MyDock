@@ -109,10 +109,10 @@ export { expect }
 
 /**
  * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
- * MYDOCK_SHOTS=c ne refait que les captures de l'étape c, MYDOCK_SHOTS=a ou b celles des étapes
+ * MYDOCK_SHOTS=d ne refait que les captures de l'étape d, MYDOCK_SHOTS=a, b ou c celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)

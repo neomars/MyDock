@@ -139,3 +139,19 @@ export function formatUsage(used: number, total: number): string {
   }
   return `${part(used)}${NBSP}/${NBSP}${part(total)}${NBSP}${units[unit]}`
 }
+
+const SHORT_DATE = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' })
+const LONG_DATE = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })
+
+/** « à l'instant », « il y a 5 min », « il y a 3 h », « hier », « il y a 4 j », puis la date. */
+export function formatAgo(seconds: number, nowSeconds: number): string {
+  const elapsed = Math.max(0, nowSeconds - seconds)
+  if (elapsed < 45) return 'à l’instant'
+  if (elapsed < 3_600) return `il y a ${Math.max(1, Math.round(elapsed / 60))}${NBSP}min`
+  if (elapsed < 86_400) return `il y a ${Math.round(elapsed / 3_600)}${NBSP}h`
+  if (elapsed < 2 * 86_400) return 'hier'
+  if (elapsed < 30 * 86_400) return `il y a ${Math.floor(elapsed / 86_400)}${NBSP}j`
+  const date = new Date(seconds * 1_000)
+  const sameYear = date.getFullYear() === new Date(nowSeconds * 1_000).getFullYear()
+  return (sameYear ? SHORT_DATE : LONG_DATE).format(date)
+}

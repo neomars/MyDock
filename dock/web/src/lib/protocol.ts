@@ -199,6 +199,55 @@ export interface AudioData {
   unavailable?: string
 }
 
+/** Une application installée sur le PC (thème « apps »). `icon` : identifiant à demander par `apps.icon`. */
+export interface AppInfo {
+  id: string
+  name: string
+  generic: string | null
+  icon: string | null
+}
+
+export interface AppsData {
+  count: number
+  apps: AppInfo[]
+  unavailable?: string
+}
+
+/** Un jeu Steam installé (thème « steam »). La jaquette se demande par `steam.cover`. */
+export interface GameInfo {
+  appid: number
+  name: string
+  size: number
+  /** Dernière partie (ou dernière mise à jour), en secondes epoch. */
+  played: number | null
+}
+
+export interface SteamData {
+  /** Le client Steam tourne. */
+  client: boolean
+  /** Le jeu en cours, s'il y en a un. */
+  running: number | null
+  games: GameInfo[]
+  unavailable?: string
+}
+
+export type OfficeKind = 'writer' | 'calc' | 'impress' | 'draw' | 'other'
+
+export interface RecentDocument {
+  id: string
+  name: string
+  kind: OfficeKind
+  /** Dossier du document, raccourci (« ~/Documents/Travail »). */
+  where: string
+  modified: number | null
+}
+
+export interface OfficeData {
+  kinds: ('writer' | 'calc' | 'impress')[]
+  recent: RecentDocument[]
+  unavailable?: string
+}
+
 export interface WolInfo {
   mac: string | null
   source: 'auto' | 'manual' | null
@@ -223,6 +272,8 @@ export interface UiState {
   last_page: PageId
   order: PageId[]
   hidden: PageId[]
+  /** Identifiants .desktop des applications du lanceur, dans l'ordre choisi. */
+  pinned_apps: string[]
 }
 
 export interface Ack {

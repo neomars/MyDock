@@ -6,6 +6,8 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { editText } from '../lib/keyboard.svelte'
   import { formatMs, ifaceKindLabel, type LatencyStats } from '../lib/format'
+  import { MAX_PINNED } from '../lib/launcher'
+  import { picker } from '../lib/picker.svelte'
   import type { Ack } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
@@ -197,6 +199,21 @@
           </dd>
         </dl>
       {/if}
+    </section>
+
+    <section class="card" data-testid="settings-launcher">
+      <h2>Lanceur d'applications</h2>
+      <p data-testid="launcher-count">
+        {#if (sock.ui?.pinned_apps.length ?? 0) === 0}
+          Aucune application choisie pour la page Applis.
+        {:else}
+          {sock.ui?.pinned_apps.length} application{(sock.ui?.pinned_apps.length ?? 0) > 1 ? 's' : ''} sur {MAX_PINNED} au plus, dans l'ordre que tu as choisi.
+        {/if}
+      </p>
+      <button class="btn" data-testid="choose-apps" disabled={!sock.connected} onclick={() => picker.show()}>
+        Choisir les applications…
+      </button>
+      {#if !sock.connected}<p class="dim small">Le PC doit être allumé : c'est lui qui connaît ses applications.</p>{/if}
     </section>
 
     <section class="card" data-testid="settings-about">
