@@ -17,6 +17,9 @@ from mydock_agent.testing import eventually, recv_until, running_agent, send_jso
 from mydock_common.actions import ActionError
 
 REAL_ACTIONS = [
+    "audio.set_default",
+    "audio.set_mute",
+    "audio.set_volume",
     "diag.ping",
     "music.art",
     "music.next",
@@ -35,7 +38,7 @@ def test_the_whitelist_of_actions_is_exactly_this_and_nothing_else():
     assert registry.names == REAL_ACTIONS
 
 
-def test_the_only_sensitive_action_of_this_stage_is_stopping_a_process():
+def test_the_only_sensitive_action_of_this_stage_is_still_stopping_a_process():
     _, registry = build_runtime(demo=False)
     assert [n for n in registry.names if registry.is_sensitive(n)] == ["system.kill"]
 
@@ -48,8 +51,8 @@ def test_the_demo_adds_only_a_harmless_confirmation_test():
 def test_both_modes_publish_the_same_topics():
     for demo in (True, False):
         providers, _ = build_runtime(demo=demo)
-        assert [p.topic for p in providers] == ["host", "system", "procs", "music"]
-        assert [p.lazy for p in providers] == [False, True, True, True]
+        assert [p.topic for p in providers] == ["host", "system", "procs", "music", "audio"]
+        assert [p.lazy for p in providers] == [False, True, True, True, True]
 
 
 # --- DemoMusic ---------------------------------------------------------------------------------------
@@ -163,9 +166,10 @@ async def hello_and_subscribe(ws, *topics):
 async def test_the_demo_agent_stays_idle_until_someone_subscribes(demo_agent):
     assert demo_agent.hub.running_topics() == ["host"]
     async with demo_agent.connect() as ws:
-        await hello_and_subscribe(ws, "system", "procs", "music")
+        await hello_and_subscribe(ws, "system", "procs", "music", "audio")
         await recv_until(ws, lambda m: m.get("topic") == "music")
-        assert demo_agent.hub.running_topics() == ["host", "music", "procs", "system"]
+        await recv_until(ws, lambda m: m.get("topic") == "audio")
+        assert demo_agent.hub.running_topics() == ["audio", "host", "music", "procs", "system"]
     await eventually(lambda: demo_agent.hub.running_topics() == ["host"], timeout=5)
 
 
@@ -208,6 +212,45 @@ async def test_music_controls_work_over_the_wire(demo_agent):
         await send_json(ws, {"t": "act", "id": "a1", "a": "music.art", "p": {"art": art}})
         picture = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "a1")
         assert picture["r"]["mime"] == "image/svg+xml"
+
+
+async def test_audio_controls_work_over_the_wire(demo_agent):
+    async with demo_agent.connect() as ws:
+        await hello_and_subscribe(ws, "audio")
+        first = await recv_until(ws, lambda m: m.get("topic") == "audio")
+        data = first["data"]
+        assert data["default_sink"] in [s["id"] for s in data["sinks"]]
+        assert data["apps"][0]["name"] == "Spotify"
+        assert data["recorders"][0]["name"] == "Discord"  # le micro est en cours d'utilisation
+
+        order = {"t": "act", "id": "v1", "a": "audio.set_volume"}
+        await send_json(
+            ws, {**order, "p": {"kind": "sink", "id": data["default_sink"], "percent": 12}}
+        )
+        ack = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "v1")
+        assert ack["ok"] is True
+        await recv_until(
+            ws,
+            lambda m: (
+                m.get("topic") == "audio"
+                and next(s for s in m["data"]["sinks"] if s["id"] == data["default_sink"])["volume"]
+                == 12
+            ),
+        )
+
+        mute = {"t": "act", "id": "m1", "a": "audio.set_mute"}
+        await send_json(ws, {**mute, "p": {"kind": "app", "id": "101", "muted": True}})
+        await recv_until(
+            ws,
+            lambda m: (
+                m.get("topic") == "audio"
+                and next(a for a in m["data"]["apps"] if a["id"] == "101")["muted"] is True
+            ),
+        )
+
+        await send_json(ws, {**order, "id": "v2", "p": {"kind": "sink", "id": "x", "percent": 500}})
+        refused = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "v2")
+        assert refused["e"]["code"] == "bad_params"
 
 
 async def test_stopping_a_process_asks_for_confirmation_then_removes_it(demo_agent):

@@ -4,8 +4,11 @@ import ipaddress
 import subprocess
 
 from mydock_agent import doctor, firewall
+from mydock_agent.collectors.audio import PactlError, PactlMissing
 from mydock_agent.config import AgentConfig
+from mydock_agent.demo.audio import DemoPactl
 from mydock_agent.doctor import (
+    check_audio,
     check_config,
     check_firewall,
     check_from_pi,
@@ -419,4 +422,72 @@ def test_a_missing_session_bus_explains_where_to_run_the_doctor():
     text = report.render()
     assert "injoignable" in text
     assert "session graphique" in text
+    assert not report.failed
+
+
+# --- son ---------------------------------------------------------------------------------------------
+
+
+def test_the_sound_server_and_its_devices_are_listed():
+    report = Report()
+    check_audio(report, DemoPactl)
+    text = report.render()
+    assert "PulseAudio (on PipeWire" in text
+    assert (
+        "Sorties (3) : Haut-parleurs (par défaut, 54 %), WH-1000XM4 (40 %), HDMI 1 (100 %)" in text
+    )
+    assert "Micros (2) : Micro intégré (par défaut, 70 %)" in text
+    assert "Applications : Spotify, Brave, Discord" in text
+    assert not report.failed
+
+
+def test_a_muted_default_output_is_reported_as_muted():
+    def muted():
+        pactl = DemoPactl()
+        pactl.sinks[0]["mute"] = True
+        return pactl
+
+    report = Report()
+    check_audio(report, muted)
+    assert "Haut-parleurs (par défaut, muet)" in report.render()
+
+
+def test_a_missing_pactl_says_how_to_install_it():
+    class Missing(DemoPactl):
+        async def query(self, *args):
+            raise PactlMissing("pactl est introuvable.")
+
+    report = Report()
+    check_audio(report, Missing)
+    text = report.render()
+    assert "sudo apt install pulseaudio-utils" in text
+    assert not report.failed  # le son est facultatif : un avertissement, pas une panne
+
+
+def test_a_sound_server_that_does_not_answer_points_to_the_session_and_the_service():
+    class Down(DemoPactl):
+        async def query(self, *args):
+            raise PactlError("Connection failure: Connection refused")
+
+    report = Report()
+    check_audio(report, Down)
+    text = report.render()
+    assert "Connection failure: Connection refused" in text
+    assert "session graphique" in text
+    assert "systemctl --user status pipewire-pulse" in text
+    assert not report.failed
+
+
+def test_no_output_and_no_microphone_are_noted():
+    def empty():
+        pactl = DemoPactl()
+        pactl.sinks.clear()
+        pactl.sources.clear()
+        return pactl
+
+    report = Report()
+    check_audio(report, empty)
+    text = report.render()
+    assert "Aucune sortie audio détectée" in text
+    assert "Aucun micro détecté" in text
     assert not report.failed

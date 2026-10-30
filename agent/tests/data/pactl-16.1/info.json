@@ -1,0 +1,8 @@
+{
+ "server_name": "PulseAudio (on PipeWire 1.0.5)",
+ "server_version": "15.0.0",
+ "default_sample_specification": "float32le 2ch 48000Hz",
+ "default_channel_map": "front-left,front-right",
+ "default_sink_name": "casque",
+ "default_source_name": "micro_test"
+}

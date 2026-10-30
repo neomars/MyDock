@@ -16,6 +16,7 @@ import psutil
 
 from mydock_agent import __version__, firewall
 from mydock_agent.access import local_lan_networks
+from mydock_agent.collectors import audio as audio_module
 from mydock_agent.collectors import gpu as gpu_module
 from mydock_agent.collectors import music as music_module
 from mydock_agent.collectors.host import list_interfaces
@@ -349,6 +350,69 @@ def check_music(
         report.add(INFO, f"    {player_id}" + (f"  ({identity})" if identity else ""))
 
 
+async def _read_audio(pactl: audio_module.Pactl) -> tuple[dict, dict]:
+    provider = audio_module.AudioProvider(pactl)
+    info = await pactl.query("info")
+    await provider.read_all()
+    return info if isinstance(info, dict) else {}, provider.snapshot()
+
+
+def _describe_devices(devices: list[dict], default: str | None) -> str:
+    parts = []
+    for device in devices:
+        volume = "muet" if device["muted"] else f"{device['volume']} %"
+        parts.append(
+            f"{device['label']} ({'par défaut, ' if device['id'] == default else ''}{volume})"
+        )
+    return ", ".join(parts)
+
+
+def check_audio(
+    report: Report, factory: Callable[[], audio_module.Pactl] = audio_module.SubprocessPactl
+) -> None:
+    """Le serveur de son (PipeWire ou PulseAudio) et ce que l'agent y voit."""
+    report.section("Son (pactl)")
+    try:
+        info, state = asyncio.run(_read_audio(factory()))
+    except audio_module.PactlMissing:
+        report.add(
+            WARN,
+            "pactl est introuvable : la page Son sera indisponible. "
+            "Installe-le avec : sudo apt install pulseaudio-utils",
+        )
+        return
+    except audio_module.PactlError as exc:
+        report.add(
+            WARN,
+            f"Le serveur de son ne répond pas ({str(exc).rstrip('. ')}). Lance le diagnostic depuis un "
+            "terminal de ta session graphique (le son est celui de cette session) ; "
+            "sinon regarde : systemctl --user status pipewire-pulse",
+        )
+        return
+    report.add(OK, f"Serveur de son : {info.get('server_name', 'inconnu')}")
+    sinks, sources = state["sinks"], state["sources"]
+    if sinks:
+        report.add(
+            OK, f"Sorties ({len(sinks)}) : {_describe_devices(sinks, state['default_sink'])}"
+        )
+        if state["default_sink"] is None:
+            report.add(
+                WARN, "Aucune sortie par défaut : choisis-en une dans les réglages du bureau"
+            )
+    else:
+        report.add(WARN, "Aucune sortie audio détectée (carte son absente ou pilote non chargé)")
+    if sources:
+        report.add(
+            OK, f"Micros ({len(sources)}) : {_describe_devices(sources, state['default_source'])}"
+        )
+    else:
+        report.add(INFO, "Aucun micro détecté")
+    if state["apps"]:
+        report.add(INFO, "Applications : " + ", ".join(a["name"] for a in state["apps"]))
+    else:
+        report.add(INFO, "Aucune application ne joue de son pour l'instant")
+
+
 def check_tools(report: Report) -> None:
     report.section("Outils système")
     for name, why, required in (
@@ -438,6 +502,7 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     check_sensors(report)
     check_gpus(report)
     check_music(report)
+    check_audio(report)
     if config is not None:
         check_running(report, config, cpu_seconds)
         check_from_pi(report, config)

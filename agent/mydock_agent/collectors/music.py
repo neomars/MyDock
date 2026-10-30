@@ -66,12 +66,12 @@ def unwrap(value: Any) -> Any:
     return inner
 
 
-def clean_text(value: Any) -> str | None:
+def clean_text(value: Any, limit: int = TEXT_LIMIT) -> str | None:
     """Texte affichable : sans caractères de contrôle, de longueur raisonnable."""
     if value is None:
         return None
     text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value)).strip()
-    return text[:TEXT_LIMIT] or None
+    return text[:limit] or None
 
 
 def base_id(player_id: str) -> str:

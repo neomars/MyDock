@@ -7,11 +7,13 @@ sert pour démarrer, les tests pour vérifier que la liste blanche ne contient q
 from __future__ import annotations
 
 from mydock_agent.builtin_actions import register_builtin
+from mydock_agent.collectors.audio import AudioProvider, register_audio_actions
 from mydock_agent.collectors.host import HostProvider
 from mydock_agent.collectors.music import MusicProvider, register_music_actions
 from mydock_agent.collectors.procs import ProcsProvider, register_system_actions
 from mydock_agent.collectors.system import SystemProvider
 from mydock_agent.demo import DemoHostProvider
+from mydock_agent.demo.audio import DemoPactl
 from mydock_agent.demo.music import DemoMusic
 from mydock_agent.demo.system import (
     DemoProcessSource,
@@ -29,18 +31,23 @@ def build_runtime(*, demo: bool) -> tuple[list[Provider], ActionRegistry]:
         music = DemoMusic()
         source = DemoProcessSource()
         procs = ProcsProvider(source)
+        audio = AudioProvider(DemoPactl())
         providers: list[Provider] = [
             DemoHostProvider(),
             SystemProvider(DemoSensors()),
             procs,
             music,
+            audio,
         ]
         register_demo_system_actions(registry, procs, source)
         register_music_actions(registry, music)
+        register_audio_actions(registry, audio)
     else:
         real_music = MusicProvider()
         real_procs = ProcsProvider()
-        providers = [HostProvider(), SystemProvider(), real_procs, real_music]
+        real_audio = AudioProvider()
+        providers = [HostProvider(), SystemProvider(), real_procs, real_music, real_audio]
         register_system_actions(registry, real_procs)
         register_music_actions(registry, real_music)
+        register_audio_actions(registry, real_audio)
     return providers, registry

@@ -1,0 +1,111 @@
+[
+ {
+  "index": 64,
+  "driver": "PipeWire",
+  "owner_module": null,
+  "client": "63",
+  "sink": 51,
+  "sample_specification": "s16le 2ch 48000Hz",
+  "channel_map": "front-left,front-right",
+  "format": "pcm, format.sample_format = \"\\\"s16le\\\"\"  format.rate = \"48000\"  format.channels = \"2\"  format.channel_map = \"\\\"front-left,front-right\\\"\"",
+  "corked": false,
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 32768,
+    "value_percent": "50%",
+    "db": "-18.06 dB"
+   },
+   "front-right": {
+    "value": 32768,
+    "value_percent": "50%",
+    "db": "-18.06 dB"
+   }
+  },
+  "balance": 0.0,
+  "buffer_latency_usec": 0.0,
+  "sink_latency_usec": 0.0,
+  "resample_method": "PipeWire",
+  "properties": {
+   "application.name": "Spotify",
+   "node.name": "pw-cat",
+   "media.name": "Nuit blanche",
+   "application.icon_name": "spotify-client",
+   "node.rate": "1/48000",
+   "node.latency": "4800/48000",
+   "media.type": "Audio",
+   "media.category": "Playback",
+   "media.role": "music",
+   "media.filename": "-",
+   "stream.is-live": "true",
+   "node.want-driver": "true",
+   "node.autoconnect": "true",
+   "media.class": "Stream/Output/Audio",
+   "adapt.follower.spa-node": "",
+   "object.register": "false",
+   "factory.id": "8",
+   "clock.quantum-limit": "8192",
+   "factory.mode": "split",
+   "audio.adapt.follower": "",
+   "library.name": "audioconvert/libspa-audioconvert",
+   "client.id": "50",
+   "object.id": "51",
+   "object.serial": "64",
+   "module-stream-restore.id": "sink-input-by-media-role:music"
+  }
+ },
+ {
+  "index": 107,
+  "driver": "PipeWire",
+  "owner_module": null,
+  "client": "106",
+  "sink": 51,
+  "sample_specification": "s16le 2ch 48000Hz",
+  "channel_map": "front-left,front-right",
+  "format": "pcm, format.sample_format = \"\\\"s16le\\\"\"  format.rate = \"48000\"  format.channels = \"2\"  format.channel_map = \"\\\"front-left,front-right\\\"\"",
+  "corked": false,
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 65536,
+    "value_percent": "100%",
+    "db": "0.00 dB"
+   },
+   "front-right": {
+    "value": 65536,
+    "value_percent": "100%",
+    "db": "0.00 dB"
+   }
+  },
+  "balance": 0.0,
+  "buffer_latency_usec": 0.0,
+  "sink_latency_usec": 0.0,
+  "resample_method": "PipeWire",
+  "properties": {
+   "application.name": "GNOME Shell",
+   "node.name": "pw-cat",
+   "media.name": "Sound event",
+   "node.rate": "1/48000",
+   "node.latency": "4800/48000",
+   "media.type": "Audio",
+   "media.category": "Playback",
+   "media.role": "event",
+   "media.filename": "-",
+   "stream.is-live": "true",
+   "node.want-driver": "true",
+   "node.autoconnect": "true",
+   "media.class": "Stream/Output/Audio",
+   "adapt.follower.spa-node": "",
+   "object.register": "false",
+   "factory.id": "8",
+   "clock.quantum-limit": "8192",
+   "factory.mode": "split",
+   "audio.adapt.follower": "",
+   "library.name": "audioconvert/libspa-audioconvert",
+   "client.id": "70",
+   "object.id": "72",
+   "object.serial": "107",
+   "module-stream-restore.id": "sink-input-by-media-role:event"
+  }
+ }
+]
