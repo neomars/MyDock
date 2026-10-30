@@ -8,7 +8,8 @@ from mydock_agent.testing import TOKEN, running_agent
 from mydock_common.report import Report
 from mydock_dock import doctor
 from mydock_dock.config import DockConfig
-from mydock_dock.doctor import TcpResult, _check_pc, ping, tcp_probe
+from mydock_dock.doctor import TcpResult, _check_pc, check_screen, ping, tcp_probe
+from mydock_dock.store import StateStore
 from mydock_dock.testing import free_port
 
 
@@ -161,3 +162,62 @@ async def test_nothing_is_tested_without_address_or_token(tmp_path):
     text, failed = await run_check(DockConfig.from_dict({}, tmp_path / "d.toml"))
     assert not failed
     assert "rien à tester" in text
+
+
+# --- veille de l'écran ----------------------------------------------------------------------------
+
+
+def screen_report(tmp_path, *, seconds=0, tools=(), running=False) -> str:
+    config = DockConfig.from_dict(
+        {
+            "pc": {"host": "192.0.2.10", "port": 8765, "token": TOKEN},
+            "paths": {"state_dir": str(tmp_path)},
+        },
+        tmp_path / "d.toml",
+    )
+    assert config.state_dir == tmp_path  # le vrai dossier du dock n'est jamais touché par un test
+    StateStore(config.state_dir).update_ui({"screen_sleep": seconds})
+    report = Report()
+    check_screen(
+        report,
+        config,
+        which=lambda name: f"/usr/bin/{name}" if name in tools else None,
+        running=lambda: running,
+    )
+    return report.render()
+
+
+def test_a_screen_that_never_sleeps_is_not_a_problem_even_without_the_tools(tmp_path):
+    out = screen_report(tmp_path, seconds=0)
+    assert "Veille : jamais" in out
+    assert "⚠" not in out
+    assert "swayidle absent" in out
+
+
+def test_a_chosen_delay_needs_swayidle_and_a_way_to_power_the_screen_off(tmp_path):
+    out = screen_report(tmp_path, seconds=300)
+    assert "Veille : après 5 min" in out
+    assert "⚠ swayidle absent" in out
+    assert "sudo apt install swayidle" in out
+    assert "⚠ Ni wlopm ni wlr-randr" in out
+
+
+def test_everything_in_place_is_green(tmp_path):
+    out = screen_report(tmp_path, seconds=600, tools=("swayidle", "wlopm"), running=True)
+    assert "✔ Veille : après 10 min" in out
+    assert "✔ swayidle présent" in out
+    assert "✔ wlopm présent" in out
+    assert "✔ Le script de veille tourne" in out
+    assert "⚠" not in out
+
+
+def test_wlr_randr_is_enough_when_wlopm_is_missing(tmp_path):
+    out = screen_report(tmp_path, seconds=60, tools=("swayidle", "wlr-randr"), running=True)
+    assert "wlopm absent : wlr-randr servira" in out
+    assert "⚠" not in out
+
+
+def test_a_script_that_is_not_running_says_how_it_starts(tmp_path):
+    out = screen_report(tmp_path, seconds=60, tools=("swayidle", "wlopm"), running=False)
+    assert "⚠ Le script de veille ne tourne pas" in out
+    assert "journalctl -u mydock-kiosk -e" in out

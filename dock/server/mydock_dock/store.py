@@ -31,13 +31,21 @@ PAGE_IDS = ("music", "sound", "apps", "steam", "office", "markets", "system", "p
 DEFAULT_PAGE = "system"
 ALWAYS_VISIBLE = "settings"  # on ne peut pas cacher Réglages : sinon plus moyen de le réparer
 MAX_PINNED_APPS = 24
+#: Délais d'inactivité (secondes) au bout desquels l'écran du dock s'éteint ; 0 = jamais.
+SCREEN_SLEEP_CHOICES = (0, 60, 300, 600, 1800)
 APP_ID_RE = re.compile(r"^[A-Za-z0-9_.+-]{1,200}\.desktop$")  # identifiant d'un fichier .desktop
 
 
 def _default_state() -> dict[str, Any]:
     return {
         "version": 1,
-        "ui": {"last_page": DEFAULT_PAGE, "order": [], "hidden": [], "pinned_apps": []},
+        "ui": {
+            "last_page": DEFAULT_PAGE,
+            "order": [],
+            "hidden": [],
+            "pinned_apps": [],
+            "screen_sleep": 0,
+        },
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
         "markets": {
             "watchlist": [{"kind": "crypto", "symbol": "BTC"}, {"kind": "crypto", "symbol": "ETH"}],
@@ -72,6 +80,9 @@ class StateStore:
                 self._data[section].update(
                     {k: v for k, v in loaded[section].items() if k in defaults}
                 )
+        ui = self._data["ui"]
+        if not _is_screen_sleep(ui.get("screen_sleep")):
+            ui["screen_sleep"] = 0  # une valeur abîmée ne doit pas atteindre l'écran
 
     def _save(self) -> None:
         try:
@@ -110,6 +121,10 @@ class StateStore:
             new["hidden"] = hidden
         if "pinned_apps" in patch:
             new["pinned_apps"] = _app_list(patch["pinned_apps"])
+        if "screen_sleep" in patch:
+            if not _is_screen_sleep(patch["screen_sleep"]):
+                raise ValidationFailure("Durée de veille de l'écran invalide.")
+            new["screen_sleep"] = patch["screen_sleep"]
         if new != ui:
             self._data["ui"] = new
             self._save()
@@ -153,6 +168,10 @@ class StateStore:
         if changed:
             self._save()
         return changed
+
+
+def _is_screen_sleep(value: Any) -> bool:
+    return type(value) is int and value in SCREEN_SLEEP_CHOICES
 
 
 def _page_list(value: Any, label: str) -> list[str]:

@@ -12,6 +12,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -226,6 +227,69 @@ def check_wol(report: Report, config: DockConfig) -> None:
         )
 
 
+def sleep_script_running() -> bool:
+    """Le script de veille (lancé avec le kiosque) tourne-t-il ? Il se reconnaît à son nom."""
+    if not shutil.which("pgrep"):
+        return False
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "deploy/pi/screen-sleep.sh"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def check_screen(
+    report: Report,
+    config: DockConfig,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    running: Callable[[], bool] = sleep_script_running,
+) -> None:
+    """Veille de l'écran : le délai choisi, et ce qui doit exister sur le Pi pour que le rétroéclairage s'éteigne."""
+    report.section("Écran du dock (veille)")
+    seconds = StateStore(config.state_dir).ui["screen_sleep"]
+    if seconds == 0:
+        report.add(INFO, "Veille : jamais (Réglages → Écran du dock pour choisir un délai)")
+    else:
+        report.add(
+            OK, f"Veille : après {seconds // 60} min sans toucher (Réglages → Écran du dock)"
+        )
+    asked = seconds > 0
+    swayidle = which("swayidle")
+    if swayidle:
+        report.add(OK, "swayidle présent (surveille les touchers)")
+    else:
+        report.add(
+            WARN if asked else INFO,
+            "swayidle absent : l'interface noircit l'écran mais le rétroéclairage reste allumé "
+            "(sudo apt install swayidle)",
+        )
+    if which("wlopm"):
+        report.add(OK, "wlopm présent (éteint et rallume l'écran)")
+    elif which("wlr-randr"):
+        report.add(INFO, "wlopm absent : wlr-randr servira à éteindre l'écran")
+    else:
+        report.add(
+            WARN if asked else INFO,
+            "Ni wlopm ni wlr-randr : impossible d'éteindre l'écran (sudo apt install wlr-randr)",
+        )
+    if asked and swayidle:
+        if running():
+            report.add(OK, "Le script de veille tourne (lancé avec le kiosque)")
+        else:
+            report.add(
+                WARN,
+                "Le script de veille ne tourne pas : il démarre avec le kiosque (redémarre le Pi ; "
+                "en cas d'échec : journalctl -u mydock-kiosk -e)",
+            )
+
+
 MARKETS_PROBES = {
     "binance": Instrument("crypto", "BTC"),
     "yahoo": Instrument("stock", "AAPL"),
@@ -350,6 +414,7 @@ def run_doctor(
         check_web(report, config)
         asyncio.run(_check_pc(report, config))
         check_wol(report, config)
+        check_screen(report, config)
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)
     print(report.render())

@@ -7,6 +7,7 @@ from mydock_agent import doctor, firewall
 from mydock_agent.collectors.audio import PactlError, PactlMissing
 from mydock_agent.collectors.desktop import AppsProvider
 from mydock_agent.collectors.office import OfficeProvider
+from mydock_agent.collectors.power import Blocker, Control, PowerState
 from mydock_agent.collectors.steam import SteamProcesses, SteamProvider
 from mydock_agent.config import AgentConfig
 from mydock_agent.demo.apps import DemoWorld
@@ -21,11 +22,14 @@ from mydock_agent.doctor import (
     check_launch,
     check_music,
     check_office,
+    check_power,
     check_sensors,
     check_service,
     check_steam,
     curl_check,
 )
+from mydock_agent.runtime import build_runtime
+from mydock_agent.testing import TOKEN, running_agent
 from mydock_common.auth import generate_token
 from mydock_common.report import Report
 
@@ -593,3 +597,96 @@ def test_the_scope_check_explains_a_failing_or_missing_systemd_run(monkeypatch):
     check_launch(report)
     assert "systemd-run est introuvable" in report.render()
     assert not report.failed
+
+
+# --- alimentation ----------------------------------------------------------------------------------
+
+
+class FakePower:
+    def __init__(self, state: PowerState):
+        self.state = state
+
+    async def probe(self):
+        return self.state
+
+
+def power_state(**controls) -> PowerState:
+    base = {name: Control(True) for name in ("lock", "suspend", "reboot", "poweroff")}
+    base.update(controls)
+    return PowerState("mars-pc", base)
+
+
+def power_text(config=None, *, state=None, seen=None) -> str:
+    report = Report()
+    check_power(
+        report,
+        config,
+        backend=FakePower(state or power_state()),
+        fetch=lambda *_args: seen,
+    )
+    return report.render()
+
+
+def test_the_power_check_prefers_what_the_running_agent_sees():
+    seen = power_state(suspend=Control(False, "Indisponible sur ce PC")).to_dict()
+    out = power_text(make_config(), seen=seen)
+    assert "vus par l'agent en marche" in out
+    assert "✔     Verrouiller : possible" in out
+    assert "⚠     Mettre en veille : Indisponible sur ce PC" in out
+    assert "depuis ce terminal" not in out
+
+
+def test_without_a_running_agent_the_terminal_view_is_shown_and_labelled():
+    out = power_text(make_config(), seen=None)
+    assert "vus depuis ce terminal" in out
+    assert "Éteindre : possible" in out
+    out = power_text(None)  # pas de configuration : on ne cherche même pas l'agent
+    assert "vus depuis ce terminal" in out
+
+
+def test_a_missing_logind_points_at_the_service():
+    state = PowerState(
+        "mars-pc",
+        {
+            n: Control(False, "logind injoignable")
+            for n in ("lock", "suspend", "reboot", "poweroff")
+        },
+        unavailable="Le service de session du PC (logind) ne répond pas.",
+    )
+    out = power_text(state=state)
+    assert "systemctl status systemd-logind" in out
+
+
+def test_blocking_programs_are_named():
+    state = PowerState(
+        "mars-pc",
+        power_state(poweroff=Control(False, "Bloqué par « Mises à jour »")).controls,
+        (Blocker("Mises à jour", "Installation en cours", ("shutdown",)),),
+    )
+    out = power_text(state=state)
+    assert "Éteindre : Bloqué par « Mises à jour »" in out
+    assert "« Mises à jour » s'oppose à l'extinction ou à la veille : Installation en cours" in out
+    assert "polkit" not in out  # un programme qui bloque n'est pas un problème de droits
+
+
+def test_a_password_demand_comes_with_the_polkit_rule_for_the_current_user(monkeypatch):
+    monkeypatch.setattr(doctor.getpass, "getuser", lambda: "mars")
+    state = power_state(reboot=Control(False, "Mot de passe exigé par le système"))
+    out = power_text(state=state)
+    assert "/etc/polkit-1/rules.d/50-mydock-power.rules" in out
+    assert 'subject.user == "mars"' in out
+    for action in ("login1.suspend", "login1.reboot", "login1.power-off"):
+        assert action in out
+    assert "polkit" not in power_text(state=power_state())  # tout va bien : pas de règle à proposer
+
+
+async def test_the_running_agents_own_power_state_can_be_fetched():
+    providers, registry = build_runtime(demo=True)
+    async with running_agent(providers, registry=registry, demo=True) as agent:
+        data = await doctor._agent_topic("127.0.0.1", agent.port, TOKEN, "power")
+        assert data is not None
+        assert data["hostname"] == "pc-demo"
+        assert data["controls"]["poweroff"] == {"ok": True, "why": None}
+        assert await doctor._agent_topic("127.0.0.1", agent.port, "x" * 40, "power") is None
+        port = agent.port
+    assert await doctor._agent_topic("127.0.0.1", port, TOKEN, "power") is None

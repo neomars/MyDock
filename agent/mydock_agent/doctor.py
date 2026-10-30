@@ -6,6 +6,8 @@ Il ne modifie rien et n'affiche jamais le jeton. Code de sortie 1 s'il y a au mo
 from __future__ import annotations
 
 import asyncio
+import getpass
+import json
 import shutil
 import subprocess
 import sys
@@ -22,13 +24,14 @@ from mydock_agent.collectors import music as music_module
 from mydock_agent.collectors.desktop import AppsProvider
 from mydock_agent.collectors.host import list_interfaces
 from mydock_agent.collectors.office import OfficeProvider
+from mydock_agent.collectors.power import SystemPower
 from mydock_agent.collectors.steam import SteamProvider
 from mydock_agent.collectors.system import Sensors, cpu_temperature, disk_temperature
 from mydock_agent.config import AgentConfig, default_config_path, load_config
 from mydock_agent.session import GRAPHICAL_VARS, detect_session, user_manager_environment
 from mydock_common.auth import bearer_headers
 from mydock_common.config import ConfigError
-from mydock_common.protocol import PROTOCOL_VERSION, loads
+from mydock_common.protocol import PROTOCOL_VERSION, ProtocolError, loads
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
 
 LOOPBACK_BINDS = ("127.0.0.1", "localhost")
@@ -518,6 +521,109 @@ def check_office(report: Report, provider: OfficeProvider | None = None) -> None
         )
 
 
+POWER_LABELS = (
+    ("lock", "Verrouiller"),
+    ("suspend", "Mettre en veille"),
+    ("reboot", "Redémarrer"),
+    ("poweroff", "Éteindre"),
+)
+
+
+async def _agent_topic(host: str, port: int, token: str, topic: str) -> dict | None:
+    """L'état d'un thème tel que l'agent EN MARCHE le publie, ou None s'il ne répond pas.
+
+    C'est la seule façon de voir ce que l'agent voit : il tourne dans le service systemd de
+    l'utilisateur, avec d'autres droits qu'un terminal (c'est flagrant pour l'alimentation).
+    """
+    from websockets.asyncio.client import connect
+    from websockets.exceptions import WebSocketException
+
+    try:
+        async with (
+            asyncio.timeout(6),
+            connect(
+                f"ws://{host}:{port}/ws",
+                additional_headers=bearer_headers(token),
+                open_timeout=3,
+                ping_interval=None,
+                proxy=None,
+            ) as ws,
+        ):
+            await ws.send(json.dumps({"t": "sub", "topics": [topic]}))
+            while True:
+                message = loads(await ws.recv())
+                if message.get("t") == "snap" and message.get("topic") == topic:
+                    data = message.get("data")
+                    return data if isinstance(data, dict) else None
+    except (OSError, TimeoutError, WebSocketException, ProtocolError):
+        return None
+
+
+def agent_topic(host: str, port: int, token: str, topic: str) -> dict | None:
+    return asyncio.run(_agent_topic(host, port, token, topic))
+
+
+def polkit_rule(user: str) -> list[str]:
+    """La règle polkit qui autorise veille, redémarrage et extinction sans mot de passe."""
+    return [
+        "    polkit.addRule(function (action, subject) {",
+        f'      if (subject.user == "{user}" && ["org.freedesktop.login1.suspend",',
+        '          "org.freedesktop.login1.reboot", "org.freedesktop.login1.power-off"]',
+        "          .indexOf(action.id) >= 0) {",
+        "        return polkit.Result.YES;",
+        "      }",
+        "    });",
+    ]
+
+
+def check_power(
+    report: Report,
+    config: AgentConfig | None = None,
+    *,
+    backend: SystemPower | None = None,
+    fetch: Callable[[str, int, str, str], dict | None] = agent_topic,
+) -> None:
+    """Ce que le système autorise : vu par l'agent en marche si possible, sinon depuis ce terminal."""
+    report.section("Alimentation (verrouiller, veille, redémarrer, éteindre)")
+    data = None
+    if config is not None:
+        host = "127.0.0.1" if config.bind_host in ("0.0.0.0", "") else config.bind_host
+        data = fetch(host, config.port, config.token, "power")
+    if data is not None:
+        report.add(OK, "Droits vus par l'agent en marche (c'est ceux qui comptent) :")
+    else:
+        data = asyncio.run((backend or SystemPower()).probe()).to_dict()
+        report.add(
+            INFO,
+            "Droits vus depuis ce terminal (l'agent ne répond pas : démarre-le pour voir les siens, "
+            "ils peuvent différer) :",
+        )
+    if data.get("unavailable"):
+        report.add(WARN, f"{data['unavailable']} Vérifie : systemctl status systemd-logind")
+    needs_password = False
+    for control, label in POWER_LABELS:
+        state = (data.get("controls") or {}).get(control) or {}
+        if state.get("ok"):
+            report.add(OK, f"    {label} : possible")
+        else:
+            why = state.get("why") or "inconnu"
+            report.add(WARN, f"    {label} : {why}")
+            needs_password = needs_password or why.startswith("Mot de passe")
+    for blocker in data.get("blockers") or []:
+        report.add(
+            INFO,
+            f"    « {blocker.get('who')} » s'oppose à l'extinction ou à la veille : {blocker.get('why')}",
+        )
+    if needs_password:
+        report.add(
+            INFO,
+            "Pour autoriser ces actions sans mot de passe depuis l'agent, crée "
+            "/etc/polkit-1/rules.d/50-mydock-power.rules (sudo) avec :",
+        )
+        for line in polkit_rule(getpass.getuser()):
+            report.add(INFO, line)
+
+
 def check_tools(report: Report) -> None:
     report.section("Outils système")
     for name, why, required in (
@@ -612,6 +718,7 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     check_apps(report)
     check_steam(report)
     check_office(report)
+    check_power(report, config)
     if config is not None:
         check_running(report, config, cpu_seconds)
         check_from_pi(report, config)

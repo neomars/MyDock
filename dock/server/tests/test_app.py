@@ -182,6 +182,29 @@ async def test_the_launcher_applications_are_shared_between_browsers_and_validat
         assert again["r"]["pinned_apps"] == chosen  # un réglage refusé n'a rien changé
 
 
+async def test_the_screen_sleep_delay_is_shared_validated_and_readable_by_the_pi_script(stack):
+    async with httpx.AsyncClient(trust_env=False, base_url=stack.dock.origin) as client:
+        assert (await client.get("/api/screen")).json() == {"sleep_after": 0}
+        async with stack.dock.connect() as first, stack.dock.connect() as second:
+            await hello_and_topics(first)
+            await hello_and_topics(second)
+            assert (await call(first, "s1", "dock.ui.set", {"screen_sleep": 300}))["ok"] is True
+            assert (await snapshot_of(second, "ui"))["data"]["screen_sleep"] == 300
+            reply = await client.get("/api/screen")
+            assert reply.json() == {"sleep_after": 300}
+            assert reply.headers["cache-control"] == "no-store"
+            for bad in (45, "300", True, -1):
+                refused = await call(first, "s2", "dock.ui.set", {"screen_sleep": bad})
+                assert refused["ok"] is False
+            assert (await client.get("/api/screen")).json() == {"sleep_after": 300}
+
+
+async def test_the_screen_endpoint_refuses_a_rebinding_host(stack):
+    async with httpx.AsyncClient(trust_env=False, base_url=stack.dock.origin) as client:
+        rebound = await client.get("/api/screen", headers={"Host": "evil.example"})
+        assert rebound.status_code == 421
+
+
 # --- actions -------------------------------------------------------------------------------
 
 

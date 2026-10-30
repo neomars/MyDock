@@ -2,13 +2,19 @@ import json
 
 import pytest
 
-from mydock_dock.store import PAGE_IDS, StateStore
+from mydock_dock.store import PAGE_IDS, SCREEN_SLEEP_CHOICES, StateStore
 from mydock_dock.validation import ValidationFailure
 
 
 def test_defaults(tmp_path):
     store = StateStore(tmp_path)
-    assert store.ui == {"last_page": "system", "order": [], "hidden": [], "pinned_apps": []}
+    assert store.ui == {
+        "last_page": "system",
+        "order": [],
+        "hidden": [],
+        "pinned_apps": [],
+        "screen_sleep": 0,  # jamais : on ne coupe pas l'écran sans que ce soit demandé
+    }
     assert store.pc["interfaces"] == []
 
 
@@ -193,7 +199,13 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         json.dumps({"ui": {"last_page": "steam", "intrus": 1}, "pc": {"hostname": "x"}})
     )
     store = StateStore(tmp_path)
-    assert store.ui == {"last_page": "steam", "order": [], "hidden": [], "pinned_apps": []}
+    assert store.ui == {
+        "last_page": "steam",
+        "order": [],
+        "hidden": [],
+        "pinned_apps": [],
+        "screen_sleep": 0,
+    }
     assert store.pc["hostname"] == "x"
 
 
@@ -203,3 +215,31 @@ def test_unwritable_state_dir_keeps_working_in_memory(tmp_path):
     store = StateStore(blocker / "sous-dossier")
     assert store.update_ui({"last_page": "power"})["last_page"] == "power"
     assert store.ui["last_page"] == "power"
+
+
+def test_the_screen_sleep_delay_is_one_of_the_offered_values_and_persists(tmp_path):
+    store = StateStore(tmp_path)
+    for seconds in SCREEN_SLEEP_CHOICES:
+        assert store.update_ui({"screen_sleep": seconds})["screen_sleep"] == seconds
+    assert StateStore(tmp_path).ui["screen_sleep"] == SCREEN_SLEEP_CHOICES[-1]
+
+
+@pytest.mark.parametrize("value", [-1, 30, 61, 3600, "300", 300.0, True, None, [300]])
+def test_other_screen_sleep_delays_are_refused_and_change_nothing(tmp_path, value):
+    store = StateStore(tmp_path)
+    store.update_ui({"screen_sleep": 300})
+    with pytest.raises(ValidationFailure, match="veille de l'écran"):
+        store.update_ui({"screen_sleep": value})
+    assert store.ui["screen_sleep"] == 300
+
+
+@pytest.mark.parametrize("damaged", ["jamais", -5, 7, 1.5, None, [60], True])
+def test_a_damaged_screen_sleep_in_the_file_falls_back_to_never(tmp_path, damaged):
+    (tmp_path / "state.json").write_text(json.dumps({"ui": {"screen_sleep": damaged}}))
+    assert StateStore(tmp_path).ui["screen_sleep"] == 0
+
+
+def test_a_state_file_from_before_the_screen_setting_gets_the_default(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"ui": {"last_page": "power"}}))
+    store = StateStore(tmp_path)
+    assert (store.ui["last_page"], store.ui["screen_sleep"]) == ("power", 0)

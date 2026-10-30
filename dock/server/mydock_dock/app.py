@@ -93,6 +93,7 @@ class UiSetParams(_Strict):
     order: list[str] | None = None
     hidden: list[str] | None = None
     pinned_apps: list[str] | None = None
+    screen_sleep: StrictInt | None = None
 
 
 class MarketsSetParams(_Strict):
@@ -621,6 +622,13 @@ def create_app(server: DockServer) -> FastAPI:
         return JSONResponse(
             {"ok": True, "version": __version__, "link": str(server.link.status.state)},
             headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/screen")
+    async def screen() -> JSONResponse:
+        """La durée d'inactivité choisie dans les Réglages : le script de veille de l'écran la lit."""
+        return JSONResponse(
+            {"sleep_after": server.store.ui["screen_sleep"]}, headers={"Cache-Control": "no-store"}
         )
 
     @app.websocket("/ws")

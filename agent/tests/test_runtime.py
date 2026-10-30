@@ -32,6 +32,10 @@ REAL_ACTIONS = [
     "music.select",
     "office.new",
     "office.open",
+    "power.lock",
+    "power.poweroff",
+    "power.reboot",
+    "power.suspend",
     "steam.cover",
     "steam.launch",
     "system.kill",
@@ -44,9 +48,16 @@ def test_the_whitelist_of_actions_is_exactly_this_and_nothing_else():
     assert registry.names == REAL_ACTIONS
 
 
-def test_the_only_sensitive_action_of_this_stage_is_still_stopping_a_process():
+def test_the_sensitive_actions_are_stopping_a_process_and_cutting_the_power():
+    """Seules ces actions exigent une confirmation à l'écran ; verrouiller n'en a pas besoin."""
     _, registry = build_runtime(demo=False)
-    assert [n for n in registry.names if registry.is_sensitive(n)] == ["system.kill"]
+    assert [n for n in registry.names if registry.is_sensitive(n)] == [
+        "power.poweroff",
+        "power.reboot",
+        "power.suspend",
+        "system.kill",
+    ]
+    assert not registry.is_sensitive("power.lock")
 
 
 def test_the_demo_adds_only_a_harmless_confirmation_test():
@@ -66,8 +77,9 @@ def test_both_modes_publish_the_same_topics():
             "apps",
             "steam",
             "office",
+            "power",
         ]
-        assert [p.lazy for p in providers] == [False] + [True] * 7
+        assert [p.lazy for p in providers] == [False] + [True] * 8
 
 
 # --- DemoMusic ---------------------------------------------------------------------------------------
@@ -316,3 +328,28 @@ async def test_system_processes_and_foreign_users_are_not_offered_a_kill_button(
     assert flags["brave"] is True
     if os.getuid() != 0:
         assert flags.get("cupsd", False) is False
+
+
+async def test_power_orders_over_the_wire_need_a_confirmation_except_locking(demo_agent):
+    async with demo_agent.connect() as ws:
+        await hello_and_subscribe(ws, "power")
+        first = await recv_until(ws, lambda m: m.get("topic") == "power", timeout=5)
+        assert first["data"]["hostname"] == "pc-demo"
+        assert all(c["ok"] for c in first["data"]["controls"].values())
+        assert demo_agent.hub.running_topics() == ["host", "power"]
+
+        await send_json(ws, {"t": "act", "id": "l1", "a": "power.lock", "p": {}})
+        locked = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "l1")
+        assert (locked["ok"], locked["r"]) == (True, {"requested": "lock"})
+
+        await send_json(ws, {"t": "act", "id": "o1", "a": "power.poweroff", "p": {}})
+        asked = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "o1")
+        assert asked["e"]["code"] == "confirm_required"
+        assert "« pc-demo »" in asked["confirm"]["label"]
+        assert "démo" in asked["confirm"]["label"]
+
+        order = {"t": "act", "id": "o2", "a": "power.poweroff", "p": {}}
+        await send_json(ws, {**order, "confirm": asked["confirm"]["token"]})
+        done = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "o2")
+        assert (done["ok"], done["r"]) == (True, {"requested": "poweroff"})
+    await eventually(lambda: demo_agent.hub.running_topics() == ["host"], timeout=5)

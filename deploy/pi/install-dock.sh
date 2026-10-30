@@ -143,6 +143,7 @@ need_cmd curl curl
 if [ "$KIOSK" != none ]; then
   need_cmd labwc labwc
   need_cmd wlr-randr wlr-randr
+  need_cmd swayidle swayidle # extinction de l'écran après inactivité (Réglages)
   if ! have chromium && ! have chromium-browser; then PKGS+=(chromium); fi
   # Polices et pilotes graphiques Mesa (V3D/VC4) : indispensables à l'accélération GPU de Chromium.
   for pkg in fonts-noto-core fonts-noto-color-emoji libgl1-mesa-dri libegl1 libgles2; do
@@ -187,7 +188,7 @@ run mkdir -p "$SRC" "$PREFIX/var/lib"
 for item in common dock/server dock/web/dist deploy/pi; do
   copy_tree "$REPO/$item" "$SRC/$item"
 done
-run chmod +x "$SRC/deploy/pi/kiosk-browser.sh"
+run chmod +x "$SRC/deploy/pi/kiosk-browser.sh" "$SRC/deploy/pi/screen-sleep.sh"
 if [ "$DRY_RUN" = 1 ]; then say "  (simulation : sources non copiées)"; else ok "Sources copiées dans $SRC"; fi
 make_venv "$VENV" "$PYTHON" "$SRC/common" "$SRC/dock/server"
 [ "$DRY_RUN" = 1 ] || ok "Serveur installé : $("$VENV/bin/mydock-dock" --version)"

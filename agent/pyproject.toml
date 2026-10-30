@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mydock-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "MyDock : agent qui tourne sur le PC Ubuntu et expose son état et des actions à liste blanche au dock tactile"
 requires-python = ">=3.11"
 dependencies = [

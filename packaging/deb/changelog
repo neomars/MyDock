@@ -1,3 +1,17 @@
+mydock-agent (0.6.0) unstable; urgency=medium
+
+  * Étape f : thème « power » et actions « power.lock », « power.suspend », « power.reboot » et
+    « power.poweroff » : verrouiller, mettre en veille, redémarrer, éteindre. Tout passe par
+    logind (D-Bus), sans commande ni shell, et sans jamais demander de mot de passe : si le
+    système en exigerait un, ou si un programme s'oppose à l'extinction, le dock le dit et grise
+    le bouton. Veille, redémarrage et extinction exigent la confirmation à l'écran ET un jeton
+    à usage unique ; verrouiller ne les exige pas.
+  * « mydock-agent doctor » : nouvelle section « Alimentation », qui montre les droits tels que
+    l'agent en marche les voit (et la règle polkit à ajouter si le système demande un mot de passe).
+  * Les versions du dock (pages visibles et ordre, veille de l'écran) et du paquet restent alignées.
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 23:30:00 +0000
+
 mydock-agent (0.5.0) unstable; urgency=medium
 
   * Étape e : la bourse (cryptos et actions) tourne sur le Pi, pas sur le PC : l'agent n'a aucun

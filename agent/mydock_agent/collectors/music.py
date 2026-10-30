@@ -335,7 +335,15 @@ class Signal:
 
 
 class BusError(Exception):
-    """Un appel D-Bus a échoué (le lecteur a disparu, refuse, ne répond pas…)."""
+    """Un appel D-Bus a échoué (le lecteur a disparu, refuse, ne répond pas…).
+
+    `name` est le nom de l'erreur D-Bus quand le service en a donné un
+    (« org.freedesktop.DBus.Error.AccessDenied ») : c'est lui qu'on analyse, jamais le texte.
+    """
+
+    def __init__(self, message: str = "", name: str = ""):
+        super().__init__(message)
+        self.name = name
 
 
 class Bus(Protocol):
@@ -356,28 +364,29 @@ class Bus(Protocol):
 
 
 class DbusFastBus:
-    """Bus de session via dbus-fast. `address` : un autre bus (tests), sinon le bus de session."""
+    """Bus de session via dbus-fast. `address` : un autre bus (tests), sinon le bus de session ;
+    `system=True` : le bus système (logind, pour l'alimentation)."""
 
-    def __init__(self, address: str | None = None):
+    def __init__(self, address: str | None = None, *, system: bool = False):
         self._address = address
+        self._system = system
         self._bus: Any = None
         self._handlers: list[Callable[[Signal], None]] = []
 
     async def connect(self) -> None:
-        from dbus_fast import BusType
+        from dbus_fast import AuthError, BusType
         from dbus_fast.aio import MessageBus
 
         try:
             bus = (
                 MessageBus(bus_address=self._address)
                 if self._address
-                else MessageBus(bus_type=BusType.SESSION)
+                else MessageBus(bus_type=BusType.SYSTEM if self._system else BusType.SESSION)
             )
             self._bus = await asyncio.wait_for(bus.connect(), CALL_TIMEOUT)
-        except (OSError, TimeoutError, ValueError) as exc:
-            raise BusError(
-                f"Bus de session D-Bus injoignable ({exc.__class__.__name__})."
-            ) from None
+        except (OSError, TimeoutError, ValueError, AuthError) as exc:
+            kind = "système" if self._system else "de session"
+            raise BusError(f"Bus {kind} D-Bus injoignable ({exc.__class__.__name__}).") from None
         self._bus.add_message_handler(self._dispatch)
 
     async def disconnect(self) -> None:
@@ -433,7 +442,8 @@ class DbusFastBus:
         except (OSError, TimeoutError, AttributeError) as exc:
             raise BusError(f"{member} : {exc.__class__.__name__}") from None
         if reply is None or reply.message_type == MessageType.ERROR:
-            raise BusError(f"{member} : {getattr(reply, 'error_name', 'pas de réponse')}")
+            name = getattr(reply, "error_name", None) or ""
+            raise BusError(f"{member} : {name or 'pas de réponse'}", name=name)
         return [unwrap(item) for item in reply.body]
 
 
