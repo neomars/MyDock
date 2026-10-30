@@ -8,7 +8,7 @@ from mydock_dock.validation import ValidationFailure
 
 def test_defaults(tmp_path):
     store = StateStore(tmp_path)
-    assert store.ui == {"last_page": "system", "order": [], "hidden": []}
+    assert store.ui == {"last_page": "system", "order": [], "hidden": [], "pinned_apps": []}
     assert store.pc["interfaces"] == []
 
 
@@ -36,6 +36,54 @@ def test_invalid_ui_patches_are_refused_and_change_nothing(tmp_path, patch):
     with pytest.raises(ValidationFailure):
         store.update_ui(patch)
     assert store.ui == before
+
+
+def test_pinned_apps_keep_their_order_and_persist(tmp_path):
+    store = StateStore(tmp_path)
+    chosen = [
+        "org.mozilla.firefox.desktop",
+        "spotify.desktop",
+        "kde4-k.desktop",
+        "a+b_c-d.e.desktop",
+    ]
+    assert store.update_ui({"pinned_apps": chosen})["pinned_apps"] == chosen
+    assert StateStore(tmp_path).ui["pinned_apps"] == chosen
+    assert store.update_ui({"pinned_apps": list(reversed(chosen))})["pinned_apps"] == list(
+        reversed(chosen)
+    )
+    assert store.update_ui({"pinned_apps": []})["pinned_apps"] == []
+
+
+@pytest.mark.parametrize(
+    "apps",
+    [
+        "firefox.desktop",
+        ["firefox"],
+        ["firefox.desktop", "firefox.desktop"],
+        ["../etc/passwd.desktop"],
+        ["a b.desktop"],
+        ["-rf.desktop", 5],
+        [f"app{i}.desktop" for i in range(25)],
+        ["x" * 300 + ".desktop"],
+        [None],
+        {"a": 1},
+    ],
+)
+def test_invalid_pinned_apps_are_refused_and_change_nothing(tmp_path, apps):
+    store = StateStore(tmp_path)
+    store.update_ui({"pinned_apps": ["spotify.desktop"]})
+    with pytest.raises(ValidationFailure):
+        store.update_ui({"pinned_apps": apps})
+    assert store.ui["pinned_apps"] == ["spotify.desktop"]
+
+
+def test_a_state_file_from_an_older_version_gets_an_empty_launcher(tmp_path):
+    (tmp_path / "state.json").write_text(
+        '{"version": 1, "ui": {"last_page": "power", "order": [], "hidden": []}}'
+    )
+    store = StateStore(tmp_path)
+    assert store.ui["last_page"] == "power"
+    assert store.ui["pinned_apps"] == []
 
 
 def test_every_page_can_be_hidden_except_settings(tmp_path):
@@ -75,7 +123,7 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         json.dumps({"ui": {"last_page": "steam", "intrus": 1}, "pc": {"hostname": "x"}})
     )
     store = StateStore(tmp_path)
-    assert store.ui == {"last_page": "steam", "order": [], "hidden": []}
+    assert store.ui == {"last_page": "steam", "order": [], "hidden": [], "pinned_apps": []}
     assert store.pc["hostname"] == "x"
 
 

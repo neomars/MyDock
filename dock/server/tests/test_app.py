@@ -163,6 +163,25 @@ async def test_a_second_browser_sees_changes_made_by_the_first(stack):
         assert ui["data"]["hidden"] == ["steam"]
 
 
+async def test_the_launcher_applications_are_shared_between_browsers_and_validated(stack):
+    chosen = ["org.mozilla.firefox.desktop", "spotify.desktop"]
+    async with stack.dock.connect() as first, stack.dock.connect() as second:
+        await hello_and_topics(first)
+        await hello_and_topics(second)
+        assert (await call(first, "a1", "dock.ui.set", {"pinned_apps": chosen}))["ok"] is True
+        assert (await snapshot_of(second, "ui"))["data"]["pinned_apps"] == chosen
+        for bad in (
+            ["firefox"],
+            ["a.desktop", "a.desktop"],
+            "firefox.desktop",
+            ["../../x.desktop"],
+        ):
+            refused = await call(first, "a2", "dock.ui.set", {"pinned_apps": bad})
+            assert refused["ok"] is False
+        again = await call(first, "a3", "dock.ui.set", {"last_page": "apps"})
+        assert again["r"]["pinned_apps"] == chosen  # un réglage refusé n'a rien changé
+
+
 # --- actions -------------------------------------------------------------------------------
 
 

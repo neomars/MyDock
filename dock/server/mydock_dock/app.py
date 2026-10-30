@@ -85,6 +85,7 @@ class UiSetParams(_Strict):
     last_page: str | None = None
     order: list[str] | None = None
     hidden: list[str] | None = None
+    pinned_apps: list[str] | None = None
 
 
 # --- connexion navigateur -------------------------------------------------------------------

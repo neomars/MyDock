@@ -17,6 +17,8 @@ from mydock_agent.testing import eventually, recv_until, running_agent, send_jso
 from mydock_common.actions import ActionError
 
 REAL_ACTIONS = [
+    "apps.icon",
+    "apps.launch",
     "audio.set_default",
     "audio.set_mute",
     "audio.set_volume",
@@ -28,6 +30,10 @@ REAL_ACTIONS = [
     "music.previous",
     "music.seek",
     "music.select",
+    "office.new",
+    "office.open",
+    "steam.cover",
+    "steam.launch",
     "system.kill",
 ]
 
@@ -51,8 +57,17 @@ def test_the_demo_adds_only_a_harmless_confirmation_test():
 def test_both_modes_publish_the_same_topics():
     for demo in (True, False):
         providers, _ = build_runtime(demo=demo)
-        assert [p.topic for p in providers] == ["host", "system", "procs", "music", "audio"]
-        assert [p.lazy for p in providers] == [False, True, True, True, True]
+        assert [p.topic for p in providers] == [
+            "host",
+            "system",
+            "procs",
+            "music",
+            "audio",
+            "apps",
+            "steam",
+            "office",
+        ]
+        assert [p.lazy for p in providers] == [False] + [True] * 7
 
 
 # --- DemoMusic ---------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import copy
 import json
 import logging
 import os
+import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -23,12 +24,14 @@ log = logging.getLogger(__name__)
 PAGE_IDS = ("music", "sound", "apps", "steam", "office", "markets", "system", "power", "settings")
 DEFAULT_PAGE = "system"
 ALWAYS_VISIBLE = "settings"  # on ne peut pas cacher Réglages : sinon plus moyen de le réparer
+MAX_PINNED_APPS = 24
+APP_ID_RE = re.compile(r"^[A-Za-z0-9_.+-]{1,200}\.desktop$")  # identifiant d'un fichier .desktop
 
 
 def _default_state() -> dict[str, Any]:
     return {
         "version": 1,
-        "ui": {"last_page": DEFAULT_PAGE, "order": [], "hidden": []},
+        "ui": {"last_page": DEFAULT_PAGE, "order": [], "hidden": [], "pinned_apps": []},
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
     }
 
@@ -94,6 +97,8 @@ class StateStore:
             if ALWAYS_VISIBLE in hidden:
                 raise ValidationFailure("La page Réglages ne peut pas être cachée.")
             new["hidden"] = hidden
+        if "pinned_apps" in patch:
+            new["pinned_apps"] = _app_list(patch["pinned_apps"])
         if new != ui:
             self._data["ui"] = new
             self._save()
@@ -126,4 +131,18 @@ def _page_list(value: Any, label: str) -> list[str]:
         or len(set(value)) != len(value)
     ):
         raise ValidationFailure(f"{label} est invalide.")
+    return list(value)
+
+
+def _app_list(value: Any) -> list[str]:
+    """Les applications du lanceur, dans l'ordre choisi : des identifiants .desktop, sans doublon."""
+    if (
+        not isinstance(value, list)
+        or len(value) > MAX_PINNED_APPS
+        or not all(isinstance(v, str) and APP_ID_RE.fullmatch(v) for v in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValidationFailure(
+            f"La liste des applications est invalide (au plus {MAX_PINNED_APPS}, sans doublon)."
+        )
     return list(value)

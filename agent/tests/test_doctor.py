@@ -5,17 +5,25 @@ import subprocess
 
 from mydock_agent import doctor, firewall
 from mydock_agent.collectors.audio import PactlError, PactlMissing
+from mydock_agent.collectors.desktop import AppsProvider
+from mydock_agent.collectors.office import OfficeProvider
+from mydock_agent.collectors.steam import SteamProcesses, SteamProvider
 from mydock_agent.config import AgentConfig
+from mydock_agent.demo.apps import DemoWorld
 from mydock_agent.demo.audio import DemoPactl
 from mydock_agent.doctor import (
+    check_apps,
     check_audio,
     check_config,
     check_firewall,
     check_from_pi,
     check_gpus,
+    check_launch,
     check_music,
+    check_office,
     check_sensors,
     check_service,
+    check_steam,
     curl_check,
 )
 from mydock_common.auth import generate_token
@@ -490,4 +498,98 @@ def test_no_output_and_no_microphone_are_noted():
     text = report.render()
     assert "Aucune sortie audio détectée" in text
     assert "Aucun micro détecté" in text
+    assert not report.failed
+
+
+# --- applications, Steam, LibreOffice -----------------------------------------------------------------
+
+
+def test_the_launcher_lists_what_it_sees():
+    world = DemoWorld()
+    report = Report()
+    check_apps(report, world.apps())
+    text = report.render()
+    assert "18 applications visibles" in text
+    assert "dossiers lus" in text
+    assert not report.failed
+
+
+def test_no_application_points_to_the_environment(tmp_path):
+    report = Report()
+    check_apps(report, AppsProvider(directories=[tmp_path / "absent"], roots=[tmp_path], env={}))
+    text = report.render()
+    assert "Aucune application trouvée" in text
+    assert "XDG_DATA_DIRS" in text
+    assert not report.failed
+
+
+def test_steam_games_and_covers_are_counted():
+    world = DemoWorld()
+    report = Report()
+    check_steam(report, world.steam())
+    text = report.render()
+    assert "Dossier Steam" in text
+    assert "11 jeux installés" in text
+    assert not report.failed
+
+
+def test_a_pc_without_steam_is_not_an_error(tmp_path):
+    report = Report()
+    check_steam(report, SteamProvider(home=tmp_path, scanner=lambda: SteamProcesses(False, None)))
+    assert "Steam n'est pas installé" in report.render()
+    assert not report.failed
+
+
+def test_libreoffice_and_its_recent_documents_are_reported():
+    world = DemoWorld()
+    report = Report()
+    check_office(report, world.office())
+    text = report.render()
+    assert "LibreOffice : libreoffice" in text
+    assert "6 documents récents" in text
+
+
+def test_a_pc_without_libreoffice_is_not_an_error(tmp_path):
+    report = Report()
+    check_office(
+        report, OfficeProvider(home=tmp_path, which=lambda _n: None, flatpak_present=lambda: False)
+    )
+    assert "LibreOffice n'est pas installé" in report.render()
+    assert not report.failed
+
+
+def test_the_scope_check_reports_a_working_systemd_run(monkeypatch):
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(doctor.shutil, "which", lambda n: f"/usr/bin/{n}")
+    monkeypatch.setattr(doctor.subprocess, "run", fake_run)
+    report = Report()
+    check_launch(report)
+    assert "systemd-run --user fonctionne" in report.render()
+    assert calls == [["systemd-run", "--user", "--scope", "--quiet", "--", "true"]]
+
+
+def test_the_scope_check_explains_a_failing_or_missing_systemd_run(monkeypatch):
+    monkeypatch.setattr(doctor.shutil, "which", lambda _n: "/usr/bin/systemd-run")
+    monkeypatch.setattr(
+        doctor.subprocess,
+        "run",
+        lambda command, **_k: subprocess.CompletedProcess(
+            command, 1, "", "Failed to connect to bus\n"
+        ),
+    )
+    report = Report()
+    check_launch(report)
+    text = report.render()
+    assert "Failed to connect to bus" in text
+    assert "session graphique" in text
+    assert not report.failed
+    monkeypatch.setattr(doctor.shutil, "which", lambda _n: None)
+    report = Report()
+    check_launch(report)
+    assert "systemd-run est introuvable" in report.render()
     assert not report.failed

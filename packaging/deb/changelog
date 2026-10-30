@@ -1,3 +1,17 @@
+mydock-agent (0.4.0) unstable; urgency=medium
+
+  * Étape d : thèmes « apps » (applications installées : fichiers .desktop du système, de
+    l'utilisateur, de Flatpak et de Snap, icônes du thème), « steam » (jeux installés des
+    bibliothèques Steam, jaquettes, jeu en cours) et « office » (LibreOffice : documents récents).
+  * Actions « apps.launch », « apps.icon », « steam.launch », « steam.cover », « office.new » et
+    « office.open » : seulement sur ce que l'agent a lui-même listé, sans shell. Les programmes sont
+    lancés dans leur propre scope systemd (systemd-run --user) : redémarrer l'agent ne les ferme pas,
+    avec l'écran et la langue de la session.
+  * « mydock-agent doctor » : sections « Lancement des programmes », « Applications », « Steam »
+    et « LibreOffice ».
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 20:00:00 +0000
+
 mydock-agent (0.3.0) unstable; urgency=medium
 
   * Étape c : thème « audio » (sorties, micro, volume et muet de chaque application,

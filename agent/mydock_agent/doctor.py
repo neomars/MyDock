@@ -19,7 +19,10 @@ from mydock_agent.access import local_lan_networks
 from mydock_agent.collectors import audio as audio_module
 from mydock_agent.collectors import gpu as gpu_module
 from mydock_agent.collectors import music as music_module
+from mydock_agent.collectors.desktop import AppsProvider
 from mydock_agent.collectors.host import list_interfaces
+from mydock_agent.collectors.office import OfficeProvider
+from mydock_agent.collectors.steam import SteamProvider
 from mydock_agent.collectors.system import Sensors, cpu_temperature, disk_temperature
 from mydock_agent.config import AgentConfig, default_config_path, load_config
 from mydock_agent.session import GRAPHICAL_VARS, detect_session, user_manager_environment
@@ -413,6 +416,108 @@ def check_audio(
         report.add(INFO, "Aucune application ne joue de son pour l'instant")
 
 
+def check_launch(report: Report) -> None:
+    """Les programmes lancés par le dock doivent vivre hors du groupe de l'agent (`systemd-run --user`)."""
+    report.section("Lancement des programmes")
+    if not shutil.which("systemd-run"):
+        report.add(
+            WARN,
+            "systemd-run est introuvable : les programmes lancés depuis le dock resteront rattachés "
+            "à l'agent et se fermeront quand on le redémarre (mise à jour du paquet).",
+        )
+        return
+    try:
+        result = subprocess.run(
+            ["systemd-run", "--user", "--scope", "--quiet", "--", "true"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        report.add(WARN, f"systemd-run --user n'a pas pu être essayé ({exc.__class__.__name__}).")
+        return
+    if result.returncode == 0:
+        report.add(
+            OK,
+            "systemd-run --user fonctionne : chaque programme lancé a son propre scope, "
+            "comme avec le menu du bureau",
+        )
+    else:
+        detail = (result.stderr.strip().splitlines() or ["sans message"])[0][:150]
+        report.add(
+            WARN,
+            f"systemd-run --user échoue ({detail}). Lance le diagnostic depuis un terminal de ta "
+            "session graphique ; sinon les programmes lancés depuis le dock se fermeront avec l'agent.",
+        )
+
+
+def check_apps(report: Report, provider: AppsProvider | None = None) -> None:
+    """Les applications que le lanceur proposera, lues comme le fait l'agent."""
+    report.section("Applications (lanceur)")
+    provider = provider or AppsProvider()
+    asyncio.run(provider.refresh())
+    apps = provider.apps
+    folders = ", ".join(str(d) for d in provider.directories) or "aucun"
+    if not apps:
+        report.add(
+            WARN,
+            f"Aucune application trouvée (dossiers lus : {folders}). "
+            "Vérifie XDG_DATA_DIRS dans l'environnement de la session.",
+        )
+        return
+    report.add(OK, f"{len(apps)} applications visibles")
+    report.add(INFO, f"    dossiers lus : {folders}")
+    missing = [a.name for a in apps if a.icon and a.icon_id is None]
+    if missing:
+        report.add(WARN, f"{len(missing)} applications sans icône exploitable")
+
+
+def check_steam(report: Report, provider: SteamProvider | None = None) -> None:
+    report.section("Steam")
+    provider = provider or SteamProvider()
+    asyncio.run(provider.refresh())
+    if not provider.roots:
+        report.add(
+            INFO, "Steam n'est pas installé (aucun dossier Steam trouvé) : la page Steam sera vide"
+        )
+        return
+    for root in provider.roots:
+        report.add(OK, f"Dossier Steam : {root}")
+    games = provider.games
+    report.add(OK if games else INFO, f"{len(games)} jeux installés")
+    from mydock_agent.collectors.steam import find_cover
+
+    covered = sum(1 for g in games if find_cover(provider.roots, g.appid) is not None)
+    if games and covered < len(games):
+        report.add(
+            INFO,
+            f"{covered} jeux sur {len(games)} ont une jaquette dans le cache de Steam "
+            "(les autres s'affichent avec leur nom ; ouvrir la bibliothèque dans Steam les télécharge)",
+        )
+    if not (shutil.which("steam") or shutil.which("flatpak") or shutil.which("xdg-open")):
+        report.add(
+            WARN, "Ni « steam », ni « flatpak », ni « xdg-open » : impossible de lancer un jeu"
+        )
+
+
+def check_office(report: Report, provider: OfficeProvider | None = None) -> None:
+    report.section("LibreOffice")
+    provider = provider or OfficeProvider()
+    asyncio.run(provider.refresh())
+    if provider.command is None:
+        report.add(INFO, "LibreOffice n'est pas installé : la page Office sera vide")
+        return
+    report.add(OK, f"LibreOffice : {' '.join(provider.command)}")
+    sources = provider.sources
+    if sources:
+        report.add(OK, f"{len(provider.recent)} documents récents (lus dans {sources[0]})")
+    else:
+        report.add(
+            INFO, "Aucune liste de documents récents trouvée (LibreOffice n'a jamais été ouvert ?)"
+        )
+
+
 def check_tools(report: Report) -> None:
     report.section("Outils système")
     for name, why, required in (
@@ -503,6 +608,10 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     check_gpus(report)
     check_music(report)
     check_audio(report)
+    check_launch(report)
+    check_apps(report)
+    check_steam(report)
+    check_office(report)
     if config is not None:
         check_running(report, config, cpu_seconds)
         check_from_pi(report, config)
