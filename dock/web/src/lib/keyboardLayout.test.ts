@@ -6,6 +6,7 @@ import {
   backspace,
   formatMacInput,
   isKeyAllowed,
+  keyCase,
   typeChar,
 } from './keyboardLayout'
 
@@ -85,5 +86,28 @@ describe('adresse MAC', () => {
     expect(backspace('02:00', 'mac')).toBe('02:0')
     expect(backspace('02:0', 'mac')).toBe('02')
     expect(backspace('02', 'mac')).toBe('0')
+  })
+})
+
+describe('symbole boursier', () => {
+  it('accepte lettres, chiffres et . ^ = _ - jusqu’à 20 caractères, et rien d’autre', () => {
+    for (const good of ['a', 'Z', '7', '.', '^', '=', '_', '-']) expect(isKeyAllowed('symbol', good)).toBe(true)
+    for (const bad of [' ', ':', '/', '@', '?', '&', '%']) expect(isKeyAllowed('symbol', bad)).toBe(false)
+    expect(typeChar('A'.repeat(20), 'B', 'symbol', false)).toBe('A'.repeat(20))
+  })
+
+  it('met les lettres en majuscules d’office', () => {
+    expect(typeChar('', 'm', 'symbol', false)).toBe('M')
+    expect(typeChar('^F', 'c', 'symbol', false)).toBe('^FC')
+    expect(typeChar('EURUSD', '=', 'symbol', false)).toBe('EURUSD=')
+    expect(keyCase('a', 'symbol', false)).toBe('A')
+    expect(keyCase('a', 'text', false)).toBe('a')
+    expect(keyCase('a', 'text', true)).toBe('A')
+    expect(keyCase('a', 'host', true)).toBe('a')
+  })
+
+  it('offre ^ et = pour ^FCHI et EURUSD=X', () => {
+    expect(SYMBOLS).toContain('^')
+    expect(SYMBOLS).toContain('=')
   })
 })

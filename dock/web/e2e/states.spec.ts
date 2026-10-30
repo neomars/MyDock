@@ -9,6 +9,8 @@ type Topics = Record<string, unknown>
 interface Mock {
   /** Messages `act` reçus du navigateur, dans l'ordre. */
   acts: { a: string; p: Record<string, unknown>; confirm?: string }[]
+  /** Tous les messages reçus du navigateur (abonnements compris). */
+  received: { t: string; topics?: string[] }[]
   /** Remplace l'instantané d'un thème et le renvoie aux abonnés. */
   push(topic: string, data: unknown): void
 }
@@ -19,7 +21,7 @@ const HOST = {
   kernel: '7.0.0-38-generic',
   arch: 'x86_64',
   python: '3.14.4',
-  agent: { version: '0.4.0', proto: 1, demo: false },
+  agent: { version: '0.5.0', proto: 1, demo: false },
   boot_time: Math.floor(Date.now() / 1000) - 3 * 3600,
   session: { type: 'wayland', desktop: 'GNOME' },
   interfaces: [],
@@ -70,11 +72,14 @@ async function mockDock(
   options: {
     startPage: string
     pinned?: string[]
+    /** Résumé de la bourse du thème « dock » (Réglages). */
+    markets?: { count: number; currency: 'EUR' | 'USD'; finnhub: boolean; demo: boolean }
     onAct?: (act: Mock['acts'][number], ws: WebSocketRoute) => unknown
   },
 ): Promise<Mock> {
   const subscribed = new Set<string>()
   const acts: Mock['acts'] = []
+  const received: Mock['received'] = []
   let current: WebSocketRoute | null = null
   const data: Topics = { host: HOST, ...topics }
   const snap = (ws: WebSocketRoute, topic: string, payload: unknown) =>
@@ -82,20 +87,24 @@ async function mockDock(
 
   await page.routeWebSocket(/\/ws$/, (ws) => {
     current = ws
-    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.4.0' } }))
+    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.5.0' } }))
     snap(ws, 'link', {
       state: 'connected', detail: 'Connecté.', since: Date.now(), attempt: 0, next_retry_at: null,
-      resolved: '127.0.0.1', agent: { version: '0.4.0', demo: false }, host: '127.0.0.1', port: 8765,
+      resolved: '127.0.0.1', agent: { version: '0.5.0', demo: false }, host: '127.0.0.1', port: 8765,
     }) // prettier-ignore
     snap(ws, 'dock', {
-      version: '0.4.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
+      version: '0.5.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
       pc: { host: '127.0.0.1', port: 8765, token_set: true, name: 'portable' },
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
+      markets: options.markets ?? { count: 2, currency: 'EUR', finnhub: false, demo: false },
     }) // prettier-ignore
     snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [] })
     ws.onMessage((raw) => {
       const message = JSON.parse(String(raw))
-      if (message.t === 'sub') {
+      received.push(message)
+      if (message.t === 'unsub') {
+        for (const topic of message.topics as string[]) subscribed.delete(topic)
+      } else if (message.t === 'sub') {
         for (const topic of message.topics as string[]) {
           subscribed.add(topic)
           if (data[topic] !== undefined) snap(ws, topic, data[topic])
@@ -113,6 +122,7 @@ async function mockDock(
 
   return {
     acts,
+    received,
     push(topic, payload) {
       data[topic] = payload
       if (current && (['link', 'dock', 'ui'].includes(topic) || subscribed.has(topic))) snap(current, topic, payload)
@@ -728,4 +738,326 @@ test('Office : des noms de document démesurés sont coupés et la liste défile
   const row = (await page.getByTestId(`recent-${recent[0].id}`).boundingBox())!
   const when = (await page.getByTestId(`recent-${recent[0].id}`).locator('.when').boundingBox())!
   expect(when.x + when.width).toBeLessThanOrEqual(row.x + row.width + 1)
+})
+
+// --- Bourse ---------------------------------------------------------------------------------------
+
+const nowSeconds = () => Math.floor(Date.now() / 1000)
+const sparkOf = (base: number) => Array.from({ length: 48 }, (_, i) => base + Math.sin(i / 5) * base * 0.01 + i * base * 0.0004)
+
+const quote = (id: string, extra: Record<string, unknown> = {}) => {
+  const [kind, symbol] = id.split(':')
+  return {
+    id, kind, symbol,
+    name: symbol === 'BTC' ? 'Bitcoin' : symbol === 'ETH' ? 'Ethereum' : symbol,
+    price: 61250.5, currency: 'EUR', change: 850.5, change_pct: 1.41, high: 61800, low: 60100,
+    state: null, traded_at: nowSeconds(), spark: sparkOf(61000), source: 'binance',
+    fetched: nowSeconds(), error: null,
+    ...extra,
+  }
+} // prettier-ignore
+
+const provider = (id: string, label: string, state = 'ok', message: string | null = null, retry_at: number | null = null) => ({ id, label, state, message, retry_at })
+const OK_PROVIDERS = [provider('binance', 'Binance'), provider('yahoo', 'Yahoo Finance')]
+const marketsData = (items: unknown[], extra: Record<string, unknown> = {}) => ({
+  currency: 'EUR',
+  demo: false,
+  items,
+  fetched_at: nowSeconds(),
+  providers: OK_PROVIDERS,
+  ...extra,
+})
+const history = (count: number) => ({
+  id: 'crypto:BTC',
+  range: '1d',
+  currency: 'EUR',
+  source: 'binance',
+  points: Array.from({ length: count }, (_, i) => [nowSeconds() - (count - i) * 900, 60000 + Math.sin(i / 6) * 900 + i * 12]),
+  fetched: nowSeconds(),
+}) // prettier-ignore
+
+test('Bourse : aucune valeur suivie, la page propose d’en choisir', async ({ page, stack }) => {
+  await mockDock(page, { markets: marketsData([]) }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('markets-empty')).toContainText('Aucune valeur suivie')
+  await expect(page.getByTestId('markets-refresh')).toBeDisabled()
+  await page.getByTestId('markets-choose').tap()
+  await expect(page.getByTestId('mk-editor')).toBeVisible()
+  await expect(page.getByTestId('mk-none')).toBeVisible()
+})
+
+test('Bourse : avant la première cotation, « … » et « Chargement », sans fausse alerte', async ({ page, stack }) => {
+  const loading = (id: string) => quote(id, { price: null, change: null, change_pct: null, high: null, low: null, spark: [], source: null, fetched: null })
+  await mockDock(page, { markets: marketsData([loading('crypto:BTC'), loading('stock:MSTR')], { fetched_at: null }) }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('markets-statustext')).toHaveText('Chargement des cotations…')
+  await expect(page.getByTestId('price-crypto:BTC')).toHaveText('…')
+  await expect(page.getByTestId('markets-problem')).toHaveCount(0)
+  await expect(page.getByTestId('old-crypto:BTC')).toHaveCount(0)
+  await shot(page, '11-chargement', 'e')
+})
+
+test('Bourse : une cotation ancienne garde son prix, son âge et la raison de l’échec', async ({ page, stack }) => {
+  const threeHoursAgo = nowSeconds() - 3 * 3600
+  const stale = quote('crypto:BTC', { fetched: threeHoursAgo, error: 'Binance : Binance n’est pas accessible depuis ce pays (HTTP 451).' })
+  const fresh = quote('stock:MSTR', { name: 'Strategy Inc', price: 182.4, currency: 'USD', change_pct: -2.3, state: 'closed', source: 'yahoo' })
+  await mockDock(
+    page,
+    {
+      markets: marketsData([stale, fresh], {
+        fetched_at: nowSeconds(),
+        providers: [
+          provider('binance', 'Binance', 'paused', 'Binance n’est pas accessible depuis ce pays (HTTP 451).', nowSeconds() + 120),
+          provider('yahoo', 'Yahoo Finance'),
+        ],
+      }),
+    },
+    { startPage: 'markets' },
+  )
+  await page.goto(stack.url)
+  await expect(page.getByTestId('price-crypto:BTC')).toContainText('61') // la dernière cotation reste affichée
+  await expect(page.getByTestId('old-crypto:BTC')).toContainText('il y a 3')
+  await expect(page.getByTestId('quote-crypto:BTC')).toHaveClass(/stale/)
+  await expect(page.getByTestId('markets-problem')).toContainText('Binance n’est pas accessible')
+  await expect(page.getByTestId('markets-problem')).toContainText('Nouvel essai dans')
+  await expect(page.getByTestId('markets-problem')).toContainText('derniers connus')
+  await expect(page.getByTestId('old-stock:MSTR')).toHaveCount(0) // la valeur à jour n'a pas d'avertissement
+  await expect(page.getByTestId('session-stock:MSTR')).toContainText('Marché fermé')
+  await shot(page, '10-cotations-anciennes', 'e')
+  // Le détail le redit : âge et raison.
+  await page.getByTestId('quote-crypto:BTC').tap()
+  await expect(page.getByTestId('detail-meta')).toContainText('il y a 3')
+  await expect(page.getByTestId('detail-meta')).toContainText('HTTP 451')
+})
+
+test('Bourse : aucun fournisseur ne répond et aucune cotation n’est connue', async ({ page, stack }) => {
+  const failed = (id: string) =>
+    quote(id, { price: null, change: null, change_pct: null, high: null, low: null, spark: [], source: null, fetched: null, error: 'Yahoo Finance : Le nom query2.finance.yahoo.com est introuvable.' })
+  await mockDock(
+    page,
+    {
+      markets: marketsData([failed('stock:MSTR'), failed('stock:AAPL')], {
+        fetched_at: null,
+        providers: [
+          provider('binance', 'Binance', 'paused', 'Le nom api.binance.com est introuvable.', nowSeconds() + 40),
+          provider('yahoo', 'Yahoo Finance', 'paused', 'Le nom query2.finance.yahoo.com est introuvable : le Pi n’a pas d’accès à Internet ou de DNS.', nowSeconds() + 40),
+        ],
+      }),
+    },
+    { startPage: 'markets' },
+  )
+  await page.goto(stack.url)
+  await expect(page.getByTestId('markets-statustext')).toHaveText('Cotations indisponibles')
+  await expect(page.getByTestId('price-stock:MSTR')).toHaveText('—')
+  await expect(page.getByTestId('error-stock:MSTR')).toContainText('introuvable')
+  await expect(page.getByTestId('markets-problem')).toContainText("pas d’accès à Internet")
+  await expect(page.getByTestId('markets-problem')).not.toContainText('derniers connus') // il n'y en a pas
+  await shot(page, '12-fournisseurs-en-panne', 'e')
+})
+
+test('Bourse : devise inconnue, variation absente, noms démesurés et vingt valeurs sans débordement', async ({ page, stack }) => {
+  const long = 'Un fonds indiciel mondial aux frais réduits, capitalisation et distribution, classe de parts institutionnelle'
+  const items = [
+    quote('stock:VOD', { name: 'Vodafone', price: 71.34, currency: 'GBp', change: null, change_pct: null, source: 'yahoo' }),
+    quote('stock:LONG', { name: long, price: 489.2, currency: 'EUR', source: 'yahoo' }),
+    ...Array.from({ length: 18 }, (_, i) => quote(`stock:S${i}`, { name: `Valeur ${i}`, price: 10 + i, change_pct: i % 2 ? -1.2 : 0, source: 'yahoo' })),
+  ]
+  await mockDock(page, { markets: marketsData(items) }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await expect(page.locator('[data-testid^="quote-"]')).toHaveCount(20)
+  await expect(page.getByTestId('price-stock:VOD')).toContainText('GBp')
+  await expect(page.getByTestId('pct-stock:VOD')).toContainText('—')
+  await expect(page.getByTestId('pct-stock:S2')).toContainText('0,00') // zéro n'est ni vert ni rouge
+  await expect(page.getByTestId('pct-stock:S2')).toHaveClass(/flat/)
+  await noPageScroll(page)
+  const card = (await page.getByTestId('quote-stock:LONG').boundingBox())!
+  const name = (await page.getByTestId('quote-stock:LONG').locator('.name').boundingBox())!
+  expect(name.x + name.width).toBeLessThanOrEqual(card.x + card.width) // le nom est coupé, il ne déborde pas
+  const grid = page.getByTestId('markets-list')
+  const main = page.getByTestId('page-markets')
+  expect(await main.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true) // la liste défile dans sa zone
+  await expect(grid).toBeVisible()
+})
+
+test('Bourse : les cotations se mettent à jour en direct, sans recharger', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('price-crypto:BTC')).toContainText('61')
+  mock.push('markets', marketsData([quote('crypto:BTC', { price: 62100.2, change_pct: -0.5, change: -310 })]))
+  await expect(page.getByTestId('price-crypto:BTC')).toContainText('62')
+  await expect(page.getByTestId('pct-crypto:BTC')).toHaveClass(/down/)
+  await expect(page.getByTestId('pct-crypto:BTC')).toContainText('−0,50')
+})
+
+test('Bourse : actualiser demande au dock, et son refus est affiché', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.refresh' ? refuse('Les fournisseurs ne répondent pas.') : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-refresh').tap()
+  await expect(page.getByTestId('toast')).toContainText('Les fournisseurs ne répondent pas.')
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.refresh')).toHaveLength(1)
+})
+
+test('Bourse : la page s’abonne au thème « markets » en arrivant et s’en désabonne en partant', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('price-crypto:BTC')).toContainText('61')
+  const topicsOf = (kind: string) => mock.received.filter((m) => m.t === kind).flatMap((m) => m.topics ?? [])
+  expect(topicsOf('sub')).toContain('markets')
+  expect(topicsOf('unsub')).not.toContain('markets')
+  await page.getByTestId('tab-settings').tap()
+  await expect(page.getByTestId('settings-markets')).toBeVisible()
+  await expect.poll(() => topicsOf('unsub')).toContain('markets') // plus personne ne regarde : le dock cesse de demander
+})
+
+// --- détail ---------------------------------------------------------------------------------------
+
+test('Détail : l’historique en erreur est expliqué, « Réessayer » le redemande', async ({ page, stack }) => {
+  let calls = 0
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => {
+      if (act.a !== 'dock.markets.history') return undefined
+      calls += 1
+      return calls === 1 ? refuse('Historique indisponible : Binance : Binance ne répond pas.') : { r: history(60) }
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('quote-crypto:BTC').tap()
+  await expect(page.getByTestId('detail-error')).toContainText('Binance ne répond pas')
+  await page.getByTestId('detail-retry').tap()
+  await expect(page.getByTestId('price-chart')).toBeVisible()
+  await expect(page.getByTestId('detail-error')).toHaveCount(0)
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.history').map((a) => a.p)).toEqual([
+    { id: 'crypto:BTC', range: '1d' },
+    { id: 'crypto:BTC', range: '1d' },
+  ])
+})
+
+test('Détail : trop peu de points pour tracer, la page le dit', async ({ page, stack }) => {
+  await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.history' ? { r: history(1) } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('quote-crypto:BTC').tap()
+  await expect(page.getByTestId('chart-none')).toContainText('Pas assez de points')
+})
+
+test('Détail : changer de période redemande, revenir à une période déjà vue ne redemande pas', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.history' ? { r: { ...history(80), range: act.p.range } } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('quote-crypto:BTC').tap()
+  await expect(page.getByTestId('price-chart')).toBeVisible()
+  await page.getByTestId('range-1mo').tap()
+  await expect(page.getByTestId('range-1mo')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByTestId('range-1d').tap()
+  await expect(page.getByTestId('range-1d')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('price-chart')).toBeVisible()
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.history').map((a) => a.p.range)).toEqual(['1d', '1mo'])
+})
+
+test('Détail : une valeur retirée pendant qu’on la regarde ramène à la liste', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC'), quote('crypto:ETH')]) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.history' ? { r: history(40) } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('quote-crypto:BTC').tap()
+  await expect(page.getByTestId('detail')).toBeVisible()
+  mock.push('markets', marketsData([quote('crypto:ETH')]))
+  await expect(page.getByTestId('detail')).toHaveCount(0)
+  await expect(page.getByTestId('quote-crypto:ETH')).toBeVisible()
+})
+
+// --- fenêtre de modification -----------------------------------------------------------------------
+
+test('Modifier : la liste complète part dans l’ordre, la devise seule part seule', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC'), quote('crypto:ETH')]) }, {
+    startPage: 'markets',
+    onAct: (act) => {
+      if (act.a === 'dock.markets.check') return { r: { id: 'stock:MSTR', kind: 'stock', symbol: 'MSTR', name: 'Strategy Inc', price: 182.4, currency: 'USD', source: 'yahoo' } }
+      return undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-kind-stock').tap()
+  await page.getByTestId('mk-suggest-MSTR').tap()
+  await expect(page.getByTestId('mk-found')).toContainText('Strategy Inc')
+  await page.getByTestId('mk-confirm').tap()
+  await page.getByTestId('mk-currency-USD').tap()
+  await page.getByTestId('mk-down-crypto:BTC').tap()
+  const sets = mock.acts.filter((a) => a.a === 'dock.markets.set').map((a) => a.p)
+  expect(sets).toEqual([
+    { watchlist: [{ kind: 'crypto', symbol: 'BTC' }, { kind: 'crypto', symbol: 'ETH' }, { kind: 'stock', symbol: 'MSTR' }] },
+    { currency: 'USD' },
+    { watchlist: [{ kind: 'crypto', symbol: 'ETH' }, { kind: 'crypto', symbol: 'BTC' }] },
+  ])
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.check').map((a) => a.p)).toEqual([{ kind: 'stock', symbol: 'MSTR' }])
+})
+
+test('Modifier : une vérification refusée est expliquée et ne change rien', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.check' ? refuse('Impossible de vérifier ce symbole : Yahoo Finance : Yahoo Finance ne répond pas.') : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-suggest-ETH').tap()
+  await expect(page.getByTestId('mk-error')).toContainText('Impossible de vérifier')
+  await expect(page.getByTestId('mk-found')).toHaveCount(0)
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.set')).toEqual([])
+})
+
+test('Modifier : à vingt valeurs on ne peut plus qu’en retirer', async ({ page, stack }) => {
+  const items = Array.from({ length: 20 }, (_, i) => quote(`stock:S${i}`, { name: `Valeur ${i}`, source: 'yahoo' }))
+  const mock = await mockDock(page, { markets: marketsData(items) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.check' ? { r: { id: 'crypto:BTC', kind: 'crypto', symbol: 'BTC', name: 'Bitcoin', price: 61000, currency: 'EUR', source: 'binance' } } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await expect(page.getByTestId('mk-chosen')).toContainText('20/20')
+  await page.getByTestId('mk-suggest-BTC').tap()
+  await expect(page.getByTestId('mk-found')).toBeVisible()
+  await expect(page.getByTestId('mk-confirm')).toBeDisabled()
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.set')).toEqual([])
+  await page.getByTestId('mk-remove-stock:S19').tap()
+  expect(mock.acts.filter((a) => a.a === 'dock.markets.set')).toHaveLength(1)
+})
+
+test('Modifier : une réponse sans prix du dock n’affiche pas une carte vide', async ({ page, stack }) => {
+  await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-suggest-ETH').tap() // réponse par défaut du faux dock : {}
+  await expect(page.getByTestId('mk-error')).toContainText('Vérification impossible')
+  await expect(page.getByTestId('mk-found')).toHaveCount(0)
+})
+
+// --- Réglages -------------------------------------------------------------------------------------
+
+test('Réglages : la carte Bourse au singulier, en dollars, avec la clé Finnhub signalée', async ({ page, stack }) => {
+  await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'settings',
+    markets: { count: 1, currency: 'USD', finnhub: true, demo: false },
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('markets-count')).toContainText('1 valeur suivie sur 20')
+  await expect(page.getByTestId('markets-count')).toContainText('en dollars')
+  await expect(page.getByTestId('markets-note')).toContainText('Clé Finnhub de secours : configurée')
+  await expect(page.getByTestId('markets-note')).not.toContainText('démonstration')
+})
+
+test('Réglages : sans valeur suivie, la carte le dit', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'settings', markets: { count: 0, currency: 'EUR', finnhub: false, demo: false } })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('markets-count')).toHaveText('Aucune valeur suivie.')
+  await expect(page.getByTestId('markets-note')).toContainText('aucune (facultative)')
 })

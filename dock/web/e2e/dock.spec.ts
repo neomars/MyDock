@@ -65,17 +65,10 @@ test('toutes les cibles tactiles font au moins 48 px, clavier compris', async ({
 
 test('retrouve la dernière page affichée après un rechargement', async ({ dock }) => {
   await dock.getByTestId('tab-markets').tap()
-  await expect(dock.getByTestId('soon')).toBeVisible()
+  await expect(dock.getByTestId('markets-status')).toBeVisible()
   await dock.reload()
   await expect(dock.getByTestId('page-markets')).toBeVisible()
   await expect(dock.getByTestId('tab-markets')).toHaveAttribute('aria-selected', 'true')
-})
-
-test('une page non livrée dit ce qu’elle offrira et à quelle étape', async ({ dock }) => {
-  await dock.getByTestId('tab-markets').tap()
-  await expect(dock.getByTestId('soon')).toContainText('cotations')
-  await expect(dock.getByTestId('soon')).toContainText('étape e')
-  await shot(dock, '10-page-a-venir')
 })
 
 // --- panne et reprise --------------------------------------------------------------------------
@@ -125,7 +118,9 @@ test('hors ligne, Bourse et Réglages restent utilisables ; les pages du PC mont
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toBeVisible({ timeout: 20_000 })
   await dock.getByTestId('tab-markets').tap()
-  await expect(dock.getByTestId('soon')).toBeVisible()
+  await expect(dock.getByTestId('markets-list')).toBeVisible()
+  await expect(dock.getByTestId('price-crypto:BTC')).not.toHaveText('…', { timeout: 10_000 }) // les cotations ne viennent pas du PC
+  await expect(dock.getByTestId('offline')).toHaveCount(0)
   await dock.getByTestId('tab-settings').tap()
   await expect(dock.getByTestId('settings-pc')).toBeVisible()
   await expect(dock.getByTestId('pc-resolved')).toContainText('Dernière adresse essayée')

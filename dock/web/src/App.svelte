@@ -5,6 +5,7 @@
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import DebugOverlay from './components/DebugOverlay.svelte'
   import Keyboard from './components/Keyboard.svelte'
+  import MarketsEditor from './components/MarketsEditor.svelte'
   import OfflineScreen from './components/OfflineScreen.svelte'
   import TabBar from './components/TabBar.svelte'
   import Toast from './components/Toast.svelte'
@@ -13,17 +14,17 @@
   import type { PageId } from './lib/protocol'
   import { sock } from './lib/socket.svelte'
   import { wakeDone } from './lib/wake.svelte'
-  import Soon from './pages/Soon.svelte'
 
   const debug = new URLSearchParams(location.search).has('debug')
 
-  // Pages complètes à cette étape ; les autres affichent ce qu'elles offriront (Soon).
-  const loaders: Partial<Record<PageId, () => Promise<{ default: Component }>>> = {
+  // Une page par onglet : le compilateur refuse qu'il en manque une.
+  const loaders: Record<PageId, () => Promise<{ default: Component }>> = {
     music: () => import('./pages/Music.svelte'),
     sound: () => import('./pages/Sound.svelte'),
     apps: () => import('./pages/Apps.svelte'),
     steam: () => import('./pages/Steam.svelte'),
     office: () => import('./pages/Office.svelte'),
+    markets: () => import('./pages/Markets.svelte'),
     system: () => import('./pages/System.svelte'),
     power: () => import('./pages/Power.svelte'),
     settings: () => import('./pages/Settings.svelte'),
@@ -79,14 +80,10 @@
     {:else}
       {@const load = loaders[currentId]}
       {#key currentId}
-        {#if load}
-          {#await load() then module}
-            {@const Page = module.default}
-            <Page />
-          {/await}
-        {:else}
-          <Soon page={current} />
-        {/if}
+        {#await load() then module}
+          {@const Page = module.default}
+          <Page />
+        {/await}
       {/key}
     {/if}
   </main>
@@ -95,6 +92,7 @@
 </div>
 
 <AppPicker />
+<MarketsEditor />
 <Keyboard />
 <ConfirmDialog />
 <Toast />

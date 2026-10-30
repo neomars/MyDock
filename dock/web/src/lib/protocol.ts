@@ -265,6 +265,79 @@ export interface DockInfo {
   ips: string[]
   pc: { host: string; port: number; token_set: boolean; name: string | null }
   wol: WolInfo
+  /** Résumé de la bourse (sans abonnement aux cotations) ; absent d'un dock plus ancien. */
+  markets?: { count: number; currency: 'EUR' | 'USD'; finnhub: boolean; demo: boolean }
+}
+
+export type MarketKind = 'crypto' | 'stock'
+export type MarketRange = '1d' | '5d' | '1mo' | '1y'
+export type MarketSession = 'open' | 'closed' | 'pre' | 'post'
+
+/** Une valeur suivie : une crypto (« BTC ») ou une valeur de Yahoo Finance (« MSTR », « ^FCHI »). */
+export interface Watched {
+  kind: MarketKind
+  symbol: string
+}
+
+export interface MarketItem {
+  id: string
+  kind: MarketKind
+  symbol: string
+  name: string | null
+  /** Null tant que la première cotation n'est pas arrivée. */
+  price: number | null
+  currency: string | null
+  /** Variation sur 24 h (crypto) ou depuis la clôture de la veille (valeur). */
+  change: number | null
+  change_pct: number | null
+  high: number | null
+  low: number | null
+  state: MarketSession | null
+  traded_at: number | null
+  spark: number[]
+  /** Identifiant du fournisseur : « binance », « yahoo », « finnhub » ou « demo ». */
+  source: string | null
+  /** Quand le dock a obtenu cette cotation (secondes Unix). */
+  fetched: number | null
+  /** Pourquoi la dernière mise à jour a échoué (la cotation affichée est alors la dernière connue). */
+  error: string | null
+}
+
+export interface MarketProvider {
+  id: string
+  label: string
+  state: 'idle' | 'ok' | 'error' | 'paused'
+  message: string | null
+  /** Quand le dock réessaiera (secondes Unix), pendant une pause. */
+  retry_at: number | null
+}
+
+export interface MarketsData {
+  currency: 'EUR' | 'USD'
+  demo: boolean
+  items: MarketItem[]
+  fetched_at: number | null
+  providers: MarketProvider[]
+}
+
+export interface MarketHistory {
+  id: string
+  range: MarketRange
+  currency: string
+  source: string
+  /** [heure Unix, cours], du plus ancien au plus récent. */
+  points: [number, number][]
+  fetched: number
+}
+
+export interface MarketCheck {
+  id: string
+  kind: MarketKind
+  symbol: string
+  name: string | null
+  price: number
+  currency: string | null
+  source: string
 }
 
 /** Thème « ui » : préférences d'affichage persistées sur le Pi. */

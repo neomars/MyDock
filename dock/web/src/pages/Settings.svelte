@@ -7,6 +7,8 @@
   import { editText } from '../lib/keyboard.svelte'
   import { formatMs, ifaceKindLabel, type LatencyStats } from '../lib/format'
   import { MAX_PINNED } from '../lib/launcher'
+  import { MAX_WATCHED } from '../lib/markets'
+  import { marketsUi } from '../lib/markets.svelte'
   import { picker } from '../lib/picker.svelte'
   import type { Ack } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
@@ -214,6 +216,25 @@
         Choisir les applications…
       </button>
       {#if !sock.connected}<p class="dim small">Le PC doit être allumé : c'est lui qui connaît ses applications.</p>{/if}
+    </section>
+
+    <section class="card" data-testid="settings-markets">
+      <h2>Bourse</h2>
+      <p data-testid="markets-count">
+        {#if !dock?.markets}
+          Lecture de la liste…
+        {:else if dock.markets.count === 0}
+          Aucune valeur suivie.
+        {:else}
+          {dock.markets.count} valeur{dock.markets.count > 1 ? 's' : ''} suivie{dock.markets.count > 1 ? 's' : ''} sur {MAX_WATCHED} au plus, cryptos cotées en {dock.markets.currency === 'USD' ? 'dollars' : 'euros'}.
+        {/if}
+      </p>
+      <button class="btn" data-testid="choose-markets" onclick={() => marketsUi.edit()}>Choisir les valeurs…</button>
+      <p class="dim small" data-testid="markets-note">
+        Le Pi lit lui-même les cotations (Yahoo Finance et Binance, sans clé) : la Bourse marche PC éteint.
+        {#if dock?.markets?.demo}Mode démonstration : cotations calculées, sans réseau.
+        {:else if dock?.markets}Clé Finnhub de secours : {dock.markets.finnhub ? 'configurée' : 'aucune (facultative)'}.{/if}
+      </p>
     </section>
 
     <section class="card" data-testid="settings-about">

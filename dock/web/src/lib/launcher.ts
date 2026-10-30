@@ -55,7 +55,7 @@ export function toggled(pinned: string[], id: string, max = MAX_PINNED): string[
 }
 
 /** La liste après avoir déplacé l'élément `index` d'un cran (-1 vers le haut, 1 vers le bas). */
-export function moved(list: string[], index: number, delta: -1 | 1): string[] {
+export function moved<T>(list: T[], index: number, delta: -1 | 1): T[] {
   const target = index + delta
   if (index < 0 || index >= list.length || target < 0 || target >= list.length) return list
   const next = [...list]

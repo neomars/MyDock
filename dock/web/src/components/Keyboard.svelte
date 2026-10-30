@@ -11,12 +11,12 @@
     SYMBOLS,
     backspace,
     isKeyAllowed,
+    keyCase,
     supportsUppercase,
     typeChar,
   } from '../lib/keyboardLayout'
 
-  const showCase = (key: string) =>
-    keyboard.shift && supportsUppercase(keyboard.kind) ? key.toUpperCase() : key
+  const showCase = (key: string) => keyCase(key, keyboard.kind, keyboard.shift)
 
   function press(key: string): void {
     keyboard.value = typeChar(keyboard.value, key, keyboard.kind, keyboard.shift)
