@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: MyDock
+Source: https://github.com/neomars/MyDock
+
+Files: *
+Copyright: 2026 neomars
+License: Proprietary
+ Usage personnel. L'auteur n'a pas encore choisi de licence de redistribution :
+ aucun droit de copie, de modification ou de redistribution n'est accordé tant
+ qu'il n'en a pas publié une.

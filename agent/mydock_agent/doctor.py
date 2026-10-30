@@ -14,7 +14,7 @@ from pathlib import Path
 
 import psutil
 
-from mydock_agent import __version__
+from mydock_agent import __version__, firewall
 from mydock_agent.access import local_lan_networks
 from mydock_agent.collectors.host import list_interfaces
 from mydock_agent.config import AgentConfig, default_config_path, load_config
@@ -24,7 +24,6 @@ from mydock_common.config import ConfigError
 from mydock_common.protocol import PROTOCOL_VERSION, loads
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
 
-UFW_CONF = Path("/etc/ufw/ufw.conf")
 LOOPBACK_BINDS = ("127.0.0.1", "localhost")
 
 
@@ -116,41 +115,19 @@ def check_network(report: Report) -> None:
         )
 
 
-def _service_active(unit: str) -> bool:
-    if not shutil.which("systemctl"):
-        return False
-    result = subprocess.run(
-        ["systemctl", "is-active", unit], capture_output=True, text=True, check=False
-    )
-    return result.stdout.strip() == "active"
-
-
-def firewall_sources(config: AgentConfig) -> list[str]:
-    """Qui autoriser dans le pare-feu : l'adresse du Pi, sinon les réseaux locaux de ce PC."""
-    networks = config.allowed_clients or tuple(local_lan_networks())
-    return [str(n.network_address) if n.prefixlen == 32 else str(n) for n in networks]
-
-
 def check_firewall(
     report: Report,
     config: AgentConfig,
     *,
-    ufw_conf: Path = UFW_CONF,
-    service_active: Callable[[str], bool] = _service_active,
+    ufw_conf: Path = firewall.UFW_CONF,
+    service_active: Callable[[str], bool] = firewall.service_active,
 ) -> None:
     """Un pare-feu actif est la première cause d'un PC « hors ligne » alors que l'agent tourne."""
     report.section("Pare-feu")
     port = config.port
     shown = False
-    try:
-        ufw_enabled = any(
-            line.replace(" ", "").lower() == "enabled=yes"
-            for line in ufw_conf.read_text().splitlines()
-        )
-        ufw_known = True
-    except OSError:
-        ufw_enabled, ufw_known = False, False
-    if ufw_known and ufw_enabled:
+    ufw = firewall.ufw_state(ufw_conf)
+    if ufw:
         shown = True
         report.add(
             WARN,
@@ -159,9 +136,9 @@ def check_firewall(
         )
         report.add(INFO, f"    sudo ufw status | grep {port}")
         report.add(INFO, "S'il n'y a aucune ligne, autorise le Pi :")
-        for source in firewall_sources(config):
-            report.add(INFO, f"    sudo ufw allow from {source} to any port {port} proto tcp")
-    elif ufw_known:
+        for source in firewall.sources(config):
+            report.add(INFO, f"    {firewall.ufw_allow_command(source, port)}")
+    elif ufw is False:
         shown = True
         report.add(OK, "ufw est installé mais inactif : il ne bloque rien")
     if service_active("firewalld"):
@@ -174,6 +151,76 @@ def check_firewall(
         report.add(INFO, "    sudo firewall-cmd --reload")
     if not shown:
         report.add(INFO, "Aucun pare-feu courant (ufw, firewalld) détecté : rien à ouvrir")
+
+
+SERVICE_PROPERTIES = (
+    "LoadState",
+    "ActiveState",
+    "SubState",
+    "UnitFileState",
+    "FragmentPath",
+    "ConditionResult",
+)
+
+
+def read_service() -> dict[str, str] | None:
+    """Propriétés du service systemd utilisateur, ou None si systemd est injoignable d'ici."""
+    if not shutil.which("systemctl"):
+        return None
+    command = ["systemctl", "--user", "show", "mydock-agent.service"]
+    for name in SERVICE_PROPERTIES:
+        command += ["-p", name]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+
+
+def check_service(report: Report, read: Callable[[], dict[str, str] | None] = read_service) -> None:
+    """Le service est-il installé, d'où vient son unité, tourne-t-il ?"""
+    report.section("Service systemd")
+    props = read()
+    if props is None:
+        report.add(INFO, "systemd utilisateur non joignable depuis ce terminal")
+        return
+    if props.get("LoadState") == "not-found":
+        report.add(
+            WARN,
+            "Service mydock-agent introuvable : installe le paquet "
+            "(sudo apt install ./mydock-agent_*.deb) ou lance l'agent à la main (mydock-agent run).",
+        )
+        return
+    path = props.get("FragmentPath", "")
+    if path.startswith(("/usr/", "/lib/", "/etc/systemd/")):
+        report.add(OK, f"Unité fournie par le système : {path}")
+    elif path:
+        report.add(
+            WARN,
+            f"L'unité de ton dossier personnel ({path}) masque celle du paquet : "
+            "relance « mydock-agent setup » pour la remplacer.",
+        )
+    active = props.get("ActiveState", "")
+    if active == "active":
+        report.add(OK, f"Service actif ({props.get('SubState', '?')})")
+    elif active == "failed":
+        report.add(FAIL, "Service en échec : journalctl --user -u mydock-agent -e")
+    elif props.get("ConditionResult") == "no":
+        report.add(
+            WARN,
+            "Service non démarré : pas encore de configuration. Lance : "
+            "mydock-agent setup --pi ADRESSE_IP_DU_PI",
+        )
+    else:
+        report.add(
+            WARN,
+            f"Service {active or 'inconnu'} : systemctl --user start mydock-agent "
+            "(journal : journalctl --user -u mydock-agent -e)",
+        )
+    if props.get("UnitFileState") in ("masked", "disabled"):
+        report.add(WARN, f"Service {props['UnitFileState']} pour ton utilisateur.")
 
 
 def curl_check(address: str, port: int) -> str:
@@ -287,6 +334,7 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     check_network(report)
     if config is not None:
         check_firewall(report, config)
+    check_service(report)
     check_tools(report)
     if config is not None:
         check_running(report, config, cpu_seconds)

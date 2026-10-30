@@ -1,9 +1,11 @@
 """Ligne de commande de l'agent.
 
-mydock-agent run [--demo]          démarre l'agent (commande par défaut)
-mydock-agent init --allow IP_DU_PI crée ou met à jour la configuration (jeton généré)
+mydock-agent setup --pi IP_DU_PI   première configuration : jeton, service, pare-feu, consignes
+mydock-agent run [--demo]          démarre l'agent (commande par défaut ; le service s'en charge)
+mydock-agent init --allow IP_DU_PI crée ou met à jour la configuration seule (jeton généré)
 mydock-agent show-token            affiche le jeton, pour l'appairage avec le Pi
 mydock-agent doctor                diagnostic de l'installation
+mydock-agent enable-wol            prépare le PC à être allumé à distance (Wake-on-LAN)
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from mydock_agent.doctor import run_doctor
 from mydock_agent.hub import Hub
 from mydock_agent.server import create_app
 from mydock_agent.session import detect_session
+from mydock_agent.setup import run_setup
 from mydock_common.actions import ActionRegistry
 from mydock_common.config import ConfigError
 from mydock_common.protocol import MAX_MESSAGE_BYTES
@@ -74,6 +77,40 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--port", type=int)
     init.add_argument("--bind", help="adresse d'écoute IPv4")
     init.add_argument("--rotate-token", action="store_true", help="génère un nouveau jeton")
+
+    setup = sub.add_parser(
+        "setup",
+        help="première configuration : jeton, service, pare-feu et consignes pour le Pi",
+        description=(
+            "Crée la configuration (jeton généré, droits 600), démarre le service systemd "
+            "utilisateur, dit quoi faire pour le pare-feu et ce qu'il faut saisir sur le Pi. "
+            "Idempotent : peut être relancé sans changer le jeton."
+        ),
+    )
+    setup.add_argument("--config", type=Path)
+    setup.add_argument(
+        "--pi",
+        action="append",
+        default=[],
+        metavar="IP_OU_RESEAU",
+        help="client autorisé (répétable) : l'adresse IP du Pi",
+    )
+    setup.add_argument("--port", type=int)
+    setup.add_argument("--bind", help="adresse d'écoute IPv4 (défaut : 0.0.0.0)")
+    setup.add_argument("--rotate-token", action="store_true", help="génère un nouveau jeton")
+    setup.add_argument(
+        "--open-firewall",
+        action="store_true",
+        help="si ufw est actif, autorise le Pi (sudo ufw allow ; demande ton mot de passe)",
+    )
+    setup.add_argument("--no-service", action="store_true", help="ne touche pas au service systemd")
+
+    # Les options de enable-wol (--wifi, --dry-run, --help) sont celles du script : voir main().
+    sub.add_parser(
+        "enable-wol",
+        help="prépare le PC à être allumé à distance (Wake-on-LAN) ; options : --wifi, --dry-run",
+        add_help=False,
+    )
 
     token = sub.add_parser("show-token", help="affiche le jeton pour l'appairage")
     token.add_argument("--config", type=Path)
@@ -163,6 +200,36 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    return run_setup(
+        config_path=args.config,
+        pi=args.pi,
+        port=args.port,
+        bind=args.bind,
+        rotate_token=args.rotate_token,
+        open_firewall=args.open_firewall,
+        start_service=not args.no_service,
+    )
+
+
+def find_wol_script() -> Path | None:
+    """Le script du paquet .deb, ou celui du dépôt quand on lance l'agent depuis les sources."""
+    candidates = (
+        Path("/usr/lib/mydock-agent/enable-wol.sh"),
+        Path(__file__).resolve().parents[2] / "deploy" / "pc" / "enable-wol.sh",
+    )
+    return next((c for c in candidates if c.is_file()), None)
+
+
+def cmd_enable_wol(rest: list[str]) -> int:
+    script = find_wol_script()
+    if script is None:
+        print("Erreur : script enable-wol.sh introuvable (réinstalle le paquet).", file=sys.stderr)
+        return 2
+    os.execv("/bin/bash", ["bash", str(script), *rest])
+    return 0  # inatteignable : execv remplace le processus (sert seulement quand il est simulé)
+
+
 def cmd_show_token(args: argparse.Namespace) -> int:
     try:
         config = load_config(args.config)
@@ -174,6 +241,9 @@ def cmd_show_token(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw[:1] == ["enable-wol"]:
+        return cmd_enable_wol(raw[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "run"
@@ -181,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(["run", *(argv if argv is not None else sys.argv[1:])])
     if command == "run":
         return cmd_run(args)
+    if command == "setup":
+        return cmd_setup(args)
     if command == "init":
         return cmd_init(args)
     if command == "show-token":

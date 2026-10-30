@@ -34,13 +34,13 @@ Chromium (kiosque)  ──ws──▶  serveur dock (Pi, 127.0.0.1)  ──ws + 
 - **Le serveur du dock** tourne sur le Pi. Il sert l'interface, garde la configuration, envoie le Wake-on-LAN et se reconnecte tout seul à l'agent (1 à 10 s). Le navigateur ne parle qu'à lui, en local : il ne voit jamais le jeton.
 - **L'écran** est un Chromium en mode kiosque dans un compositeur Wayland minimal (labwc).
 
-Le PC est trouvé par son nom mDNS (`mon-pc.local`) ou par son adresse IPv4.
+Le PC est joint par son **adresse IPv4** (recommandé) ou par son nom mDNS (`nom-du-pc.local`). Depuis un Pi, la résolution des noms `.local` échoue souvent : l'adresse IP, réservée dans la box, est plus fiable.
 
 ## Installation
 
 ### Prérequis
 
-- PC : Ubuntu 24.04 ou plus récent (GNOME, session Wayland ou X11 ; conçu pour la 26.04), Python 3.11 ou plus récent, une session graphique ouverte.
+- PC : Ubuntu 26.04 (GNOME, session Wayland ou X11) ou Debian 13 ; une session graphique ouverte. Le paquet dépend des paquets `python3-*` de la distribution (fastapi 0.115+, uvicorn, websockets 13+, psutil, pydantic 2.7+) : tous présents dans Ubuntu 26.04 (dépôt `universe`, activé par défaut sur Ubuntu Desktop).
 - Pi : Raspberry Pi 4 sous Raspberry Pi OS 64 bits (Bookworm ou Trixie), écran tactile USB + HDMI.
 - Le PC et le Pi sur le même réseau local.
 
@@ -51,24 +51,39 @@ git clone https://github.com/neomars/MyDock.git
 cd MyDock
 ```
 
-### 1. Sur le PC : l'agent
+### 1. Sur le PC : le paquet `.deb` de l'agent
 
-Dans un terminal de ta session graphique (pas en SSH, pas avec `sudo`), en donnant l'adresse IP du Pi :
+```bash
+python3 packaging/build_deb.py                          # → build/mydock-agent_<version>_all.deb  (2 s, seul dpkg-deb est requis)
+sudo apt install ./build/mydock-agent_*_all.deb
+mydock-agent setup --pi 192.168.1.50 --open-firewall    # 192.168.1.50 = adresse IP du Pi
+```
+
+`mydock-agent setup`, à lancer dans un terminal de **ta session graphique** (pas en SSH, **pas avec `sudo`**) :
+
+- crée `~/.config/mydock/agent.toml` (droits 600) avec un jeton de 256 bits, et n'autorise que l'adresse du Pi ;
+- démarre le service `mydock-agent` (service systemd *utilisateur*, fourni par le paquet et activé pour tous les utilisateurs mais sans effet tant que `setup` n'a pas été lancé) ;
+- si `ufw` est actif, autorise le Pi sur le port de l'agent (`--open-firewall` : `sudo` demande ton mot de passe) ; sans le drapeau, il affiche la commande à copier ;
+- affiche l'**adresse IP du PC**, la commande à lancer sur le Pi, le test `curl` pour vérifier la liaison, et le **jeton, une seule fois** (le revoir : `mydock-agent show-token`).
+
+La commande est idempotente : la relancer ne change pas le jeton (sauf `--rotate-token`). Elle remplace aussi l'ancienne installation par script (voir plus bas) si elle existe.
+
+**Mise à jour** : `git pull`, `python3 packaging/build_deb.py`, `sudo apt install ./build/mydock-agent_*_all.deb` ; les sessions ouvertes redémarrent leur agent toutes seules. **Désinstallation** : `sudo apt remove mydock-agent` (la configuration reste dans `~/.config/mydock` ; `rm -r` pour l'effacer).
+
+<details>
+<summary>Installation sans paquet (autre distribution, développement)</summary>
 
 ```bash
 ./deploy/pc/install-agent.sh --pi 192.168.1.50
 ```
 
-Le script est idempotent : il crée un environnement Python dédié, génère la configuration et un jeton (fichier en droits 600), installe et démarre le service `mydock-agent`, et ouvre le port dans `ufw` si le pare-feu est actif. Le **jeton est affiché une seule fois** : le copier pour l'étape suivante. Pour le réafficher :
-
-```bash
-~/.local/share/mydock/venv/bin/mydock-agent show-token
-```
+Crée un environnement Python dédié dans `~/.local/share/mydock/venv` et un service utilisateur, même résultat que le paquet ; refuse de tourner si le paquet est installé. Désinstallation : `./deploy/pc/uninstall-agent.sh --purge`.
+</details>
 
 ### 2. Sur le Pi : le dock et le kiosque
 
 ```bash
-sudo ./deploy/pi/install-dock.sh --pc mon-pc.local
+sudo ./deploy/pi/install-dock.sh --pc 192.168.1.3     # l'adresse IP du PC, affichée par « mydock-agent setup »
 ```
 
 Le jeton est demandé (saisie masquée) ; on peut aussi le passer par `--token-file` ou la variable `MYDOCK_TOKEN`. Le script détecte le type d'image :
@@ -83,22 +98,22 @@ Redémarrer ensuite le Pi (`sudo reboot`) : l'écran affiche le dock en plein é
 
 ```bash
 # sur le PC
-~/.local/share/mydock/venv/bin/mydock-agent doctor
+mydock-agent doctor
 # sur le Pi
 sudo -u mydock /opt/mydock/venv/bin/mydock-dock doctor
 ```
 
-Les deux affichent un diagnostic lisible (configuration, session, réseau, liaison, Wake-on-LAN). Dans l'interface, **Réglages → Tester la connexion** donne le verdict en un toucher, et **Mesurer** donne la latence appui → PC.
+Les deux affichent un diagnostic lisible. Celui du PC vérifie la configuration, la session, le réseau, le **pare-feu** (avec les commandes exactes si `ufw` est actif), le service systemd, et prépare le test `curl` à lancer depuis le Pi. Celui du Pi teste **chaque adresse du PC** (port ouvert, refusé ou muet, et ping pour distinguer un pare-feu d'un PC éteint) puis le jeton. Dans l'interface, **Réglages → Tester la connexion** donne le verdict en un toucher, et **Mesurer** donne la latence appui → PC.
 
 ### Mises à jour et désinstallation
 
 ```bash
 git pull
-./deploy/pc/install-agent.sh --pi 192.168.1.50     # PC
-sudo ./deploy/pi/install-dock.sh                   # Pi (la configuration existante est reprise)
+python3 packaging/build_deb.py && sudo apt install ./build/mydock-agent_*_all.deb    # PC
+sudo ./deploy/pi/install-dock.sh                                                      # Pi (la configuration existante est reprise)
 ```
 
-`deploy/pc/uninstall-agent.sh` et `deploy/pi/uninstall-dock.sh` retirent les services (`--purge` supprime aussi configuration et jeton).
+`deploy/pi/uninstall-dock.sh` retire le service du Pi (`--purge` supprime aussi configuration et jeton).
 
 ## Utilisation
 
@@ -125,7 +140,7 @@ Limite connue : le trafic sur le réseau local n'est pas chiffré (le jeton ne l
 Allumer un PC **éteint** à distance n'est possible qu'en **Ethernet** : la carte réseau doit rester à l'écoute, et le BIOS doit l'autoriser. En Wi-Fi, au mieux depuis la veille et selon la machine.
 
 1. Brancher le PC en Ethernet (portable : le laisser sur secteur).
-2. Lancer sur le PC `./deploy/pc/enable-wol.sh` (réglage durable via NetworkManager).
+2. Lancer sur le PC `mydock-agent enable-wol` (réglage durable via NetworkManager ; `--dry-run` pour voir sans appliquer).
 3. Dans le BIOS : activer « Wake on LAN » / « Power on by PCI-E », désactiver « ErP / Deep Sleep ».
 4. Le dock mémorise tout seul l'adresse MAC du PC tant qu'il est allumé ; elle se voit et se corrige dans **Réglages**. Le dock préfère l'Ethernet au Wi-Fi et avertit si seule l'adresse du Wi-Fi est connue.
 
@@ -133,15 +148,15 @@ Allumer un PC **éteint** à distance n'est possible qu'en **Ethernet** : la car
 
 | Symptôme | Cause probable | Remède |
 |---|---|---|
-| « PC hors ligne » alors que le PC est allumé | Pare-feu (`ufw`) ; nom `.local` non résolu ; PC en veille | Vérifier `sudo ufw status` ; essayer l'adresse IP dans Réglages ; `getent hosts mon-pc.local` sur le Pi |
-| « PC allumé, agent arrêté » | Session fermée (l'agent vit dans ta session) ; service arrêté | `systemctl --user status mydock-agent`, `journalctl --user -u mydock-agent -e` |
-| « Connexion refusée » | Jeton différent, ou IP du Pi absente de `allowed_clients` | Réglages → Jeton ; `mydock-agent doctor` ; relancer l'installateur du PC avec `--pi IP_DU_PI` |
+| « PC hors ligne » alors que le PC est allumé | **Nom `.local` non résolu depuis le Pi** (le plus fréquent) ; pare-feu (`ufw`) ; PC en veille ; Wi-Fi qui isole les appareils | **Saisir l'adresse IP du PC dans Réglages.** L'écran dit l'adresse essayée (`ubuntu.local (192.168.1.3:8765)`) et pourquoi ; sur le Pi : `sudo -u mydock /opt/mydock/venv/bin/mydock-dock doctor` teste chaque adresse ; sur le PC : `mydock-agent doctor` |
+| « PC allumé, agent arrêté » | Session fermée (l'agent vit dans ta session) ; service arrêté | `mydock-agent doctor` (section « Service systemd »), `journalctl --user -u mydock-agent -e` |
+| « Connexion refusée » | Jeton différent, ou IP du Pi absente de `allowed_clients` | Réglages → Jeton ; `mydock-agent doctor` ; `mydock-agent setup --pi IP_DU_PI` sur le PC (le message dit quelle adresse le PC voit arriver) |
 | Le nom `ubuntu.local` change ou ne répond pas | Deux machines nommées « ubuntu » | `sudo hostnamectl set-hostname mon-pc`, ou utiliser l'IP (idéalement réservée dans la box) |
 | « Allumer le PC » n'a aucun effet | Pas d'Ethernet, BIOS, câble débranché à l'extinction | Voir la section Wake-on-LAN ; Réglages → vérifier l'adresse MAC |
 | Écran noir au démarrage du Pi | Compositeur ou Chromium ne démarre pas | `journalctl -u mydock-kiosk -e` (Lite) ; vérifier `chromium` et `labwc` installés ; essayer `--force-mode 1024x600@60` |
 | Écran à la mauvaise résolution | Mode non détecté | `sudo ./deploy/pi/install-dock.sh --force-mode 1024x600@60` ; ou `video=HDMI-A-1:1024x600@60` dans `/boot/firmware/cmdline.txt` |
 | Interface saccadée | Accélération GPU absente | `?debug=1` pour voir les i/s ; ajouter des options dans `/etc/mydock-kiosk/chromium.flags` (ex. `--use-gl=angle`) |
-| Le jeton a fuité | — | Sur le PC : `./deploy/pc/install-agent.sh --pi IP --rotate-token`, puis ressaisir le jeton dans Réglages |
+| Le jeton a fuité | — | Sur le PC : `mydock-agent setup --pi IP_DU_PI --rotate-token`, puis ressaisir le jeton dans Réglages |
 
 Outils : `./deploy/pc/diagnose.sh [--anonyme]` décrit le PC (session, GPU, audio, Steam, LibreOffice, réseau) sans afficher de secret.
 
@@ -150,7 +165,9 @@ Outils : `./deploy/pc/diagnose.sh [--anonyme]` décrit le PC (session, GPU, audi
 ```bash
 make venv          # environnement Python (3 paquets en mode éditable)
 make test-fast     # tests Python rapides
-make test          # tous les tests Python, déploiement compris
+make test          # tous les tests Python, déploiement et paquet compris
+make test-ubuntu   # tests de l'agent avec les versions EXACTES des paquets Python d'Ubuntu 26.04
+make deb           # construit build/mydock-agent_<version>_all.deb
 make lint          # ruff, svelte-check, shellcheck
 cd dock/web && npm ci && npm test      # tests unitaires de l'interface
 make demo          # agent en mode démo + dock sur http://127.0.0.1:8080
@@ -164,9 +181,10 @@ agent/    service du PC : serveur, hub d'état, collecteurs, mode démo, doctor
 dock/
   server/ serveur du Pi : liaison avec l'agent, Wake-on-LAN, configuration
   web/    interface Svelte 5 + Vite + TypeScript (dist/ compilé et commité)
-deploy/   installateurs idempotents (pc/, pi/), unités systemd, kiosque
+packaging/ construction du paquet .deb de l'agent (build_deb.py), modèles et scripts du paquet
+deploy/   installateurs idempotents (pc/ : sans paquet, pi/), unités systemd, kiosque
 docs/     rapports d'étape et captures 1024×600
 scripts/  pile de démonstration, contrôle de l'interface compilée, tests de déploiement
 ```
 
-Le protocole est décrit dans [`common/mydock_common/protocol.py`](common/mydock_common/protocol.py). Les tests automatiques tournent sous Python 3.13 et 3.14 ; le code vise Python 3.11 et plus.
+Le protocole est décrit dans [`common/mydock_common/protocol.py`](common/mydock_common/protocol.py). Les tests automatiques tournent sous Python 3.13 et 3.14, ainsi qu'avec les versions exactes des paquets d'Ubuntu 26.04 (`make test-ubuntu`) ; le code vise Python 3.11 et plus.

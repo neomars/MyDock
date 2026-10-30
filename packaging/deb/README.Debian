@@ -1,0 +1,41 @@
+mydock-agent pour Debian / Ubuntu
+=================================
+
+Ce paquet installe l'agent du PC : un service systemd *utilisateur* (il doit vivre dans ta
+session graphique pour voir l'écran, le son et les applications), activé pour tous les
+utilisateurs mais qui ne démarre qu'une fois configuré.
+
+Première configuration (dans un terminal de ta session, sans sudo) :
+
+    mydock-agent setup --pi ADRESSE_IP_DU_PI --open-firewall
+
+La commande crée ~/.config/mydock/agent.toml (droits 600) avec un jeton, démarre le service,
+autorise le Pi dans ufw si le pare-feu est actif, puis affiche l'adresse et le jeton à saisir
+sur le Pi. Elle peut être relancée sans changer le jeton.
+
+Fichiers
+--------
+  /usr/bin/mydock-agent                                  programme
+  /usr/lib/python3/dist-packages/mydock_agent, mydock_common
+  /usr/lib/systemd/user/mydock-agent.service             service (activé pour tous les utilisateurs)
+  /etc/ufw/applications.d/mydock-agent                   profil ufw « MyDock agent » (port 8765)
+  ~/.config/mydock/agent.toml                            configuration et jeton de chaque utilisateur
+
+Commandes utiles
+----------------
+  systemctl --user status mydock-agent       état du service
+  journalctl --user -u mydock-agent -e       journal
+  mydock-agent doctor                        diagnostic complet (réseau, pare-feu, service)
+  mydock-agent show-token                    affiche le jeton
+  mydock-agent enable-wol                    prépare le réveil à distance (Ethernet + BIOS)
+
+Désinstallation
+---------------
+  sudo apt remove mydock-agent
+La configuration personnelle (et le jeton) reste dans ~/.config/mydock ; pour tout effacer :
+  rm -r ~/.config/mydock
+Une règle ufw créée par « setup --open-firewall » se retire avec :
+  sudo ufw status numbered, puis sudo ufw delete <numéro>   (commentaire « MyDock agent »)
+
+Désactiver le service pour un seul utilisateur sans désinstaller :
+  systemctl --user mask mydock-agent

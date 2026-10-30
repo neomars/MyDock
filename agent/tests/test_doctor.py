@@ -3,9 +3,15 @@
 import ipaddress
 import subprocess
 
-from mydock_agent import doctor
+from mydock_agent import doctor, firewall
 from mydock_agent.config import AgentConfig
-from mydock_agent.doctor import check_config, check_firewall, check_from_pi, curl_check
+from mydock_agent.doctor import (
+    check_config,
+    check_firewall,
+    check_from_pi,
+    check_service,
+    curl_check,
+)
 from mydock_common.auth import generate_token
 from mydock_common.report import Report
 
@@ -63,7 +69,7 @@ def test_the_command_follows_the_configured_port_and_every_client(tmp_path):
 
 def test_without_allowed_clients_the_local_networks_are_suggested(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        doctor, "local_lan_networks", lambda: [ipaddress.ip_network("192.168.1.0/24")]
+        firewall, "local_lan_networks", lambda: [ipaddress.ip_network("192.168.1.0/24")]
     )
     text, _ = firewall_text(make_config(), ufw_conf=ufw_conf(tmp_path, "yes"), service_active=never)
     assert "sudo ufw allow from 192.168.1.0/24 to any port 8765 proto tcp" in text
@@ -113,7 +119,7 @@ def test_the_firewall_check_only_reads(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(command, 3, stdout="inactive\n", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(firewall.shutil, "which", lambda name: f"/usr/bin/{name}")
     firewall_text(make_config("192.168.1.60"), ufw_conf=ufw_conf(tmp_path, "yes"))
     assert launched == [["systemctl", "is-active", "firewalld"]]
 
@@ -206,3 +212,63 @@ def test_no_active_network_is_called_out(monkeypatch):
     report = Report()
     check_from_pi(report, make_config("192.168.1.60"))
     assert "aucune adresse IPv4 sur un réseau actif" in report.render()
+
+
+# --- service systemd -----------------------------------------------------------------------------
+
+
+def service_text(**props: str) -> tuple[str, Report]:
+    base = {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled",
+        "FragmentPath": "/usr/lib/systemd/user/mydock-agent.service",
+        "ConditionResult": "yes",
+    }
+    report = Report()
+    check_service(report, lambda: {**base, **props})
+    return report.render(), report
+
+
+def test_a_running_packaged_service_is_all_green():
+    text, report = service_text()
+    assert "Unité fournie par le système" in text
+    assert "Service actif (running)" in text
+    assert "⚠" not in text
+    assert not report.failed
+
+
+def test_an_unconfigured_service_says_how_to_configure_it():
+    text, _ = service_text(ActiveState="inactive", SubState="dead", ConditionResult="no")
+    assert "pas encore de configuration" in text
+    assert "mydock-agent setup --pi" in text
+
+
+def test_a_failed_service_points_at_the_journal():
+    text, report = service_text(ActiveState="failed", SubState="failed")
+    assert report.failed
+    assert "journalctl --user -u mydock-agent" in text
+
+
+def test_a_unit_in_the_home_directory_is_flagged_as_masking_the_package():
+    text, _ = service_text(FragmentPath="/home/mars/.config/systemd/user/mydock-agent.service")
+    assert "masque celle du paquet" in text
+    assert "mydock-agent setup" in text
+
+
+def test_a_missing_service_points_at_the_package():
+    text, _ = service_text(LoadState="not-found", FragmentPath="")
+    assert "sudo apt install" in text
+
+
+def test_a_masked_service_is_flagged():
+    text, _ = service_text(UnitFileState="masked", ActiveState="inactive", ConditionResult="yes")
+    assert "masked" in text
+
+
+def test_an_unreachable_user_systemd_is_not_an_error():
+    report = Report()
+    check_service(report, lambda: None)
+    assert "non joignable" in report.render()
+    assert not report.failed

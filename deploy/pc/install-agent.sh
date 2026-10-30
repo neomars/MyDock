@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# MyDock - installation de l'agent sur le PC Ubuntu (service systemd *utilisateur*).
+# MyDock - installation de l'agent sur le PC SANS paquet (environnement Python dédié, service
+# systemd *utilisateur*). Sur Ubuntu, préfère le paquet .deb : voir README (« mydock-agent setup »).
 # Idempotent : on peut le relancer après chaque « git pull » ; le jeton existant est conservé.
 set -euo pipefail
 
@@ -53,6 +54,9 @@ UNIT_NAME=mydock-agent.service
 
 if [ "$(id -u)" = 0 ] && [ "${MYDOCK_ALLOW_ROOT:-0}" != 1 ]; then
   die "Ne lance pas ce script avec sudo : l'agent est un service de ta session (il doit voir ton écran, ton son, tes applications). Lance-le en simple utilisateur ; sudo sera demandé seulement quand il faut."
+fi
+if have dpkg-query && dpkg-query -W -f='${Status}' mydock-agent 2>/dev/null | grep -q 'install ok installed'; then
+  die "Le paquet mydock-agent est installé : configure-le avec « mydock-agent setup --pi ADRESSE_IP_DU_PI ». Ce script sert à une installation sans paquet ; les deux ensemble se gêneraient (pour passer à ce script : sudo apt remove mydock-agent)."
 fi
 [ "$DRY_RUN" = 1 ] && say "(simulation : rien ne sera modifié)"
 
@@ -180,12 +184,13 @@ else
   say "Jeton existant conservé. Pour l'afficher à nouveau : $VENV/bin/mydock-agent show-token"
 fi
 say ""
-say "Sur le Pi (dans ce dépôt) :"
-say "    sudo ./deploy/pi/install-dock.sh --pc ${HOST_NAME}.local"
-case "$HOST_NAME" in
-  ubuntu | localhost)
-    warn "Le nom de ce PC (« $HOST_NAME ») est très courant : s'il y a deux machines du même nom sur le réseau, le nom .local peut se décaler (${HOST_NAME}-2.local). Un nom plus distinctif est plus sûr : sudo hostnamectl set-hostname mon-pc" ;;
-esac
+PC_IP=$(lan_ip)
+say "Sur le Pi (dans ce dépôt), avec l'adresse IP de ce PC :"
+say "    sudo ./deploy/pi/install-dock.sh --pc ${PC_IP:-${HOST_NAME}.local}"
+say "Préfère l'adresse IP au nom ${HOST_NAME}.local : la résolution des noms .local échoue souvent depuis un Pi."
+say "Réserve cette adresse dans ta box (bail DHCP) pour qu'elle ne change pas."
+say "Vérifier depuis le Pi (404 = l'agent est joint) :"
+say "    curl -sS -m 5 -o /dev/null -w '%{http_code}\\n' http://${PC_IP:-ADRESSE_DU_PC}:${PORT_NOW:-${PORT:-8765}}/"
 say ""
 say "Diagnostic : $VENV/bin/mydock-agent doctor"
 say "Pour pouvoir allumer ce PC depuis le dock : ./deploy/pc/enable-wol.sh"

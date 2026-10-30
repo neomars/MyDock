@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF'
 Usage : sudo ./deploy/pi/install-dock.sh --pc NOM_OU_IP [options]
 
-  --pc HOTE          nom (ubuntu.local) ou adresse IPv4 du PC piloté
+  --pc HOTE          adresse IPv4 du PC piloté (recommandé : un nom .local échoue souvent depuis un Pi)
   --pc-port N        port de l'agent (défaut : 8765)
   --token-file F     fichier dont la première ligne est le jeton de l'agent.
                      Sans cette option : variable MYDOCK_TOKEN, sinon saisie masquée.
@@ -117,7 +117,7 @@ HAVE_CONFIG_PC=0
 if [ -f "$CONFIG" ] && grep -Eq '^host *= *"[^"]+"' "$CONFIG"; then HAVE_CONFIG_PC=1; fi
 if [ -z "$PC" ] && [ "$HAVE_CONFIG_PC" = 0 ]; then
   usage >&2
-  die "--pc est nécessaire à la première installation (nom .local ou adresse IPv4 du PC)."
+  die "--pc est nécessaire à la première installation (adresse IPv4 du PC, ou nom .local)."
 fi
 TOKEN=""
 if [ -n "$TOKEN_FILE" ]; then
@@ -130,7 +130,7 @@ elif [ "$HAVE_CONFIG_TOKEN" = 0 ]; then
     read -r -s -p "  Jeton de l'agent (colle-le ici, la saisie est masquée) : " TOKEN
     echo
   fi
-  [ -n "$TOKEN" ] || die "Il faut le jeton de l'agent. Sur le PC : ~/.local/share/mydock/venv/bin/mydock-agent show-token  (puis --token-file ou MYDOCK_TOKEN)."
+  [ -n "$TOKEN" ] || die "Il faut le jeton de l'agent. Sur le PC : mydock-agent show-token  (puis --token-file ou MYDOCK_TOKEN)."
 fi
 if [ -n "$PC" ]; then say "  PC : $PC"; fi
 if [ -n "$TOKEN" ]; then say "  Jeton : fourni (non affiché)"; else say "  Jeton : celui de la configuration existante"; fi

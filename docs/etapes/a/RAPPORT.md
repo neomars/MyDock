@@ -3,6 +3,30 @@
 Livrée le 29 octobre 2026, branche `claude/jolly-dirac-5np79y`.
 Toutes les captures de ce dossier sont en **mode démo** (fausses données), en 1024×600 tactile.
 
+## Addendum du 30 octobre : retour d'installation et paquet `.deb`
+
+**Constat sur ton installation** : l'agent répondait bien en local (`mydock-agent doctor` tout en ✔) mais le Pi affichait « PC hors ligne ». Avec l'adresse IP à la place de `ubuntu.local`, tout a fonctionné : c'était la **résolution du nom `.local` depuis le Pi** (mDNS), pas l'agent, pas le pare-feu, aucun port à ouvrir. Sur ton PC, `ubuntu.local` ne se résolvait d'ailleurs qu'en IPv6 (ton diagnostic), alors que l'agent n'écoute qu'en IPv4.
+
+Ce que j'ai changé pour que ça ne se rejoue pas sans explication :
+
+| Où | Changement |
+|---|---|
+| Écran du dock | Le message nomme l'adresse essayée : « Le PC ne répond pas sur `ubuntu.local (192.168.1.3:8765)` : … ». Un jeton refusé dit **quelle adresse du Pi l'agent a vue** (à comparer avec `allowed_clients`). Réglages affiche « Connecté à » ou « Dernière adresse essayée », et l'adresse du Pi. |
+| Liaison dock → agent | Un nom qui donne plusieurs adresses IPv4 (Wi-Fi + Ethernet, pont docker…) : toutes sont essayées (3 au plus), la panne la plus parlante est retenue. Une panne n'est journalisée qu'une fois. |
+| `mydock-dock doctor` (Pi) | Teste **chaque adresse** : port ouvert / refusé / muet ; pour un port muet, un ping distingue « pare-feu du PC » (le PC répond au ping) de « PC éteint ou Wi-Fi qui isole » ; donne la commande `ufw` prête à copier. |
+| `mydock-agent doctor` (PC) | Section **pare-feu** (ufw, firewalld), alerte si l'agent n'écoute qu'en `127.0.0.1`, état du **service systemd**, et la commande `curl` à lancer depuis le Pi (404 = joint). |
+| Installateurs | Ils donnent l'**adresse IP** du PC à saisir sur le Pi (plus `ubuntu.local`) et conseillent de la réserver dans la box. |
+
+**Le logiciel du PC est maintenant un paquet `.deb`** (`mydock-agent`, 32 Ko, Python pur) :
+
+- construit par `python3 packaging/build_deb.py` (seul `dpkg-deb` est requis, deux constructions donnent le même fichier) ;
+- s'appuie sur les paquets `python3-*` d'Ubuntu — vérifiés dans l'archive de la 26.04 : fastapi 0.118, uvicorn 0.38, websockets 15.0.1, psutil 7.1, pydantic 2.12, tomli-w 1.2. Mon environnement de développement avait des versions bien plus récentes ; `make test-ubuntu` rejoue donc les tests avec **ces versions exactes** (417 tests passent) ;
+- fournit le service systemd utilisateur (activé pour tous les utilisateurs, mais sans effet tant qu'on n'a pas lancé `mydock-agent setup`), le profil ufw « MyDock agent » et `mydock-agent enable-wol` ;
+- **`mydock-agent setup --pi IP_DU_PI --open-firewall`** fait le reste : configuration en droits 600, jeton, démarrage du service, règle ufw, adresse et jeton à saisir sur le Pi. Il remplace aussi l'ancienne installation par script ;
+- une mise à jour redémarre l'agent des sessions ouvertes ; une désinstallation l'arrête ; `apt remove` / `purge` laissent le système propre (essayés dans le conteneur : `dpkg -i`, `-r`, `-P`).
+
+Ce qui n'a **pas** pu être essayé ici : `apt install` avec résolution des dépendances sur Ubuntu 26.04 (les versions sont lues dans l'archive, pas installées), et le démarrage du service dans une vraie session GNOME. À faire chez toi : `sudo apt install ./build/mydock-agent_*_all.deb`, puis `mydock-agent setup --pi 192.168.1.60 --open-firewall` et `mydock-agent doctor`.
+
 ## Ce qui est livré
 
 - **Agent (PC)** : service WebSocket FastAPI, jeton obligatoire, filtrage par adresse **avant** le jeton, anti-force-brute, hub d'état qui n'envoie que les changements, registre d'actions à liste blanche avec confirmation à usage unique, collecteur `host` (identité, session, interfaces réseau et adresses MAC), `--demo`, `doctor`, `init`, `show-token`.

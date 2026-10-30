@@ -195,6 +195,30 @@ def test_pc_rotating_the_token_gives_a_new_one(pc_install):
     assert after in result.stdout
 
 
+@pytest.mark.slow
+def test_pc_final_message_gives_an_ip_address_not_a_local_name(pc_install):
+    out = pc_install["first"].stdout
+    assert "sudo ./deploy/pi/install-dock.sh --pc " in out
+    assert "Préfère l'adresse IP" in out
+    assert "bail DHCP" in out
+    assert "-w '%{http_code}\\n'" in out  # le test curl à lancer depuis le Pi
+
+
+def test_pc_script_steps_aside_when_the_deb_package_is_installed(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stub = fake_bin / "dpkg-query"
+    stub.write_text("#!/bin/sh\necho 'install ok installed'\n")
+    stub.chmod(0o755)
+    env = base_env(HOME=str(tmp_path), MYDOCK_ALLOW_ROOT="1")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    result = sh([PC / "install-agent.sh", "--pi", "192.0.2.50", "--no-apt"], env=env)
+    assert result.returncode != 0
+    assert "paquet mydock-agent est installé" in result.stderr
+    assert "mydock-agent setup" in result.stderr
+    assert not (tmp_path / ".config" / "mydock").exists()  # rien n'a été touché
+
+
 def test_pc_dry_run_touches_nothing(tmp_path):
     env = base_env(HOME=str(tmp_path), MYDOCK_ALLOW_ROOT="1")
     result = sh([PC / "install-agent.sh", "--pi", "192.0.2.50", "--no-apt", "--dry-run"], env=env)

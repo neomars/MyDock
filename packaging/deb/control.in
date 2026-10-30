@@ -1,0 +1,19 @@
+Package: mydock-agent
+Version: @VERSION@
+Architecture: all
+Maintainer: neomars <neomars@users.noreply.github.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: @DEPENDS@
+Recommends: libglib2.0-bin, libgtk-3-bin, pulseaudio-utils, ethtool, python3-dbus-fast
+Section: utils
+Priority: optional
+Homepage: https://github.com/neomars/MyDock
+Description: agent de pilotage du PC pour le dock tactile MyDock
+ Petit service qui tourne dans la session graphique de l'utilisateur et
+ expose à un Raspberry Pi du réseau local, muni d'un écran tactile, l'état
+ du PC (système, musique, son, applications…) et une liste blanche d'actions.
+ .
+ L'agent n'accepte que l'adresse du Pi et un jeton secret, n'exécute aucune
+ commande arbitraire et n'envoie son état que lorsqu'il change.
+ .
+ Après l'installation, lancer « mydock-agent setup --pi ADRESSE_IP_DU_PI ».
