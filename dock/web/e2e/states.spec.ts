@@ -555,7 +555,8 @@ test('Applis : une application désinstallée reste à sa place, grisée, sans p
     { startPage: 'apps', pinned: ['a.desktop', 'org.disparue.App.desktop', 'c.desktop'] },
   )
   await page.goto(stack.url)
-  expect(await page.locator('[data-testid="apps-grid"] .name').allInnerTexts()).toEqual(['Firefox', 'org.disparue.App', 'Calculatrice'])
+  // La page se charge à la demande : on attend la grille au lieu de la lire à l'instant où la navigation se termine.
+  await expect(page.locator('[data-testid="apps-grid"] .name')).toHaveText(['Firefox', 'org.disparue.App', 'Calculatrice'])
   const gone = page.getByTestId('launch-org.disparue.App.desktop')
   await expect(gone).toBeDisabled()
   await expect(gone).toContainText('Introuvable')
