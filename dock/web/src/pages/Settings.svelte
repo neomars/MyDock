@@ -9,13 +9,18 @@
   import { MAX_PINNED } from '../lib/launcher'
   import { MAX_WATCHED, REFRESH_OPTIONS } from '../lib/markets'
   import { marketsUi } from '../lib/markets.svelte'
+  import { pageRows, pagesSummary } from '../lib/pages'
+  import { pagesUi } from '../lib/pagesEditor.svelte'
   import { picker } from '../lib/picker.svelte'
+  import { SLEEP_OPTIONS, sleepPhrase } from '../lib/screen'
+  import { screenSleep } from '../lib/screen.svelte'
   import type { Ack, MarketRefresh } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
   const dock = $derived(sock.dock)
   const link = $derived(sock.link)
+  const pagesLine = $derived(pagesSummary(pageRows(sock.ui?.order ?? [], sock.ui?.hidden ?? [])))
 
   /** Affiche le résultat d'une modification : succès en vert, sinon le message d'erreur du dock. */
   function report(ack: Ack, done: string): boolean {
@@ -26,6 +31,11 @@
 
   async function setRefresh(refresh: MarketRefresh): Promise<void> {
     const ack = await sock.act('dock.markets.set', { refresh })
+    if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
+  }
+
+  async function setSleep(seconds: number): Promise<void> {
+    const ack = await sock.act('dock.ui.set', { screen_sleep: seconds })
     if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
   }
 
@@ -180,32 +190,43 @@
         <p class="warn small">Wi-Fi : réveiller un PC éteint par Wi-Fi ne marche en général pas.</p>
       {/if}
     </section>
+
+    <section class="card" data-testid="settings-screen">
+      <h2>Écran du dock</h2>
+      <div class="pace compact" role="group" aria-label="Extinction de l'écran après inactivité">
+        <span class="dim small">Éteindre l'écran après</span>
+        {#each SLEEP_OPTIONS as option (option.id)}
+          <button
+            class="seg"
+            class:on={(sock.ui?.screen_sleep ?? 0) === option.id}
+            aria-pressed={(sock.ui?.screen_sleep ?? 0) === option.id}
+            disabled={!sock.ui}
+            data-testid="sleep-{option.id}"
+            onclick={() => setSleep(option.id)}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+      <p class="dim small" data-testid="screen-note">
+        {#if (sock.ui?.screen_sleep ?? 0) === 0}
+          L'écran reste allumé.
+        {:else}
+          Sans toucher pendant {sleepPhrase(sock.ui?.screen_sleep ?? 0)}, l'écran s'éteint ; le premier toucher le rallume sans rien déclencher.
+        {/if}
+      </p>
+      <button class="btn trial" data-testid="sleep-now" onclick={() => screenSleep.sleepNow()}>Éteindre maintenant (essai)</button>
+      <p class="dim small">L'essai noircit seulement l'image : c'est le Pi (swayidle) qui coupe le rétroéclairage, après le délai.</p>
+    </section>
   </div>
 
   <div class="col">
-    <section class="card" data-testid="settings-latency">
-      <h2>Latence appui → PC</h2>
-      <button class="btn" data-testid="measure-latency" disabled={latency.busy} onclick={measureLatency}>
-        <Gauge size={26} aria-hidden="true" />
-        {latency.busy ? 'Mesure en cours…' : 'Mesurer (20 essais)'}
+    <section class="card" data-testid="settings-pages">
+      <h2>Pages du dock</h2>
+      <p data-testid="pages-count">{pagesLine}</p>
+      <button class="btn" data-testid="choose-pages" onclick={() => pagesUi.edit()}>
+        Choisir les pages et leur ordre…
       </button>
-      {#if latency.done}
-        <dl class="stack" data-testid="latency-result">
-          <dt>Navigateur → dock</dt>
-          <dd>
-            {#if latency.dock}médiane {formatMs(latency.dock.median)} · p95 {formatMs(latency.dock.p95)}{:else}—{/if}
-          </dd>
-          <dt>Navigateur → PC</dt>
-          <dd>
-            {#if latency.pc}
-              médiane {formatMs(latency.pc.median)} · p95 {formatMs(latency.pc.p95)}
-              <span class="chip" class:good={latency.pc.p95 < 50} class:warn={latency.pc.p95 >= 50}>
-                {latency.pc.p95 < 50 ? 'sous 50 ms' : 'au-dessus de 50 ms'}
-              </span>
-            {:else}PC non connecté{/if}
-          </dd>
-        </dl>
-      {/if}
     </section>
 
     <section class="card" data-testid="settings-launcher">
@@ -255,6 +276,31 @@
         {#if dock?.markets?.demo}Mode démonstration : cotations calculées, sans réseau.
         {:else if dock?.markets}Clé Finnhub de secours : {dock.markets.finnhub ? 'configurée' : 'aucune (facultative)'}.{/if}
       </p>
+    </section>
+
+    <section class="card" data-testid="settings-latency">
+      <h2>Latence appui → PC</h2>
+      <button class="btn" data-testid="measure-latency" disabled={latency.busy} onclick={measureLatency}>
+        <Gauge size={26} aria-hidden="true" />
+        {latency.busy ? 'Mesure en cours…' : 'Mesurer (20 essais)'}
+      </button>
+      {#if latency.done}
+        <dl class="stack" data-testid="latency-result">
+          <dt>Navigateur → dock</dt>
+          <dd>
+            {#if latency.dock}médiane {formatMs(latency.dock.median)} · p95 {formatMs(latency.dock.p95)}{:else}—{/if}
+          </dd>
+          <dt>Navigateur → PC</dt>
+          <dd>
+            {#if latency.pc}
+              médiane {formatMs(latency.pc.median)} · p95 {formatMs(latency.pc.p95)}
+              <span class="chip" class:good={latency.pc.p95 < 50} class:warn={latency.pc.p95 >= 50}>
+                {latency.pc.p95 < 50 ? 'sous 50 ms' : 'au-dessus de 50 ms'}
+              </span>
+            {:else}PC non connecté{/if}
+          </dd>
+        </dl>
+      {/if}
     </section>
 
     <section class="card" data-testid="settings-about">
@@ -357,6 +403,16 @@
     border: 1px solid var(--line);
     font-weight: 600;
     text-align: center;
+  }
+  .pace.compact {
+    gap: 6px;
+  }
+  .pace.compact .seg {
+    min-width: 0;
+    padding: 0 10px;
+  }
+  .trial {
+    margin-top: 12px;
   }
   .seg.on {
     background: var(--accent-soft);

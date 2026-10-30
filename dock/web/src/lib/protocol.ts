@@ -248,6 +248,28 @@ export interface OfficeData {
   unavailable?: string
 }
 
+/** Ce que le système autorise pour une commande d'alimentation (thème « power »). */
+export interface PowerControlState {
+  ok: boolean
+  /** Pourquoi la commande est grisée (court : il tient sous le bouton). */
+  why: string | null
+}
+
+/** Un programme qui s'oppose à l'extinction (`shutdown`) ou à la mise en veille (`sleep`). */
+export interface PowerBlocker {
+  who: string
+  why: string
+  scope: ('shutdown' | 'sleep')[]
+}
+
+export interface PowerData {
+  hostname?: string
+  /** Absent quand l'agent est trop ancien pour connaître le thème (seul `unavailable` est alors donné). */
+  controls?: Partial<Record<'lock' | 'suspend' | 'reboot' | 'poweroff', PowerControlState>>
+  blockers?: PowerBlocker[]
+  unavailable?: string
+}
+
 export interface WolInfo {
   mac: string | null
   source: 'auto' | 'manual' | null
@@ -367,6 +389,8 @@ export interface UiState {
   hidden: PageId[]
   /** Identifiants .desktop des applications du lanceur, dans l'ordre choisi. */
   pinned_apps: string[]
+  /** Secondes d'inactivité avant l'extinction de l'écran du dock ; 0 : jamais. */
+  screen_sleep: number
 }
 
 export interface Ack {

@@ -15,7 +15,7 @@ help:
 	@echo "make web        compile l'interface dans dock/web/dist"
 	@echo "make web-check  vérifie que dock/web/dist correspond aux sources"
 	@echo "make e2e        tests Playwright 1024x600 (pile démo)"
-	@echo "make shots      comme e2e, et régénère les captures de l'étape en cours (docs/etapes/e)"
+	@echo "make shots      comme e2e, et régénère les captures de l'étape en cours (docs/etapes/f)"
 	@echo "make demo       agent en mode démo + serveur dock sur http://127.0.0.1:8080"
 	@echo "make deb        construit le paquet de l'agent : build/mydock-agent_<version>_all.deb"
 

@@ -3,10 +3,23 @@
   import Moon from '@lucide/svelte/icons/moon'
   import Power from '@lucide/svelte/icons/power'
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw'
+  import { onMount } from 'svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { formatCountdown, ifaceKindLabel } from '../lib/format'
+  import { blockerLine, controlView, POWER_CONTROLS, type PowerControlId } from '../lib/power'
+  import { power } from '../lib/power.svelte'
+  import type { PowerData } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { wake, wakePc } from '../lib/wake.svelte'
+
+  onMount(() => sock.subscribe(['power']))
+
+  const data = $derived(sock.topics.power as PowerData | undefined)
+  const name = $derived(data?.hostname ?? sock.host?.hostname ?? null)
+  const blockers = $derived(data?.blockers ?? [])
+  const ICONS = { lock: Lock, suspend: Moon, reboot: RotateCcw, poweroff: Power } as const
+  /** Ce qui coupe le PC est teinté de rouge : on ne le touche pas par inadvertance. */
+  const DANGEROUS: readonly PowerControlId[] = ['reboot', 'poweroff']
 
   const wol = $derived(sock.dock?.wol)
   let now = $state(Date.now())
@@ -16,13 +29,6 @@
     return () => clearInterval(timer)
   })
   const sentAgo = $derived(wake.sentAt ? Math.max(0, now - wake.sentAt) : null)
-
-  const CONTROLS = [
-    { label: 'Verrouiller', icon: Lock },
-    { label: 'Mettre en veille', icon: Moon },
-    { label: 'Redémarrer', icon: RotateCcw },
-    { label: 'Éteindre', icon: Power },
-  ]
 </script>
 
 <PageHeader title="Alimentation" />
@@ -64,15 +70,41 @@
     {/if}
   </section>
 
-  <section class="card">
-    <h2>Contrôler le PC</h2>
+  <section class="card" data-testid="power-card">
+    <h2>{name ? `Contrôler « ${name} »` : 'Contrôler le PC'}</h2>
+    {#if !sock.connected}
+      <p class="notice dim" data-testid="power-offline">
+        Les commandes reviendront dès que le PC sera joignable.
+      </p>
+    {:else if data?.unavailable}
+      <p class="notice problem" data-testid="power-unavailable">{data.unavailable}</p>
+    {/if}
     <div class="controls">
-      {#each CONTROLS as control (control.label)}
-        {@const Icon = control.icon}
-        <button class="btn" disabled><Icon size={28} aria-hidden="true" /> {control.label}</button>
+      {#each POWER_CONTROLS as control (control.id)}
+        {@const Icon = ICONS[control.id]}
+        {@const view = controlView(control.id, sock.connected, data)}
+        <button
+          class="ctl"
+          class:danger={DANGEROUS.includes(control.id)}
+          disabled={!view.ok || power.busy !== null}
+          data-testid="power-{control.id}"
+          onclick={() => void power.run(control.id)}
+        >
+          <Icon size={32} aria-hidden="true" />
+          <span class="label">{power.busy === control.id ? 'En cours…' : control.label}</span>
+          {#if view.why}
+            <small class="why" data-testid="power-why-{control.id}">{view.why}</small>
+          {/if}
+        </button>
       {/each}
     </div>
-    <p class="dim note">Ces commandes, avec confirmation à l'écran, arrivent à l'étape f.</p>
+    {#if blockers.length}
+      <ul class="blockers" data-testid="power-blockers">
+        {#each blockers as blocker (blocker.who + blocker.why)}
+          <li>{blockerLine(blocker)}</li>
+        {/each}
+      </ul>
+    {/if}
   </section>
 </div>
 
@@ -108,19 +140,65 @@
     color: var(--warn);
     font-size: var(--fs-small);
   }
+  .notice {
+    margin-bottom: 12px;
+    font-size: var(--fs-small);
+  }
+  .notice.problem {
+    color: var(--warn);
+  }
   .controls {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
   }
-  .controls .btn {
-    min-height: 76px;
+  .ctl {
+    display: flex;
     flex-direction: column;
-    gap: 6px;
-    font-size: var(--fs-small);
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 104px;
+    padding: 10px 8px;
+    border-radius: 14px;
+    background: var(--surface-3);
+    font-weight: 600;
+    text-align: center;
   }
-  .note {
-    margin-top: 14px;
+  .ctl:active:not(:disabled) {
+    background: var(--line);
+    transform: scale(0.97);
+  }
+  .ctl.danger {
+    background: var(--bad-soft);
+    color: var(--bad);
+    box-shadow: inset 0 0 0 1px var(--bad);
+  }
+  .ctl.danger:active:not(:disabled) {
+    background: #4a1f29;
+  }
+  /* Grisé mais lisible : la raison du grisage compte autant que le bouton. */
+  .ctl:disabled {
+    background: var(--surface-2);
+    color: var(--text-3);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .label {
+    font-size: var(--fs);
+  }
+  .why {
+    color: var(--warn);
+    font-size: var(--fs-cap);
+    font-weight: 500;
+    line-height: 1.2;
+  }
+  .blockers {
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 6px;
+    color: var(--warn);
     font-size: var(--fs-small);
   }
 </style>

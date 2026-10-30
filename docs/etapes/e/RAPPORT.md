@@ -48,12 +48,14 @@ Comportements voulus :
 
 | Suite | Résultat | Ce qu'elle couvre |
 |---|---|---|
-| Python, tout le dépôt (3.14, bibliothèques récentes), **tests lents compris** | **1 295 réussis**, 1 ignoré (suppose un utilisateur non root) | common 104, agent 680, dock 412, paquet .deb et scripts de déploiement 100 |
-| Python avec les **versions exactes d'Ubuntu 26.04** (`make test-ubuntu`) | **1 243 réussis** | fastapi 0.118, uvicorn 0.38, websockets 15, psutil 7.1, pydantic 2.12, dbus-fast 4.0, Pillow 12.1 |
-| Dont la bourse (dock) | **196 réussis** | modèle, limites, accès HTTP, fournisseurs, service, dock complet, diagnostic |
+| Python, tout le dépôt (3.14, bibliothèques récentes), **tests lents compris** | **1 331 réussis**, 1 ignoré (suppose un utilisateur non root) | common 104, agent 680, dock 448, paquet .deb et scripts de déploiement 100 |
+| Python avec les **versions exactes d'Ubuntu 26.04** (`make test-ubuntu`) | **1 243 réussis** à la livraison initiale | fastapi 0.118, uvicorn 0.38, websockets 15, psutil 7.1, pydantic 2.12, dbus-fast 4.0, Pillow 12.1 |
+| Dont la bourse (dock) | **212 réussis** | modèle, limites, accès HTTP, fournisseurs, service, dock complet, diagnostic, recherche par nom, fréquence |
 | Interface, unitaires (Vitest) | **167 réussis** | dont 20 pour les formats et les courbes de la bourse, 3 pour le clavier de symboles |
-| Interface, bout en bout (Playwright, 1024×600 tactile) | **127 réussis** | dont 30 nouveaux (12 sur la vraie pile de démonstration, 18 avec un dock simulé) |
+| Interface, bout en bout (Playwright, 1024×600 tactile) | **127 réussis** à la livraison initiale, puis **les 75 tests de la Bourse** après les compléments | dont 30 nouveaux (12 sur la vraie pile de démonstration, 18 avec un dock simulé) à la livraison initiale ; les compléments (recherche, fréquence, dernier échange) en ajoutent d'autres |
 | Qualité | propre | `ruff` (analyse et format), `svelte-check` (0 erreur, 0 avertissement), `shellcheck`, `dist/` à jour |
+
+> Chiffres remis à jour après les compléments de la Bourse (recherche par nom, fréquence réglable, dernier échange) : ils n'avaient pas été reportés ici. La suite complète est **rejouée en entier à l'étape f** (voir son rapport), qui inclut tous les tests de la Bourse.
 
 **Ce que les tests Python prouvent de nouveau**
 - **Symboles** : normalisation (`btc`, `^fchi`, `cw8.pa`, `BTC-EUR`), et refus de tout ce qui ressemble à une adresse ou une option (`../etc`, `AAPL?x=1`, `a b`, 21 caractères, accents…).

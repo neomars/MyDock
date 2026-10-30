@@ -21,7 +21,7 @@ const HOST = {
   kernel: '7.0.0-38-generic',
   arch: 'x86_64',
   python: '3.14.4',
-  agent: { version: '0.5.0', proto: 1, demo: false },
+  agent: { version: '0.6.0', proto: 1, demo: false },
   boot_time: Math.floor(Date.now() / 1000) - 3 * 3600,
   session: { type: 'wayland', desktop: 'GNOME' },
   interfaces: [],
@@ -72,6 +72,8 @@ async function mockDock(
   options: {
     startPage: string
     pinned?: string[]
+    /** Pages cachées, ordre choisi, page de départ : surcharge de l'état d'interface du dock. */
+    ui?: { order?: string[]; hidden?: string[]; last_page?: string }
     /** Résumé de la bourse du thème « dock » (Réglages). */
     markets?: { count: number; currency: 'EUR' | 'USD'; refresh: 15 | 30 | 60 | 300; finnhub: boolean; demo: boolean }
     onAct?: (act: Mock['acts'][number], ws: WebSocketRoute) => unknown
@@ -87,18 +89,18 @@ async function mockDock(
 
   await page.routeWebSocket(/\/ws$/, (ws) => {
     current = ws
-    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.5.0' } }))
+    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.6.0' } }))
     snap(ws, 'link', {
       state: 'connected', detail: 'Connecté.', since: Date.now(), attempt: 0, next_retry_at: null,
-      resolved: '127.0.0.1', agent: { version: '0.5.0', demo: false }, host: '127.0.0.1', port: 8765,
+      resolved: '127.0.0.1', agent: { version: '0.6.0', demo: false }, host: '127.0.0.1', port: 8765,
     }) // prettier-ignore
     snap(ws, 'dock', {
-      version: '0.5.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
+      version: '0.6.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
       pc: { host: '127.0.0.1', port: 8765, token_set: true, name: 'portable' },
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
       markets: options.markets ?? { count: 2, currency: 'EUR', refresh: 15, finnhub: false, demo: false },
     }) // prettier-ignore
-    snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [] })
+    snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [], ...options.ui })
     ws.onMessage((raw) => {
       const message = JSON.parse(String(raw))
       received.push(message)
@@ -1182,4 +1184,276 @@ test('Réglages : la fréquence des mises à jour se choisit et part seule', asy
   await expect(page.getByTestId('refresh-15')).toHaveAttribute('aria-pressed', 'false')
   await page.getByTestId('refresh-300').tap()
   await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.markets.set').map((a) => a.p)).toEqual([{ refresh: 300 }])
+})
+
+// --- Alimentation (étape f) ---------------------------------------------------------------------------
+
+const POWER_FULL = {
+  hostname: 'portable',
+  controls: {
+    lock: { ok: true, why: null },
+    suspend: { ok: true, why: null },
+    reboot: { ok: true, why: null },
+    poweroff: { ok: true, why: null },
+  },
+  blockers: [],
+}
+
+/** Refuse la première demande de l'ordre avec une confirmation, comme le fait l'agent. */
+function confirming(label: string, then: Record<string, unknown> = {}) {
+  return (act: Mock['acts'][number]) => {
+    if (!act.a.startsWith('power.') || act.a === 'power.lock') return undefined
+    if (!act.confirm) {
+      return { ok: false, r: undefined, e: { code: 'confirm_required', msg: 'Confirmation requise' }, confirm: { token: 'tok', ttl: 10, label } }
+    }
+    return then
+  }
+}
+
+test('Alimentation : les droits du système grisent les boutons, avec leur raison', async ({ page, stack }) => {
+  await mockDock(
+    page,
+    {
+      power: {
+        hostname: 'portable',
+        controls: {
+          lock: { ok: true, why: null },
+          suspend: { ok: false, why: 'Indisponible sur ce PC' },
+          reboot: { ok: false, why: 'Bloqué par « Mises à jour logicielles »' },
+          poweroff: { ok: false, why: 'Bloqué par « Mises à jour logicielles »' },
+        },
+        blockers: [{ who: 'Mises à jour logicielles', why: 'Installation des mises à jour en cours', scope: ['shutdown'] }],
+      },
+    },
+    { startPage: 'power' },
+  )
+  await page.goto(stack.url)
+  await expect(page.getByTestId('power-card')).toContainText('Contrôler « portable »')
+  await expect(page.getByTestId('power-lock')).toBeEnabled()
+  for (const id of ['suspend', 'reboot', 'poweroff']) await expect(page.getByTestId(`power-${id}`)).toBeDisabled()
+  await expect(page.getByTestId('power-why-suspend')).toHaveText('Indisponible sur ce PC')
+  await expect(page.getByTestId('power-why-poweroff')).toHaveText('Bloqué par « Mises à jour logicielles »')
+  await expect(page.getByTestId('power-blockers')).toContainText("« Mises à jour logicielles » empêche l'extinction (Installation des mises à jour en cours).")
+  await shot(page, '05-droits-limites', 'f')
+  // Rien ne déborde de l'écran, même avec toutes les raisons affichées.
+  const size = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+  expect(size).toEqual({ w: 1024, h: 600 })
+})
+
+test('Alimentation : un agent trop ancien pour connaître le thème ne casse pas la page', async ({ page, stack }) => {
+  await mockDock(page, { power: { unavailable: "Pas encore disponible dans cette version de l'agent." } }, { startPage: 'power' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('power-unavailable')).toContainText('Pas encore disponible')
+  for (const id of ['lock', 'suspend', 'reboot', 'poweroff']) {
+    await expect(page.getByTestId(`power-${id}`)).toBeDisabled()
+    await expect(page.getByTestId(`power-why-${id}`)).toHaveText('Indisponible')
+  }
+  await expect(page.getByTestId('wol-card')).toBeVisible()
+  await shot(page, '06-agent-ancien', 'f')
+})
+
+test('Alimentation : un logind qui ne répond pas est annoncé, le verrouillage peut rester possible', async ({ page, stack }) => {
+  const down = { ok: false, why: 'logind injoignable' }
+  await mockDock(
+    page,
+    {
+      power: {
+        hostname: 'portable',
+        controls: { lock: { ok: true, why: null }, suspend: down, reboot: down, poweroff: down },
+        blockers: [],
+        unavailable: 'Le service de session du PC (logind) ne répond pas.',
+      },
+    },
+    { startPage: 'power' },
+  )
+  await page.goto(stack.url)
+  await expect(page.getByTestId('power-unavailable')).toContainText('logind')
+  await expect(page.getByTestId('power-lock')).toBeEnabled()
+  await expect(page.getByTestId('power-why-poweroff')).toHaveText('logind injoignable')
+})
+
+test('Alimentation : le refus du système est affiché tel quel et le bouton se libère aussitôt', async ({ page, stack }) => {
+  const mock = await mockDock(page, { power: POWER_FULL }, {
+    startPage: 'power',
+    onAct: confirming('Éteindre « portable » (les programmes ouverts seront fermés)', {
+      ok: false,
+      r: undefined,
+      e: { code: 'forbidden', msg: "« Copie de fichiers » empêche l'extinction." },
+    }),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('power-poweroff').tap()
+  await expect(page.getByTestId('confirm')).toContainText('Éteindre « portable »')
+  await page.getByTestId('confirm-ok').tap()
+  await expect(page.getByTestId('toast')).toContainText("« Copie de fichiers » empêche l'extinction.")
+  await expect(page.getByTestId('power-poweroff')).toBeEnabled() // un échec ne verrouille rien
+  expect(mock.acts.filter((a) => a.a === 'power.poweroff').map((a) => Boolean(a.confirm))).toEqual([false, true])
+  await shot(page, '07-extinction-refusee', 'f')
+})
+
+test('Alimentation : si la liaison tombe juste après l’ordre, le message reste prudent', async ({ page, stack }) => {
+  await mockDock(page, { power: POWER_FULL }, {
+    startPage: 'power',
+    onAct: confirming('Mettre « portable » en veille', { ok: false, r: undefined, e: { code: 'pc_offline', msg: 'Connexion au PC perdue.' } }),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('power-suspend').tap()
+  await page.getByTestId('confirm-ok').tap()
+  await expect(page.getByTestId('toast')).toContainText('probablement partie')
+})
+
+test('Alimentation : un agent qui ne connaît pas la commande dit de mettre le paquet à jour', async ({ page, stack }) => {
+  await mockDock(page, { power: POWER_FULL }, {
+    startPage: 'power',
+    onAct: (act) => (act.a === 'power.lock' ? { ok: false, r: undefined, e: { code: 'unknown_action', msg: 'Action inconnue' } } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('power-lock').tap()
+  await expect(page.getByTestId('toast')).toContainText('mets le paquet du PC à jour')
+})
+
+test('Alimentation : un deuxième appui pendant l’envoi n’envoie pas deux ordres', async ({ page, stack }) => {
+  const mock = await mockDock(page, { power: POWER_FULL }, { startPage: 'power' })
+  await page.goto(stack.url)
+  await page.getByTestId('power-lock').tap()
+  await page.getByTestId('power-lock').tap({ force: true }) // même si l'écran le laissait passer
+  await expect(page.getByTestId('toast')).toContainText('verrouillé')
+  expect(mock.acts.filter((a) => a.a === 'power.lock')).toHaveLength(1)
+})
+
+test('Alimentation : le dock ne demande les droits au PC que page ouverte', async ({ page, stack }) => {
+  const mock = await mockDock(page, { power: POWER_FULL }, { startPage: 'power' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('power-lock')).toBeEnabled()
+  const topicsOf = (kind: string) => mock.received.filter((m) => m.t === kind).flatMap((m) => m.topics ?? [])
+  expect(topicsOf('sub')).toContain('power')
+  await page.getByTestId('tab-settings').tap()
+  await expect.poll(() => topicsOf('unsub')).toContain('power')
+})
+
+// --- Pages visibles et ordre (étape f) --------------------------------------------------------------------
+
+const TAB_IDS = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings']
+
+async function tabsShown(page: Page): Promise<string[]> {
+  return page.locator('[role=tablist][aria-label="Pages"] [role=tab]').evaluateAll((tabs) => tabs.map((t) => (t.getAttribute('data-testid') ?? '').replace('tab-', '')))
+}
+
+test('Pages : la barre d’onglets suit l’ordre et les pages cachées du dock', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'settings', ui: { order: ['power', 'markets'], hidden: ['steam', 'office'] } })
+  await page.goto(stack.url)
+  expect(await tabsShown(page)).toEqual(['power', 'markets', 'music', 'sound', 'apps', 'system', 'settings'])
+  await expect(page.getByTestId('pages-count')).toHaveText('7 pages visibles sur 9 (cachées : Steam, Office).')
+})
+
+test('Pages : la fenêtre numérote les neuf pages et ne laisse pas cacher les Réglages', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'settings', ui: { hidden: ['steam'] } })
+  await page.goto(stack.url)
+  await page.getByTestId('choose-pages').tap()
+  await expect(page.getByTestId('pages-editor')).toBeVisible()
+  for (const id of TAB_IDS) await expect(page.getByTestId(`page-row-${id}`)).toBeVisible()
+  await expect(page.getByTestId('page-row-steam')).toContainText('cachée')
+  await expect(page.getByTestId('page-row-settings')).toContainText('toujours visible')
+  await expect(page.getByTestId('page-toggle-settings')).toBeDisabled()
+  await expect(page.getByTestId('page-up-music')).toBeDisabled()
+  await expect(page.getByTestId('page-down-settings')).toBeDisabled()
+  await expect(page.getByTestId('pages-summary')).toContainText('8 pages visibles sur 9')
+  await shot(page, '08-pages-et-ordre', 'f')
+  // Toutes les cibles tactiles font au moins 48 px, et rien ne déborde.
+  const small = await page.evaluate(() =>
+    [...document.querySelectorAll('[data-testid=pages-editor] button')]
+      .map((el) => ({ el, box: el.getBoundingClientRect() }))
+      .filter(({ box }) => box.width > 0 && Math.min(box.width, box.height) < 48)
+      .map(({ el }) => el.getAttribute('data-testid')),
+  )
+  expect(small).toEqual([])
+  const size = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+  expect(size).toEqual({ w: 1024, h: 600 })
+})
+
+test('Pages : cacher, montrer, monter et descendre envoient la bonne liste au dock', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'settings', ui: { hidden: ['steam'] } })
+  await page.goto(stack.url)
+  await page.getByTestId('choose-pages').tap()
+
+  await page.getByTestId('page-toggle-office').tap()
+  await page.getByTestId('page-toggle-steam').tap()
+  await page.getByTestId('page-up-power').tap()
+  await page.getByTestId('page-down-music').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.ui.set').length).toBe(4)
+  const sent = mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => a.p)
+  expect(sent[0]).toEqual({ hidden: ['steam', 'office'] })
+  expect(sent[1]).toEqual({ hidden: [] })
+  expect(sent[2]).toEqual({ order: ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'power', 'system', 'settings'] })
+  expect(sent[3]).toEqual({ order: ['sound', 'music', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings'] })
+})
+
+test('Pages : « ordre d’origine » rétablit tout, et n’est proposé que s’il y a quelque chose à rétablir', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'settings', ui: { order: ['power'] } })
+  await page.goto(stack.url)
+  await page.getByTestId('choose-pages').tap()
+  await page.getByTestId('pages-reset').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => a.p)).toEqual([{ order: [], hidden: [] }])
+  mock.push('ui', { last_page: 'settings', order: [], hidden: [], pinned_apps: [] })
+  await expect(page.getByTestId('pages-reset')).toBeDisabled()
+  await expect(page.getByTestId('pages-summary')).toContainText('9 pages visibles sur 9')
+})
+
+test('Pages : les onglets suivent aussitôt ce que le dock enregistre', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'settings' })
+  await page.goto(stack.url)
+  expect(await tabsShown(page)).toEqual(TAB_IDS)
+  mock.push('ui', { last_page: 'settings', order: ['system'], hidden: ['steam'], pinned_apps: [] })
+  await expect.poll(() => tabsShown(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'power', 'settings'])
+})
+
+test('Pages : une modification refusée par le dock est expliquée', async ({ page, stack }) => {
+  await mockDock(page, {}, {
+    startPage: 'settings',
+    onAct: (act) => (act.a === 'dock.ui.set' ? { ok: false, r: undefined, e: { code: 'invalid', msg: 'La page Réglages ne peut pas être cachée.' } } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('choose-pages').tap()
+  await page.getByTestId('page-toggle-music').tap()
+  await expect(page.getByTestId('toast')).toContainText('ne peut pas être cachée')
+})
+
+test('Pages : si la page de départ est cachée, le dock ouvre la première page visible', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'steam', ui: { hidden: ['steam'], last_page: 'steam' } })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('page-music')).toBeVisible()
+  await expect(page.getByTestId('tab-music')).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByTestId('tab-steam')).toHaveCount(0)
+})
+
+// --- Veille de l'écran (étape f) --------------------------------------------------------------------------
+
+test('Veille : un dock sans réglage d’écran reste sur « Jamais » et ne casse rien', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'settings' }) // l'état d'interface n'a pas de « screen_sleep »
+  await page.goto(stack.url)
+  await expect(page.getByTestId('sleep-0')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('screen-note')).toHaveText("L'écran reste allumé.")
+})
+
+test('Veille : le choix de la durée part au dock tel quel, et un refus est expliqué', async ({ page, stack }) => {
+  let refuse = false
+  const mock = await mockDock(page, {}, {
+    startPage: 'settings',
+    onAct: (act) =>
+      act.a === 'dock.ui.set' && refuse ? { ok: false, r: undefined, e: { code: 'invalid', msg: "Durée de veille de l'écran invalide." } } : undefined,
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('sleep-600').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => a.p)).toEqual([{ screen_sleep: 600 }])
+  refuse = true
+  await page.getByTestId('sleep-1800').tap()
+  await expect(page.getByTestId('toast')).toContainText('invalide')
+})
+
+test('Veille : un réglage fait depuis un autre navigateur est pris en compte aussitôt', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'settings' })
+  await page.goto(stack.url)
+  mock.push('ui', { last_page: 'settings', order: [], hidden: [], pinned_apps: [], screen_sleep: 1800 })
+  await expect(page.getByTestId('sleep-1800')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('screen-note')).toContainText('30 minutes')
 })

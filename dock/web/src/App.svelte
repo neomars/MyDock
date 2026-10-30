@@ -7,10 +7,12 @@
   import Keyboard from './components/Keyboard.svelte'
   import MarketsEditor from './components/MarketsEditor.svelte'
   import OfflineScreen from './components/OfflineScreen.svelte'
+  import PagesEditor from './components/PagesEditor.svelte'
+  import ScreenSleep from './components/ScreenSleep.svelte'
   import TabBar from './components/TabBar.svelte'
   import Toast from './components/Toast.svelte'
   import TopBar from './components/TopBar.svelte'
-  import { pageById, visiblePages } from './lib/pages'
+  import { pageById, shownPage, visiblePages } from './lib/pages'
   import type { PageId } from './lib/protocol'
   import { sock } from './lib/socket.svelte'
   import { wakeDone } from './lib/wake.svelte'
@@ -32,7 +34,7 @@
 
   const pages = $derived(visiblePages(sock.ui?.order ?? [], sock.ui?.hidden ?? []))
   let selected = $state<PageId | null>(null)
-  const currentId = $derived<PageId>(selected ?? sock.ui?.last_page ?? 'system')
+  const currentId = $derived<PageId>(shownPage(selected ?? sock.ui?.last_page ?? 'system', pages))
   const current = $derived(pageById(currentId))
 
   function select(id: PageId): void {
@@ -93,9 +95,11 @@
 
 <AppPicker />
 <MarketsEditor />
+<PagesEditor />
 <Keyboard />
 <ConfirmDialog />
 <Toast />
+<ScreenSleep />
 {#if debug}<DebugOverlay />{/if}
 
 <style>
