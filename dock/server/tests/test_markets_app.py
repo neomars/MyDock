@@ -342,7 +342,13 @@ async def test_the_dock_topic_summarizes_the_markets_without_any_subscription(tm
     ):
         dock.config.finnhub_key = "cle-secrete-123"
         info = dock.server.payload("dock")["markets"]
-        assert info == {"count": 2, "currency": "EUR", "finnhub": True, "demo": False}
+        assert info == {
+            "count": 2,
+            "currency": "EUR",
+            "refresh": 15,
+            "finnhub": True,
+            "demo": False,
+        }
         assert "cle-secrete-123" not in json.dumps(dock.server.payload("dock"))
         ack = await call(
             ws, "m1", "dock.markets.set", {"watchlist": [{"kind": "stock", "symbol": "AAPL"}]}
@@ -353,3 +359,80 @@ async def test_the_dock_topic_summarizes_the_markets_without_any_subscription(tm
         )
         assert pushed["data"]["markets"]["currency"] == "EUR"
         assert fetcher.calls == []  # le résumé ne demande aucune cotation
+
+
+async def test_the_refresh_pace_is_chosen_remembered_and_pushed(tmp_path):
+    async with (
+        running_dock(tmp_path, markets_fetcher=FakeFetcher(), markets_timing=TIMING) as dock,
+        dock.connect() as ws,
+    ):
+        await subscribe(ws, "markets")
+        assert (await snapshot_of(ws, "markets"))["data"]["refresh"] == 15
+        ack = await call(ws, "r1", "dock.markets.set", {"refresh": 60})
+        assert ack["ok"] is True
+        assert ack["r"]["refresh"] == 60
+        pushed = await recv_until(
+            ws, lambda m: m.get("topic") == "markets" and m["data"]["refresh"] == 60
+        )
+        assert pushed["data"]["currency"] == "EUR"
+        for bad in (45, 0, "30", True):
+            refused = await call(ws, f"b{bad}", "dock.markets.set", {"refresh": bad})
+            assert refused["ok"] is False
+            assert refused["e"]["code"] == "bad_params"
+    state = json.loads((tmp_path / "state" / "state.json").read_text())
+    assert state["markets"]["refresh"] == 60
+
+
+async def test_a_search_finds_candidates_by_name(tmp_path):
+    fetcher = binance_fetcher()
+    fetcher.on("/v1/finance/search", json_response(sample("yahoo_search_apple")))
+    async with (
+        running_dock(tmp_path, markets_fetcher=fetcher, markets_timing=TIMING) as dock,
+        dock.connect() as ws,
+    ):
+        ack = await call(ws, "s1", "dock.markets.search", {"kind": "stock", "query": "apple"})
+        assert ack["ok"] is True
+        assert ack["r"]["source"] == "yahoo"
+        assert [r["symbol"] for r in ack["r"]["results"]] == ["AAPL", "APC.DE", "APLE", "APLY"]
+        assert ack["r"]["results"][0] == {
+            "kind": "stock", "symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ", "label": "Action",
+        }  # fmt: skip
+        crypto = await call(ws, "s2", "dock.markets.search", {"kind": "crypto", "query": "eth"})
+        assert [r["symbol"] for r in crypto["r"]["results"]][:2] == ["ETH", "ETC"]
+
+
+async def test_a_search_works_for_known_cryptos_without_any_network(tmp_path):
+    offline = FakeFetcher().on("", NetworkError("Pas de réseau."))
+    async with (
+        running_dock(tmp_path, markets_fetcher=offline, markets_timing=TIMING) as dock,
+        dock.connect() as ws,
+    ):
+        ack = await call(ws, "s1", "dock.markets.search", {"kind": "crypto", "query": "bit"})
+        assert ack["ok"] is True
+        assert [r["symbol"] for r in ack["r"]["results"]][:2] == ["BTC", "BCH"]
+        down = await call(ws, "s2", "dock.markets.search", {"kind": "stock", "query": "apple"})
+        assert down["ok"] is False
+        assert down["e"]["code"] == "unavailable"
+        assert "Recherche impossible" in down["e"]["msg"]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"kind": "stock", "query": "a"},
+        {"kind": "stock", "query": "x" * 61},
+        {"kind": "bond", "query": "apple"},
+        {"kind": "stock"},
+        {"kind": "stock", "query": "apple", "extra": 1},
+    ],
+)
+async def test_a_bad_search_is_refused_before_any_request(tmp_path, params):
+    fetcher = FakeFetcher()
+    async with (
+        running_dock(tmp_path, markets_fetcher=fetcher, markets_timing=TIMING) as dock,
+        dock.connect() as ws,
+    ):
+        ack = await call(ws, "s1", "dock.markets.search", params)
+        assert ack["ok"] is False
+        assert ack["e"]["code"] == "bad_params"
+    assert fetcher.calls == []

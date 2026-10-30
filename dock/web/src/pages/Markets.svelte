@@ -20,9 +20,11 @@
     formatPrice,
     freshness,
     isStale,
+    lagLabel,
     providerProblems,
     sourcesOf,
     toneOf,
+    tradeLag,
   } from '../lib/markets'
   import { history, marketsUi, ticker } from '../lib/markets.svelte'
   import type { MarketItem, MarketRange, MarketsData } from '../lib/protocol'
@@ -77,7 +79,14 @@
 
   const metaText = $derived(
     detail
-      ? [freshness(detail.fetched, now), sourceLabel(detail.source), detail.error].filter(Boolean).join(' · ')
+      ? [
+          freshness(detail.fetched, now),
+          sourceLabel(detail.source),
+          tradeLag(detail, now) !== null ? lagLabel(tradeLag(detail, now) ?? 0) : '',
+          detail.error,
+        ]
+          .filter(Boolean)
+          .join(' · ')
       : '',
   )
 
@@ -202,6 +211,7 @@
       {#each items as item (item.id)}
         {@const tone = toneOfItem(item)}
         {@const stale = isStale(item, now)}
+        {@const lag = tradeLag(item, now)}
         <button
           class="quote"
           class:loading={item.price === null}
@@ -215,7 +225,6 @@
             <small class="sub">
               {item.symbol}
               {#if item.state}<span class="session {item.state}" data-testid="session-{item.id}"> · {SESSION_LABELS[item.state]}</span>{/if}
-              {#if item.price !== null && stale}<span class="old" data-testid="old-{item.id}"> · <Clock size={14} aria-hidden="true" />{freshness(item.fetched, now)}</span>{/if}
             </small>
             {#if item.price === null && item.error}<small class="err" data-testid="error-{item.id}">{item.error}</small>{/if}
           </span>
@@ -224,6 +233,14 @@
             {#if item.price !== null}{@render trend(item)}{/if}
           </span>
           <Sparkline values={item.spark} {tone} />
+          {#if (item.price !== null && stale) || lag !== null}
+            <span class="foot">
+              {#if item.price !== null && stale}
+                <span class="old" data-testid="old-{item.id}"><Clock size={15} aria-hidden="true" />{freshness(item.fetched, now)}</span>
+              {/if}
+              {#if lag !== null}<span class="lag" data-testid="lag-{item.id}">{lagLabel(lag)}</span>{/if}
+            </span>
+          {/if}
         </button>
       {/each}
     </div>
@@ -336,6 +353,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .foot {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    padding-top: 2px;
+    font-size: 14px;
+    line-height: 1.2;
+    color: var(--warn);
+  }
   .session.closed {
     color: var(--text-3);
   }
@@ -383,11 +410,9 @@
     overflow: hidden;
   }
   .old {
-    color: var(--warn);
-  }
-  .old :global(svg) {
-    display: inline-block;
-    vertical-align: -2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
   }
   .empty {
     height: 100%;

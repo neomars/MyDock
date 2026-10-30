@@ -20,13 +20,16 @@ from mydock_dock.markets.errors import BadResponse, NotFound, ProviderError
 from mydock_dock.markets.http import Fetcher
 from mydock_dock.markets.limits import Gate
 from mydock_dock.markets.model import (
+    CRYPTO_NAMES,
     MAX_HISTORY_POINTS,
     SPARK_POINTS,
+    Candidate,
     HistoryPoint,
     Instrument,
     Quote,
     crypto_name,
     downsample,
+    normalize_symbol,
     rounded,
 )
 from mydock_dock.markets.providers.base import (
@@ -35,8 +38,19 @@ from mydock_dock.markets.providers.base import (
     parse_json,
     raise_for_status,
 )
+from mydock_dock.validation import ValidationFailure
 
 CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/"
+SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
+# Les types de Yahoo qu'on propose pour une valeur, et leur nom à l'écran.
+STOCK_TYPES = {
+    "EQUITY": "Action",
+    "ETF": "ETF",
+    "INDEX": "Indice",
+    "MUTUALFUND": "Fonds",
+    "CURRENCY": "Devise",
+    "FUTURE": "Contrat à terme",
+}
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/126.0 Safari/537.36"
@@ -170,6 +184,50 @@ def parse_quote(
     )
 
 
+def _without_currency(name: str) -> str:
+    """« Solana USD » -> « Solana » : Yahoo ajoute la devise au nom d'une paire."""
+    head, _, last = name.rpartition(" ")
+    return head if head and len(last) == 3 and last.isalpha() and last.isupper() else name
+
+
+def parse_search(body: Any, kind: str, label: str = "Yahoo Finance") -> list[Candidate]:
+    """Les résultats de `v1/finance/search` retenus pour ce type de valeur (jamais plus de 8)."""
+    quotes = body.get("quotes") if isinstance(body, dict) else None
+    if not isinstance(quotes, list):
+        raise BadResponse(f"Réponse inattendue de {label}.")
+    found: list[Candidate] = []
+    seen: set[str] = set()
+    for entry in quotes:
+        if not isinstance(entry, dict) or not isinstance(entry.get("symbol"), str):
+            continue
+        quote_type = str(entry.get("quoteType") or "")
+        raw_symbol = entry["symbol"]
+        name = str(entry.get("longname") or entry.get("shortname") or raw_symbol)[:80]
+        exchange = entry.get("exchDisp") or entry.get("exchange")
+        exchange = str(exchange)[:30] if exchange else None
+        try:
+            if kind == "crypto":
+                if quote_type != "CRYPTOCURRENCY":
+                    continue
+                symbol = normalize_symbol("crypto", raw_symbol.split("-")[0])
+                name = crypto_name(symbol) if symbol in CRYPTO_NAMES else _without_currency(name)
+                label_text, exchange = "Crypto", None
+            else:
+                if quote_type not in STOCK_TYPES:
+                    continue
+                symbol = normalize_symbol("stock", raw_symbol)
+                label_text = STOCK_TYPES[quote_type]
+        except ValidationFailure:
+            continue
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        found.append(Candidate(kind, symbol, name, exchange, label_text))
+        if len(found) == 8:
+            break
+    return found
+
+
 def parse_history(body: Any, label: str = "Yahoo Finance") -> list[HistoryPoint]:
     rows = _series(_result(body, label))
     return [
@@ -234,6 +292,16 @@ class YahooProvider:
         if down is not None:
             raise down
         return results
+
+    async def search(self, kind: str, query: str) -> list[Candidate]:
+        async with self._gate:
+            response = await self._fetcher.get(
+                SEARCH_URL,
+                params={"q": query, "quotesCount": "12", "newsCount": "0", "listsCount": "0"},
+                headers={"User-Agent": BROWSER_USER_AGENT},
+            )
+        raise_for_status(response, self.label)
+        return parse_search(parse_json(response, self.label), kind, self.label)
 
     async def history(
         self, instrument: Instrument, range_: str, currency: str

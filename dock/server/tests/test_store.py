@@ -90,7 +90,23 @@ def test_the_market_list_starts_with_bitcoin_and_ethereum_in_euros(tmp_path):
     assert StateStore(tmp_path).markets == {
         "watchlist": [{"kind": "crypto", "symbol": "BTC"}, {"kind": "crypto", "symbol": "ETH"}],
         "currency": "EUR",
+        "refresh": 15,
     }
+
+
+def test_the_refresh_pace_is_one_of_four_and_persists(tmp_path):
+    store = StateStore(tmp_path)
+    for seconds in (30, 60, 300, 15):
+        assert store.update_markets({"refresh": seconds})["refresh"] == seconds
+        assert StateStore(tmp_path).markets["refresh"] == seconds
+
+
+@pytest.mark.parametrize("value", [0, 10, 20, 301, "30", True, None, 15.5, [15]])
+def test_an_unknown_refresh_pace_is_refused_and_changes_nothing(tmp_path, value):
+    store = StateStore(tmp_path)
+    with pytest.raises(ValidationFailure):
+        store.update_markets({"refresh": value})
+    assert store.markets["refresh"] == 15
 
 
 def test_the_market_list_keeps_its_order_and_persists(tmp_path):

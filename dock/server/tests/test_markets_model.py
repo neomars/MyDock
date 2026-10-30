@@ -2,14 +2,19 @@ import pytest
 
 from mydock_dock.markets.model import (
     MAX_WATCHLIST,
+    REFRESH_CHOICES,
+    Candidate,
     Instrument,
     crypto_name,
     downsample,
+    fold,
     normalize_symbol,
     parse_currency,
     parse_instrument,
+    parse_refresh,
     parse_watchlist,
     rounded,
+    search_crypto_names,
 )
 from mydock_dock.validation import ValidationFailure
 
@@ -129,3 +134,28 @@ def test_rounded_hides_binary_noise():
     assert rounded(0.1 + 0.2) == 0.3
     assert rounded(None) is None
     assert rounded(1.23456789, 4) == 1.2346
+
+
+def test_the_refresh_pace_is_one_of_the_four_offered():
+    assert REFRESH_CHOICES == (15, 30, 60, 300)
+    for value in REFRESH_CHOICES:
+        assert parse_refresh(value) == value
+    for bad in (0, 14, 45, "30", None, True, 30.5):
+        with pytest.raises(ValidationFailure):
+            parse_refresh(bad)
+
+
+def test_folding_ignores_case_and_accents():
+    assert fold("Éthereum") == fold("ethereum") == "ethereum"
+    assert fold("Strasbourg ÀÉ") == "strasbourg ae"
+
+
+def test_known_cryptos_are_found_by_symbol_or_by_the_start_of_a_word_of_their_name():
+    assert [c.symbol for c in search_crypto_names("btc")] == ["BTC"]
+    assert [c.symbol for c in search_crypto_names("bit")] == ["BTC", "BCH"]  # Bitcoin, Bitcoin Cash
+    assert [c.symbol for c in search_crypto_names("Cash")] == ["BCH"]
+    assert [c.symbol for c in search_crypto_names("eth")][:2] == ["ETH", "ETC"]
+    assert search_crypto_names("zzzz") == []
+    exact = search_crypto_names("sol")
+    assert exact[0] == Candidate("crypto", "SOL", "Solana", None, "Crypto")
+    assert "MATIC" not in [c.symbol for c in search_crypto_names("polygon")]  # POL le remplace

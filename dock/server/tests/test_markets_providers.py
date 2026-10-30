@@ -530,3 +530,88 @@ async def test_a_closed_market_shows_its_last_session_as_a_real_curve():
     assert quote.spark[-1] == pytest.approx(quote.price, abs=1e-5)
     points = await provider.history(FCHI, "1d", "EUR")
     assert (points[-1].at, points[-1].close) == (int(quote.traded_at), quote.price)
+
+
+# --- recherche -------------------------------------------------------------------------------------
+
+
+def test_yahoo_search_keeps_what_can_be_followed_for_a_stock():
+    found = yahoo.parse_search(sample("yahoo_search_apple"), "stock")
+    assert (
+        [(c.symbol, c.name, c.exchange, c.label) for c in found]
+        == [
+            ("AAPL", "Apple Inc.", "NASDAQ", "Action"),
+            ("APC.DE", "Apple Inc.", "XETRA", "Action"),
+            ("APLE", "Apple Hospitality REIT, Inc.", "NYSE", "Action"),
+            ("APLY", "YieldMax AAPL Option Income Strategy ETF", "NYSEArca", "ETF"),
+        ]
+    )  # ni l'option, ni le doublon de AAPL à Mexico, ni l'entrée sans symbole ou au symbole invalide
+
+
+def test_yahoo_search_turns_crypto_pairs_into_one_coin_each():
+    found = yahoo.parse_search(sample("yahoo_search_bitcoin"), "crypto")
+    assert [(c.symbol, c.name, c.exchange, c.label) for c in found] == [
+        ("BTC", "Bitcoin", None, "Crypto"),  # BTC-USD et BTC-EUR ne font qu'une crypto
+        ("BCH", "Bitcoin Cash", None, "Crypto"),
+        (
+            "STRK",
+            "Strike",
+            None,
+            "Crypto",
+        ),  # une crypto inconnue du dock : « USD » est retiré du nom
+    ]
+    stocks = yahoo.parse_search(sample("yahoo_search_bitcoin"), "stock")
+    assert [c.symbol for c in stocks] == ["IBIT", "MSTR"]  # l'ETF et l'action, pas les cryptos
+
+
+def test_yahoo_search_caps_its_results_and_refuses_garbage():
+    many = {
+        "quotes": [
+            {"symbol": f"S{i}", "quoteType": "EQUITY", "shortname": f"S{i}"} for i in range(30)
+        ]
+    }
+    assert len(yahoo.parse_search(many, "stock")) == 8
+    assert yahoo.parse_search(sample("yahoo_search_empty"), "stock") == []
+    for odd in ([], "x", {"quotes": "x"}, {}):
+        with pytest.raises(BadResponse):
+            yahoo.parse_search(odd, "stock")
+
+
+async def test_yahoo_search_asks_with_a_browser_identity_and_the_typed_text():
+    fetcher = FakeFetcher().on("/v1/finance/search", json_response(sample("yahoo_search_apple")))
+    provider = yahoo.YahooProvider(fetcher, gate=instant_gate(), now=lambda: NOW)
+    found = await provider.search("stock", "apple inc & co?")
+    assert [c.symbol for c in found][:1] == ["AAPL"]
+    call = fetcher.calls[0]
+    assert call.url == "https://query2.finance.yahoo.com/v1/finance/search"
+    assert (
+        call.params["q"] == "apple inc & co?"
+    )  # échappé par l'accès HTTP, pas collé dans l'adresse
+    assert call.params["newsCount"] == "0"
+    assert call.headers["User-Agent"].startswith("Mozilla/5.0")
+    assert "apple" not in call.url
+
+
+async def test_yahoo_search_failures_are_reported():
+    fetcher = FakeFetcher().on("/search", text_response("Too Many Requests", status=429))
+    provider = yahoo.YahooProvider(fetcher, gate=instant_gate(), now=lambda: NOW)
+    with pytest.raises(RateLimited):
+        await provider.search("stock", "apple")
+
+
+async def test_the_demo_searches_its_catalog_by_name_or_symbol_without_accents():
+    provider = demo.DemoProvider(now=lambda: NOW)
+    assert [c.symbol for c in await provider.search("stock", "strategy")] == ["MSTR"]
+    assert [c.symbol for c in await provider.search("stock", "cac")] == ["^FCHI"]
+    assert [c.symbol for c in await provider.search("stock", "aapl")] == ["AAPL"]
+    assert [c.symbol for c in await provider.search("crypto", "sol")] == ["SOL"]
+    assert await provider.search("crypto", "strategy") == []  # pas du bon type
+    assert await provider.search("stock", "zzz") == []
+
+
+async def test_the_demo_has_one_value_whose_last_trade_is_fifteen_minutes_old():
+    results = await demo.DemoProvider(now=lambda: NOW).quotes(
+        [AAPL, Instrument("stock", "MSTR")], "EUR"
+    )
+    assert results["stock:AAPL"].traded_at == NOW - 900
+    assert results["stock:MSTR"].traded_at == NOW

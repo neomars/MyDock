@@ -7,10 +7,10 @@
   import { editText } from '../lib/keyboard.svelte'
   import { formatMs, ifaceKindLabel, type LatencyStats } from '../lib/format'
   import { MAX_PINNED } from '../lib/launcher'
-  import { MAX_WATCHED } from '../lib/markets'
+  import { MAX_WATCHED, REFRESH_OPTIONS } from '../lib/markets'
   import { marketsUi } from '../lib/markets.svelte'
   import { picker } from '../lib/picker.svelte'
-  import type { Ack } from '../lib/protocol'
+  import type { Ack, MarketRefresh } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
@@ -22,6 +22,11 @@
     if (ack.ok) notify(done, 'good')
     else notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
     return ack.ok
+  }
+
+  async function setRefresh(refresh: MarketRefresh): Promise<void> {
+    const ack = await sock.act('dock.markets.set', { refresh })
+    if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
   }
 
   async function editHost(): Promise<void> {
@@ -230,6 +235,21 @@
         {/if}
       </p>
       <button class="btn" data-testid="choose-markets" onclick={() => marketsUi.edit()}>Choisir les valeurs…</button>
+      <div class="pace" role="group" aria-label="Fréquence des mises à jour">
+        <span class="dim small">Mise à jour des cryptos toutes les</span>
+        {#each REFRESH_OPTIONS as option (option.id)}
+          <button
+            class="seg"
+            class:on={dock?.markets?.refresh === option.id}
+            aria-pressed={dock?.markets?.refresh === option.id}
+            disabled={!dock?.markets}
+            data-testid="refresh-{option.id}"
+            onclick={() => setRefresh(option.id)}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
       <p class="dim small" data-testid="markets-note">
         Le Pi lit lui-même les cotations (Yahoo Finance et Binance, sans clé) : la Bourse marche PC éteint.
         {#if dock?.markets?.demo}Mode démonstration : cotations calculées, sans réseau.
@@ -316,6 +336,35 @@
   .small {
     font-size: var(--fs-small);
     margin-top: 6px;
+  }
+  .pace {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .pace .small {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  .seg {
+    height: 48px;
+    min-width: 76px;
+    padding: 0 16px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    font-weight: 600;
+    text-align: center;
+  }
+  .seg.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .seg:disabled {
+    opacity: 0.4;
   }
   .warn {
     color: var(--warn);

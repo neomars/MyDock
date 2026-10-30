@@ -37,7 +37,10 @@ async def test_the_report_lists_what_is_followed_and_each_provider_that_answers(
     await check_markets(report, config_for(tmp_path), fetcher=healthy())
     text = report.render()
     assert "Bourse" in text
-    assert "2 valeur(s) suivie(s), cryptos cotées en EUR" in text
+    assert (
+        "2 valeur(s) suivie(s), cryptos cotées en EUR, mises à jour toutes les 15 s au plus vif"
+        in text
+    )
     assert "Clé Finnhub : aucune" in text
     assert "Binance répond (BTC : 61250.5 EUR" in text
     assert "Yahoo Finance répond (AAPL : 231.2 USD" in text

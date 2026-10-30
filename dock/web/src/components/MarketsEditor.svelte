@@ -19,15 +19,25 @@
     watchedId,
   } from '../lib/markets'
   import { marketsUi } from '../lib/markets.svelte'
-  import type { MarketCheck, MarketKind, MarketsData, Watched } from '../lib/protocol'
+  import type {
+    MarketCandidate,
+    MarketCheck,
+    MarketKind,
+    MarketSearch,
+    MarketsData,
+    Watched,
+  } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
   let kind = $state<MarketKind>('crypto')
-  let symbol = $state('')
-  let checking = $state(false)
+  let query = $state('')
+  let busy = $state<'search' | 'check' | null>(null)
+  let results = $state<MarketCandidate[] | null>(null)
   let found = $state<MarketCheck | null>(null)
   let problem = $state<string | null>(null)
+  /** D'où vient le message : la recherche (on propose alors « tel quel ») ou la vérification d'une valeur. */
+  let problemFrom = $state<'search' | 'check' | null>(null)
 
   // La fenêtre suit la liste et les cotations tant qu'elle est ouverte.
   $effect(() => {
@@ -40,11 +50,20 @@
   const list = $derived<Watched[]>(items.map((i) => ({ kind: i.kind, symbol: i.symbol })))
   const full = $derived(list.length >= MAX_WATCHED)
   const currency = $derived(data?.currency ?? 'EUR')
+  const asIs = $derived(cleanSymbol(kind, query))
+  // Sans résultat (ou sans réseau), un texte court ou à signes de symbole (^ = . - chiffres) se vérifie tel quel.
+  const looksLikeSymbol = $derived(
+    !/\s/.test(query.trim()) &&
+      /^[A-Z0-9^][A-Z0-9.=^_-]{0,19}$/.test(asIs) &&
+      (asIs.length <= 6 || /[\^.=0-9-]/.test(asIs)),
+  )
 
   function reset(): void {
-    symbol = ''
+    query = ''
+    results = null
     found = null
     problem = null
+    problemFrom = null
   }
 
   function setKind(next: MarketKind): void {
@@ -65,39 +84,64 @@
     if (!ack.ok) notify(ack.e?.msg ?? 'Modification impossible.', 'bad', 6_000)
   }
 
-  async function verify(): Promise<void> {
-    const wanted = cleanSymbol(kind, symbol)
-    if (!wanted) {
-      problem = 'Saisis d’abord un symbole.'
-      return
-    }
-    symbol = wanted
-    checking = true
+  /** Cherche par nom ou par symbole : le dock interroge Yahoo Finance (et connaît d'avance les cryptos courantes). */
+  async function search(): Promise<void> {
+    busy = 'search'
+    results = null
     found = null
     problem = null
-    const ack = await sock.act('dock.markets.check', { kind, symbol: wanted }, { timeoutMs: 50_000 })
-    checking = false
-    const reply = ack.r as MarketCheck | undefined
-    if (ack.ok && typeof reply?.id === 'string' && typeof reply.price === 'number') found = reply
-    else problem = (ack.ok ? undefined : ack.e?.msg) ?? 'Vérification impossible.'
+    problemFrom = null
+    const ack = await sock.act('dock.markets.search', { kind, query }, { timeoutMs: 50_000 })
+    busy = null
+    const reply = ack.r as MarketSearch | undefined
+    if (ack.ok && Array.isArray(reply?.results)) {
+      results = reply.results
+    } else {
+      problem = (ack.ok ? undefined : ack.e?.msg) ?? 'Recherche impossible.'
+      problemFrom = 'search'
+    }
   }
 
-  async function typeSymbol(): Promise<void> {
+  async function check(symbol: string): Promise<MarketCheck | null> {
+    busy = 'check'
+    found = null
+    problem = null
+    problemFrom = null
+    const ack = await sock.act('dock.markets.check', { kind, symbol }, { timeoutMs: 50_000 })
+    busy = null
+    const reply = ack.r as MarketCheck | undefined
+    if (ack.ok && typeof reply?.id === 'string' && typeof reply.price === 'number') return reply
+    problem = (ack.ok ? undefined : ack.e?.msg) ?? 'Vérification impossible.'
+    problemFrom = 'check'
+    return null
+  }
+
+  async function typeQuery(): Promise<void> {
     const value = await editText({
-      title: kind === 'crypto' ? 'Symbole de la crypto' : 'Symbole de la valeur',
-      hint: kind === 'crypto' ? 'Par exemple BTC, ETH, SOL' : 'Par exemple MSTR, ^FCHI, CW8.PA',
-      kind: 'symbol',
-      value: symbol,
+      title: 'Rechercher une valeur',
+      hint: kind === 'crypto' ? 'Un nom ou un symbole : bitcoin, SOL…' : 'Un nom ou un symbole : Apple, MSTR, ^FCHI…',
+      kind: 'text',
+      value: query,
     })
     if (value === null) return
-    symbol = cleanSymbol(kind, value)
-    if (symbol) await verify()
+    query = value.trim()
+    if (query.length >= 2) await search()
     else reset()
   }
 
-  async function suggest(candidate: string): Promise<void> {
-    symbol = candidate
-    await verify()
+  /** Une suggestion ou « tel quel » : le dock vérifie le symbole et montre son prix avant l'ajout. */
+  async function verify(symbol: string): Promise<void> {
+    query = symbol
+    results = null
+    found = await check(symbol)
+  }
+
+  /** Un résultat de recherche : vérifié puis ajouté d'un seul toucher. */
+  async function pick(candidate: MarketCandidate): Promise<void> {
+    const reply = await check(candidate.symbol)
+    if (!reply) return
+    found = reply
+    await add()
   }
 
   async function add(): Promise<void> {
@@ -120,7 +164,8 @@
     }
   }
 
-  const inList = (check: MarketCheck | null): boolean => !!check && list.some((w) => watchedId(w) === check.id)
+  const inList = (id: string): boolean => list.some((w) => watchedId(w) === id)
+  const detail = (c: MarketCandidate): string => [c.symbol, c.exchange, c.label].filter(Boolean).join(' · ')
 </script>
 
 {#if marketsUi.editor}
@@ -158,23 +203,21 @@
         </div>
 
         <div class="entry">
-          <button class="btn field" data-testid="mk-symbol" onclick={typeSymbol}>
+          <button class="btn field" data-testid="mk-search" onclick={typeQuery}>
             <Search size={24} aria-hidden="true" />
-            <span class:dim={!symbol}>{symbol || (kind === 'crypto' ? 'Symbole : BTC, ETH…' : 'Symbole : MSTR, ^FCHI…')}</span>
+            <span class:dim={!query}>{query || 'Rechercher un nom ou un symbole…'}</span>
           </button>
-          <button class="btn" data-testid="mk-check" disabled={checking || !symbol} onclick={verify}>
-            {checking ? 'Vérification…' : 'Vérifier'}
-          </button>
-        </div>
-
-        <div class="chips" data-testid="mk-suggestions">
-          {#each SUGGESTIONS[kind] as candidate (candidate)}
-            <button class="chip-btn" data-testid="mk-suggest-{candidate}" disabled={checking} onclick={() => suggest(candidate)}>{candidate}</button>
-          {/each}
+          {#if query}
+            <button class="btn" aria-label="Effacer la recherche" data-testid="mk-clear" onclick={reset}>
+              <X size={24} aria-hidden="true" />
+            </button>
+          {/if}
         </div>
 
         <div class="result" aria-live="polite">
-          {#if checking}
+          {#if busy === 'search'}
+            <p class="muted" data-testid="mk-searching">Recherche en cours…</p>
+          {:else if busy === 'check'}
             <p class="muted" data-testid="mk-checking">Interrogation des fournisseurs…</p>
           {:else if found}
             <div class="found" data-testid="mk-found">
@@ -182,12 +225,45 @@
                 <strong>{found.name ?? found.symbol}</strong>
                 <small>{found.symbol} · {formatPrice(found.price, found.currency)} · {SOURCE_LABELS[found.source] ?? found.source}</small>
               </span>
-              <button class="btn primary" data-testid="mk-confirm" disabled={inList(found) || full} onclick={add}>
-                {#if inList(found)}Déjà suivie{:else}<Plus size={24} aria-hidden="true" />Ajouter{/if}
+              <button class="btn primary" data-testid="mk-confirm" disabled={inList(found.id) || full} onclick={add}>
+                {#if inList(found.id)}Déjà suivie{:else}<Plus size={24} aria-hidden="true" />Ajouter{/if}
               </button>
             </div>
-          {:else if problem}
-            <p class="problem" data-testid="mk-error"><TriangleAlert size={22} aria-hidden="true" />{problem}</p>
+          {:else}
+            {#if problem}
+              <p class="problem" data-testid="mk-error"><TriangleAlert size={22} aria-hidden="true" />{problem}</p>
+            {/if}
+            {#if results !== null}
+              <div class="hits" data-testid="mk-results">
+                {#each results as hit (hit.symbol)}
+                  <div class="hit">
+                    <span class="who">
+                      <strong>{hit.name}</strong>
+                      <small>{detail(hit)}</small>
+                    </span>
+                    <button class="btn" data-testid="mk-result-{hit.symbol}" disabled={inList(`${hit.kind}:${hit.symbol}`) || full} onclick={() => pick(hit)}>
+                      {#if inList(`${hit.kind}:${hit.symbol}`)}Suivie{:else}<Plus size={22} aria-hidden="true" />Ajouter{/if}
+                    </button>
+                  </div>
+                {/each}
+                {#if results.length === 0}
+                  <p class="muted" data-testid="mk-noresult">Aucun résultat pour « {query} ».</p>
+                {/if}
+                {#if looksLikeSymbol && results.length === 0}
+                  <button class="btn wide" data-testid="mk-asis" onclick={() => verify(asIs)}>Vérifier « {asIs} » tel quel</button>
+                {/if}
+              </div>
+            {:else if problem}
+              {#if problemFrom === 'search' && looksLikeSymbol}
+                <button class="btn wide" data-testid="mk-asis" onclick={() => verify(asIs)}>Vérifier « {asIs} » tel quel</button>
+              {/if}
+            {:else}
+              <div class="chips" data-testid="mk-suggestions">
+                {#each SUGGESTIONS[kind] as candidate (candidate)}
+                  <button class="chip-btn" data-testid="mk-suggest-{candidate}" onclick={() => verify(candidate)}>{candidate}</button>
+                {/each}
+              </div>
+            {/if}
           {/if}
         </div>
       </section>
@@ -196,7 +272,7 @@
         <h2>Dans la liste ({list.length}/{MAX_WATCHED})</h2>
         <div class="list">
           {#if data && items.length === 0}
-            <p class="muted" data-testid="mk-none">Rien pour l’instant : ajoute une crypto ou une valeur à gauche.</p>
+            <p class="muted" data-testid="mk-none">Rien pour l’instant : cherche une crypto ou une valeur à gauche.</p>
           {/if}
           {#each items as item, index (item.id)}
             <div class="row" data-testid="mk-item-{item.id}">
@@ -323,11 +399,30 @@
   .chip-btn:active:not(:disabled) {
     background: var(--surface-3);
   }
-  .chip-btn:disabled {
-    opacity: 0.4;
-  }
   .result {
+    flex: 1 1 0;
     min-height: 64px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .hits {
+    display: flex;
+    flex-direction: column;
+  }
+  .hit {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 60px;
+    border-top: 1px solid var(--line);
+  }
+  .hit:first-child {
+    border-top: 0;
+  }
+  .wide {
+    width: 100%;
+    margin-top: 8px;
+    justify-content: center;
   }
   .found {
     display: flex;

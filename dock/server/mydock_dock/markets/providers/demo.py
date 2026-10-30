@@ -16,9 +16,11 @@ from dataclasses import dataclass
 from mydock_dock.markets.errors import NotFound, ProviderError
 from mydock_dock.markets.model import (
     SPARK_POINTS,
+    Candidate,
     HistoryPoint,
     Instrument,
     Quote,
+    fold,
     rounded,
 )
 
@@ -36,6 +38,7 @@ class DemoAsset:
     currency: str | None = None  # None : la devise choisie (cryptos)
     state: str | None = None
     swing: float = 0.02  # amplitude des oscillations
+    lag: float = 0.0  # secondes entre le dernier échange et maintenant (cours différés)
 
 
 CATALOG: tuple[DemoAsset, ...] = (
@@ -45,7 +48,7 @@ CATALOG: tuple[DemoAsset, ...] = (
     DemoAsset("crypto", "DOGE", "Dogecoin", 0.1234, swing=0.05),
     DemoAsset("crypto", "XRP", "XRP", 0.5321, swing=0.03),
     DemoAsset("stock", "MSTR", "Strategy Inc", 182.4, "USD", "open", 0.04),
-    DemoAsset("stock", "AAPL", "Apple Inc.", 231.2, "USD", "open", 0.012),
+    DemoAsset("stock", "AAPL", "Apple Inc.", 231.2, "USD", "open", 0.012, lag=900.0),
     DemoAsset("stock", "^FCHI", "CAC 40", 7_512.3, "EUR", "closed", 0.008),
     DemoAsset("stock", "CW8.PA", "Amundi MSCI World UCITS ETF", 489.2, "EUR", "closed", 0.007),
     DemoAsset("stock", "EURUSD=X", "EUR/USD", 1.0832, "USD", None, 0.004),
@@ -113,7 +116,7 @@ class DemoProvider:
             high=round(max(spark), 6),
             low=round(min(spark), 6),
             state=asset.state,
-            traded_at=ref,
+            traded_at=ref - asset.lag,
             spark=spark,
         )
 
@@ -129,6 +132,16 @@ class DemoProvider:
                 else NotFound(f"« {instrument.symbol} » n'existe pas dans la démonstration.")
             )
         return out
+
+    async def search(self, kind: str, query: str) -> list[Candidate]:
+        wanted = fold(query)
+        return [
+            Candidate(
+                a.kind, a.symbol, a.name, "Démo", "Crypto" if a.kind == "crypto" else "Action"
+            )
+            for a in CATALOG
+            if a.kind == kind and (wanted in fold(a.symbol) or wanted in fold(a.name))
+        ][:8]
 
     async def history(
         self, instrument: Instrument, range_: str, currency: str

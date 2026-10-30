@@ -17,7 +17,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from mydock_dock.markets.model import parse_currency, parse_watchlist
+from mydock_dock.markets.model import (
+    DEFAULT_REFRESH,
+    parse_currency,
+    parse_refresh,
+    parse_watchlist,
+)
 from mydock_dock.validation import ValidationFailure
 
 log = logging.getLogger(__name__)
@@ -37,6 +42,7 @@ def _default_state() -> dict[str, Any]:
         "markets": {
             "watchlist": [{"kind": "crypto", "symbol": "BTC"}, {"kind": "crypto", "symbol": "ETH"}],
             "currency": "EUR",
+            "refresh": DEFAULT_REFRESH,
         },
     }
 
@@ -122,6 +128,8 @@ class StateStore:
             new["watchlist"] = [item.to_dict() for item in parse_watchlist(patch["watchlist"])]
         if "currency" in patch:
             new["currency"] = parse_currency(patch["currency"])
+        if "refresh" in patch:
+            new["refresh"] = parse_refresh(patch["refresh"])
         if new != markets:
             self._data["markets"] = new
             self._save()

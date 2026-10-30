@@ -14,12 +14,13 @@ Les captures de ce dossier sont en **mode démo** (cotations calculées, aucun a
 | **Liste** | Tes valeurs en cartes de deux colonnes : nom, symbole, **prix**, **variation toujours écrite avec son signe** (+1,41 %, −0,32 %, avec une flèche : jamais seulement la couleur) et mini-graphique des dernières 24 h. Une action dit son marché (**Marché ouvert** / **fermé** / avant ou après la séance) |
 | **Détail** | Un toucher ouvre la valeur : prix en grand, variation en pourcentage et en monnaie, plus haut et plus bas du jour, âge et source de la cotation, et un **graphique sur 1 jour, 5 jours, 1 mois ou 1 an** (échelle de prix à gauche, heures ou dates dessous). Les périodes déjà vues ne sont pas redemandées pendant 30 s |
 | **Actualiser** | Redemande tout maintenant (au plus une fois toutes les 3 s : un second appui dit que c'est déjà fait) |
-| **Modifier** | Une fenêtre à deux colonnes. À gauche : **Crypto** ou **Action, indice…**, un symbole **tapé au clavier tactile** (majuscules d'office, touches `^` et `=` pour `^FCHI` et `EURUSD=X`) ou touché dans les suggestions (BTC, ETH, SOL, XRP, DOGE, ADA / MSTR, AAPL, NVDA, ^FCHI, CW8.PA, EURUSD=X) ; le dock **vérifie le symbole chez le fournisseur** (nom, prix, d'où il vient) avant de proposer **Ajouter**. À droite : la liste, avec monter, descendre, retirer. En haut : la **devise des cryptos**, euro ou dollar. **20 valeurs au plus** |
-| **Réglages** | Une carte « Bourse » : combien de valeurs, quelle devise, si une clé de secours est configurée, et le même bouton |
+| **Modifier** | Une fenêtre à deux colonnes. À gauche : **Crypto** ou **Action, indice…**, puis une **recherche par nom ou par symbole** au clavier tactile (`apple`, `strategy`, `bitcoin`, `mstr`, `^fchi`, `eurusd=x` : touches `^` et `=` comprises). Le dock interroge Yahoo Finance (recherche `v1/finance/search`) et connaît d'avance les cryptos courantes (« bit » trouve Bitcoin et Bitcoin Cash **sans réseau**). **Un résultat s'ajoute d'un toucher** : le dock vérifie d'abord son prix. Sans résultat (ou sans réseau), un texte court ou à signes de symbole se vérifie « tel quel » ; des suggestions (BTC, ETH, SOL… / MSTR, AAPL, NVDA, ^FCHI…) montrent le nom, le prix et la source avant **Ajouter**. À droite : la liste, avec monter, descendre, retirer. En haut : la **devise des cryptos**, euro ou dollar. **20 valeurs au plus** |
+| **Réglages** | Une carte « Bourse » : combien de valeurs, quelle devise, la **fréquence des mises à jour** (15 s, 30 s, 1 min ou 5 min pour une crypto ; une action au double, une place fermée 5 min au moins), si une clé de secours est configurée, et le même bouton |
 
 Comportements voulus :
 - **La page marche PC éteint** : c'est le Pi qui lit les cotations (test de bout en bout : le PC est éteint, la Bourse continue).
 - **Rien n'est demandé à Internet tant que la page n'est pas ouverte.** À l'ouverture, la dernière cotation connue s'affiche tout de suite (gardée dans un fichier : elle survit à un redémarrage du Pi) et la mise à jour part aussitôt.
+- **Cours différés** : une action en séance dont le dernier échange date de plus de 5 minutes affiche « dernier échange il y a 15 min » (Yahoo diffuse certaines places avec un quart d'heure de retard ; une valeur peu échangée donne la même mention, qui reste vraie). Jamais pour une crypto ni une place fermée.
 - **Rien d'inventé** : un champ que le fournisseur ne donne pas reste « — » (pas de variation inventée sans clôture de la veille, pas de prix sans cotation). Une réponse inattendue du dock n'affiche jamais une carte vide.
 - **Quand un fournisseur ne répond plus**, un bandeau orange dit **lequel, pourquoi, et dans combien de secondes le dock réessaie** ; les cours affichés sont **les derniers connus, avec leur âge** (« il y a 3 h ») ; si aucune cotation n'est connue, la carte dit « — » et la raison, et la barre d'état « Cotations indisponibles ».
 - **Un nom démesuré est coupé**, une devise que le navigateur ne connaît pas (« GBp » : les pence de Londres) s'écrit telle quelle, zéro n'est ni vert ni rouge, vingt valeurs défilent dans leur zone sans faire défiler la page.
@@ -32,7 +33,8 @@ Comportements voulus :
 - **Rythme** (page ouverte seulement) : 15 s pour une crypto, 30 s pour une valeur dont la place cote, 60 s avant et après la séance, 5 min place fermée ; le mini-graphique des cryptos est redemandé toutes les 5 min.
 - **La clé d'API** (Finnhub, facultative) va dans la section `[markets]` de `/etc/mydock/dock.toml` (droits 600), part dans un **en-tête** (jamais dans l'adresse, donc jamais dans un journal), n'est **jamais envoyée à l'écran** ni affichée par `mydock-dock doctor`, et sa forme est vérifiée au démarrage.
 - **Un accès HTTPS réduit au nécessaire** : bibliothèque standard (aucune dépendance de plus sur le Pi), délai, réponse limitée à 2 Mo (décompression comprise : une « bombe » gzip est refusée), pas de redirection hors du site, jamais de retour en clair. Les symboles qui y entrent sont validés (lettres, chiffres, `. ^ = - _`) puis échappés.
-- **Quatre actions locales** (`dock.markets.set`, `check`, `refresh`, `history`) : paramètres stricts (un champ en trop est refusé), le symbole est vérifié par le dock avant d'être ajouté, l'historique n'est servi que pour une valeur de la liste.
+- **Cinq actions locales** (`dock.markets.set`, `check`, `search`, `refresh`, `history`) : paramètres stricts (un champ en trop, une fréquence qui n'est pas l'une des quatre, un texte de plus de 60 caractères sont refusés), le symbole est vérifié par le dock avant d'être ajouté, l'historique n'est servi que pour une valeur de la liste.
+- **Fréquence réglable** : un seul réglage (15 s, 30 s, 1 min, 5 min) multiplie tous les rythmes ; une place fermée n'est jamais redemandée plus vite que toutes les 5 min.
 - **Thème `markets` à la demande** : poussé seulement aux navigateurs qui le demandent, et **seulement quand l'état change**. Le résumé de la bourse (nombre, devise, clé présente ou non) voyage dans le thème `dock`, sans abonnement, pour les Réglages.
 - **`mydock-dock doctor`** : nouvelle section « Bourse » (liste, devise, âge du cache, présence de la clé sans l'afficher) qui **teste chaque fournisseur** par une vraie requête et dit ce qui répond, en combien de millisecondes ; `--offline` saute ces requêtes.
 - **Mode démo** (`mydock-dock run --demo-markets`, utilisé par `make demo` et les captures) : dix valeurs calculées (5 cryptos, 5 valeurs dont deux marchés fermés), toujours les mêmes à un instant donné.
@@ -84,12 +86,13 @@ Comportements voulus :
    sudo -u mydock /opt/mydock/venv/bin/mydock-dock doctor
    ```
    La section « Bourse » doit afficher « Binance répond (BTC : … EUR, … ms) » et « Yahoo Finance répond (AAPL : … USD, … ms) ». Si l'un répond autrement, copie-moi la ligne : la page, elle, ne dira jamais un faux chiffre à sa place (elle affiche « — » et la raison).
-2. **Les formats réels.** Si Yahoo ou Binance ont changé un champ depuis leur documentation (`meta.regularMarketPrice`, `chartPreviousClose`, `currentTradingPeriod` ; `lastPrice`, `priceChangePercent`…), on le verra à des « — » plutôt qu'à des erreurs : dis-moi lequel.
+2. **Les formats réels.** Si Yahoo ou Binance ont changé un champ depuis leur documentation (`meta.regularMarketPrice`, `chartPreviousClose`, `currentTradingPeriod` ; `lastPrice`, `priceChangePercent` ; `quotes[].quoteType`…), on le verra à des « — » plutôt qu'à des erreurs : dis-moi lequel.
 3. **Tes valeurs européennes** : symboles Yahoo (`CW8.PA`, `MC.PA`, `^FCHI`…) ; les actions de Londres sont cotées en pence (`GBp`, affiché tel quel) ; les jours fériés ne sont pas connus (l'état du marché vient des horaires que Yahoo donne).
 4. **Ce que « variation » veut dire** : sur 24 h glissantes pour une crypto (Binance), depuis la clôture de la veille pour une valeur (Yahoo) : à comparer avec ton application de courtage.
 5. **Le fuseau horaire du Pi**, qui décide des heures de l'axe du graphique (comme l'horloge du haut).
 6. **Fluidité sur le Pi 4** : même réserve qu'aux étapes précédentes (mesures dans Chromium sans GPU, pas sur le Pi).
-7. **Le clavier de symboles au doigt** (touches `^` et `=` en bas à droite).
+7. **Le clavier au doigt pour chercher** (touches `^` et `=` en bas à droite de la ligne des symboles).
+8. **La recherche par nom** : elle repose sur `v1/finance/search` de Yahoo, dont le format de réponse est lui aussi construit d'après la documentation (les cryptos courantes, elles, sont trouvées sans réseau). Si elle ne répond pas, on peut toujours **vérifier un symbole tel quel**.
 
 > **Pour que je teste en vrai à la prochaine session** : dans l'environnement cloud de ce projet (menu de l'environnement dans la barre de titre de la session → Modifier → *Accès réseau*), autorise les domaines `query2.finance.yahoo.com`, `api.binance.com` et `data-api.binance.vision` (ou passe à un niveau d'accès plus large). Je pourrai alors comparer les vraies réponses aux formats attendus.
 
@@ -120,8 +123,8 @@ Comportements voulus :
 | Liste de départ (démo) | Huit valeurs : cryptos, actions, deux marchés fermés |
 | ![Détail](03-detail.png) | ![Un an](04-detail-1an.png) |
 | Détail, 1 jour | Détail, 1 an |
-| ![Modifier](05-editeur.png) | ![Clavier](06-editeur-clavier.png) |
-| Ajouter : la valeur est vérifiée avant d'être proposée | Clavier de symboles : majuscules d'office, `^` et `=` |
+| ![Modifier](05-editeur.png) | ![Recherche](06-editeur-recherche.png) |
+| Ajouter une suggestion : la valeur est vérifiée avant d'être proposée | Recherche par nom : un résultat s'ajoute d'un toucher |
 | ![Réglages](07-reglages.png) | ![Vide](08-bourse-vide.png) |
 | Carte « Bourse » des Réglages | Aucune valeur suivie |
 | ![Fenêtre pleine](09-editeur-plein.png) | ![Anciennes](10-cotations-anciennes.png) |

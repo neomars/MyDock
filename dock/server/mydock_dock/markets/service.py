@@ -32,7 +32,10 @@ from typing import Any
 from mydock_dock.markets.errors import NotFound, ProviderError, Unsupported
 from mydock_dock.markets.limits import Backoff
 from mydock_dock.markets.model import (
+    DEFAULT_REFRESH,
+    KINDS,
     RANGES,
+    Candidate,
     HistoryPoint,
     Instrument,
     Quote,
@@ -40,6 +43,7 @@ from mydock_dock.markets.model import (
     normalize_symbol,
     parse_instrument,
     parse_watchlist,
+    search_crypto_names,
 )
 from mydock_dock.markets.providers.base import QuoteProvider
 from mydock_dock.store import StateStore
@@ -179,6 +183,11 @@ class MarketsService:
         return str(self._store.markets["currency"])
 
     @property
+    def refresh_factor(self) -> float:
+        """1 au rythme vif (15 s), 2 pour 30 s, 4 pour 1 min, 20 pour 5 min : tous les rythmes suivent."""
+        return float(self._store.markets.get("refresh", DEFAULT_REFRESH)) / DEFAULT_REFRESH
+
+    @property
     def watchlist(self) -> list[Instrument]:
         try:
             return parse_watchlist(self._store.markets["watchlist"])
@@ -260,6 +269,7 @@ class MarketsService:
         fetched = [e.fetched for e in entries if e and e.fetched is not None]
         return {
             "currency": self.currency,
+            "refresh": int(self._store.markets.get("refresh", DEFAULT_REFRESH)),
             "demo": self._demo,
             "items": [self._item(i) for i in watchlist],
             "fetched_at": max(fetched) if fetched else None,
@@ -354,13 +364,14 @@ class MarketsService:
     # --- une mise à jour -------------------------------------------------------------------
 
     def _ttl(self, instrument: Instrument, quote: Quote) -> float:
+        factor = self.refresh_factor
         if instrument.kind == "crypto":
-            return self._t.crypto_ttl
+            return self._t.crypto_ttl * factor
         if quote.state == "closed":
-            return self._t.closed_ttl
+            return max(self._t.closed_ttl, self._t.stock_ttl * factor)
         if quote.state in ("pre", "post"):
-            return self._t.off_hours_ttl
-        return self._t.stock_ttl
+            return self._t.off_hours_ttl * factor
+        return self._t.stock_ttl * factor
 
     def _usable(self, provider: QuoteProvider) -> bool:
         return not self._status[provider.id].backoff.paused
@@ -517,6 +528,50 @@ class MarketsService:
             "Impossible de vérifier ce symbole : "
             + (" ; ".join(reasons) or "aucun fournisseur disponible.")
         )
+
+    async def search(self, kind: object, query: object) -> dict[str, Any]:
+        """Cherche une valeur par son nom ou son symbole (« apple », « bitcoin », « cw8 »)."""
+        if kind not in KINDS:
+            raise ValidationFailure("Type de valeur inconnu : « crypto » ou « action » attendu.")
+        if not isinstance(query, str):
+            raise ValidationFailure("La recherche doit être un texte.")
+        text = " ".join(query.split())
+        if len(text) < 2 or len(text) > 60 or not text.isprintable():
+            raise ValidationFailure("Tape au moins deux caractères (60 au plus).")
+        found: list[Candidate] = list(search_crypto_names(text)) if kind == "crypto" else []
+        reasons: list[str] = []
+        source: str | None = "local" if found else None
+        asked = False
+        for provider in self._providers:
+            finder = getattr(provider, "search", None)
+            if finder is None or not self._usable(provider):
+                continue
+            asked = True
+            try:
+                async with asyncio.timeout(self._t.request_timeout):
+                    candidates = await finder(str(kind), text)
+            except ProviderError as exc:
+                if exc.provider_down:
+                    self._provider_failed(provider, exc)
+                reasons.append(f"{provider.label} : {exc.message}")
+                continue
+            except TimeoutError:
+                reasons.append(f"{provider.label} ne répond pas.")
+                continue
+            known = {c.symbol for c in found}
+            found += [c for c in candidates if c.symbol not in known]
+            source = provider.id if candidates else (source or provider.id)
+            break
+        if not found and (reasons or not asked):
+            raise ProviderError(
+                "Recherche impossible : " + (" ; ".join(reasons) or "aucun fournisseur disponible.")
+            )
+        return {
+            "query": text,
+            "kind": kind,
+            "source": source,
+            "results": [c.to_dict() for c in found[:8]],
+        }
 
     async def history(self, ident: object, range_: object) -> dict[str, Any]:
         """Le cours d'une valeur de la liste sur une période, pour le graphique de détail."""

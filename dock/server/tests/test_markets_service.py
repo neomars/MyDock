@@ -12,7 +12,7 @@ from mydock_dock.markets.errors import (
     RateLimited,
     Unsupported,
 )
-from mydock_dock.markets.model import HistoryPoint, Instrument, Quote
+from mydock_dock.markets.model import Candidate, HistoryPoint, Instrument, Quote
 from mydock_dock.markets.service import MarketsService, Timing
 from mydock_dock.store import StateStore
 from mydock_dock.testing import eventually
@@ -57,6 +57,8 @@ class FakeProvider:
         self.count = 0
         self.on_quotes = self.default_quotes
         self.on_history = self.default_history
+        self.on_search = lambda kind, query: []
+        self.searches: list[tuple[str, str]] = []
         self.delay = 0.0
 
     def supports(self, instrument: Instrument) -> bool:
@@ -79,6 +81,13 @@ class FakeProvider:
         if self.delay:
             await asyncio.sleep(self.delay)
         reply = self.on_quotes(list(instruments), currency)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    async def search(self, kind, query):
+        self.searches.append((kind, query))
+        reply = self.on_search(kind, query)
         if isinstance(reply, Exception):
             raise reply
         return reply
@@ -603,3 +612,125 @@ async def test_listeners_are_told_only_when_the_payload_changes(tmp_path):
         service._publish()
         service._publish()
         assert len(changes) == count  # rien n'a changé : personne n'est dérangé
+
+
+# --- recherche -------------------------------------------------------------------------------------
+
+
+async def test_search_puts_the_known_cryptos_first_and_adds_what_the_provider_finds(tmp_path):
+    fake = FakeProvider("fake", "Fournisseur")
+    fake.on_search = lambda kind, query: [
+        Candidate("crypto", "STRK", "Strike", None, "Crypto"),
+        Candidate("crypto", "BTC", "Bitcoin (doublon)", None, "Crypto"),
+    ]
+    async with running(tmp_path, fake, watching=False) as (service, _store, _changes):
+        found = await service.search("crypto", "  bit  ")
+        assert found["query"] == "bit"
+        assert found["kind"] == "crypto"
+        assert found["source"] == "fake"
+        assert [r["symbol"] for r in found["results"]] == ["BTC", "BCH", "STRK"]
+        assert found["results"][0] == {
+            "kind": "crypto", "symbol": "BTC", "name": "Bitcoin", "exchange": None, "label": "Crypto",
+        }  # fmt: skip
+        assert fake.searches == [("crypto", "bit")]
+
+
+async def test_search_for_a_stock_asks_the_providers_only(tmp_path):
+    fake = FakeProvider("fake", "Fournisseur")
+    fake.on_search = lambda kind, query: (
+        [Candidate("stock", "AAPL", "Apple Inc.", "NASDAQ", "Action")] if query == "apple" else []
+    )
+    async with running(tmp_path, fake, watching=False) as (service, _store, _changes):
+        found = await service.search("stock", "apple")
+        assert [r["symbol"] for r in found["results"]] == ["AAPL"]
+        assert found["results"][0]["exchange"] == "NASDAQ"
+        empty = await service.search("stock", "rien du tout")
+        assert empty["results"] == []  # rien trouvé n'est pas une erreur
+        assert empty["source"] == "fake"
+
+
+async def test_search_normalizes_spaces_and_refuses_bad_queries(tmp_path):
+    fake = FakeProvider("fake", "Fournisseur")
+    async with running(tmp_path, fake, watching=False) as (service, _store, _changes):
+        assert (await service.search("stock", "  apple \t  inc "))["query"] == "apple inc"
+        for kind, query in (
+            ("stock", "a"),
+            ("stock", " "),
+            ("stock", "x" * 61),
+            ("stock", "bell\x07"),
+            ("stock", None),
+            ("stock", 12),
+            ("bond", "apple"),
+            (None, "apple"),
+        ):
+            with pytest.raises(ValidationFailure):
+                await service.search(kind, query)
+        assert len(fake.searches) == 1
+
+
+async def test_search_still_finds_known_cryptos_when_the_provider_is_down(tmp_path):
+    fake = FakeProvider("fake", "Fournisseur")
+    fake.on_search = lambda kind, query: NetworkError("Fournisseur ne répond pas.")
+    async with running(tmp_path, fake, watching=False) as (service, _store, _changes):
+        found = await service.search("crypto", "eth")
+        assert [r["symbol"] for r in found["results"]][:1] == ["ETH"]
+        assert found["source"] == "local"
+        assert service.payload()["providers"][0]["state"] == "paused"
+
+
+async def test_search_explains_when_nothing_can_be_searched(tmp_path):
+    fake = FakeProvider("fake", "Fournisseur")
+    fake.on_search = lambda kind, query: NetworkError("Fournisseur ne répond pas.")
+    async with running(tmp_path, fake, watching=False) as (service, _store, _changes):
+        with pytest.raises(
+            ProviderError, match="Recherche impossible : Fournisseur : Fournisseur ne répond pas"
+        ):
+            await service.search("stock", "apple")
+        with pytest.raises(
+            ProviderError, match="Recherche impossible"
+        ):  # puis le fournisseur est en pause
+            await service.search("stock", "apple")
+
+
+async def test_search_skips_providers_that_cannot_search(tmp_path):
+    class NoSearch(FakeProvider):
+        search = None
+
+    mute = NoSearch("mute", "Muet")
+    fake = FakeProvider("fake", "Fournisseur")
+    fake.on_search = lambda kind, query: [Candidate("stock", "MSTR", "Strategy", None, "Action")]
+    async with running(tmp_path, mute, fake, watching=False) as (service, _store, _changes):
+        assert [r["symbol"] for r in (await service.search("stock", "strat"))["results"]] == [
+            "MSTR"
+        ]
+
+
+# --- fréquence ---------------------------------------------------------------------------------------
+
+
+async def test_the_refresh_pace_slows_every_rhythm_down(tmp_path):
+    quick = FakeProvider("quick", "Vif")
+    async with running(tmp_path / "a", quick, watchlist=[BTC]):
+        await asyncio.sleep(0.8)
+    calm = FakeProvider("calm", "Calme")
+    async with running(tmp_path / "b", calm, watchlist=[BTC]) as (service, store, _changes):
+        store.update_markets({"refresh": 60})  # quatre fois plus lent
+        service.watchlist_changed()
+        assert service.payload()["refresh"] == 60
+        await asyncio.sleep(0.8)
+    assert len(quick.calls) >= 8
+    assert len(calm.calls) <= 6
+    assert len(quick.calls) > 2 * len(calm.calls)
+
+
+async def test_the_refresh_pace_never_makes_a_closed_market_faster_than_its_own_rhythm(tmp_path):
+    fake = FakeProvider("fake", "Fournisseur")
+
+    def closed(instruments, currency):
+        return {i.id: quote(7000.0, state="closed", source="fake") for i in instruments}
+
+    fake.on_quotes = closed
+    timing = Timing(**{**FAST.__dict__, "stock_ttl": 0.05, "closed_ttl": 0.5})
+    async with running(tmp_path, fake, watchlist=[FCHI], timing=timing):
+        await asyncio.sleep(1.2)
+    assert len(fake.calls) <= 4  # place fermée : toutes les 0,5 s, quel que soit le rythme vif

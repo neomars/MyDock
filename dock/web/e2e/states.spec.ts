@@ -3,7 +3,7 @@
 // 24 cœurs, processus têtu, textes très longs. Le vrai chemin (dock + agent) est couvert par stage-b.spec.ts.
 
 import type { Page, WebSocketRoute } from '@playwright/test'
-import { expect, shot, test } from './fixtures'
+import { expect, shot, test, typeOnKeyboard } from './fixtures'
 
 type Topics = Record<string, unknown>
 interface Mock {
@@ -73,7 +73,7 @@ async function mockDock(
     startPage: string
     pinned?: string[]
     /** Résumé de la bourse du thème « dock » (Réglages). */
-    markets?: { count: number; currency: 'EUR' | 'USD'; finnhub: boolean; demo: boolean }
+    markets?: { count: number; currency: 'EUR' | 'USD'; refresh: 15 | 30 | 60 | 300; finnhub: boolean; demo: boolean }
     onAct?: (act: Mock['acts'][number], ws: WebSocketRoute) => unknown
   },
 ): Promise<Mock> {
@@ -96,7 +96,7 @@ async function mockDock(
       version: '0.5.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
       pc: { host: '127.0.0.1', port: 8765, token_set: true, name: 'portable' },
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
-      markets: options.markets ?? { count: 2, currency: 'EUR', finnhub: false, demo: false },
+      markets: options.markets ?? { count: 2, currency: 'EUR', refresh: 15, finnhub: false, demo: false },
     }) // prettier-ignore
     snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [] })
     ws.onMessage((raw) => {
@@ -1046,7 +1046,7 @@ test('Modifier : une réponse sans prix du dock n’affiche pas une carte vide',
 test('Réglages : la carte Bourse au singulier, en dollars, avec la clé Finnhub signalée', async ({ page, stack }) => {
   await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
     startPage: 'settings',
-    markets: { count: 1, currency: 'USD', finnhub: true, demo: false },
+    markets: { count: 1, currency: 'USD', refresh: 15, finnhub: true, demo: false },
   })
   await page.goto(stack.url)
   await expect(page.getByTestId('markets-count')).toContainText('1 valeur suivie sur 20')
@@ -1056,8 +1056,130 @@ test('Réglages : la carte Bourse au singulier, en dollars, avec la clé Finnhub
 })
 
 test('Réglages : sans valeur suivie, la carte le dit', async ({ page, stack }) => {
-  await mockDock(page, {}, { startPage: 'settings', markets: { count: 0, currency: 'EUR', finnhub: false, demo: false } })
+  await mockDock(page, {}, { startPage: 'settings', markets: { count: 0, currency: 'EUR', refresh: 15, finnhub: false, demo: false } })
   await page.goto(stack.url)
   await expect(page.getByTestId('markets-count')).toHaveText('Aucune valeur suivie.')
   await expect(page.getByTestId('markets-note')).toContainText('aucune (facultative)')
+})
+
+// --- Bourse : recherche, fréquence, dernier échange ----------------------------------------------
+
+const hit = (symbol: string, name: string, extra: Record<string, unknown> = {}) => ({
+  kind: 'stock', symbol, name, exchange: 'NASDAQ', label: 'Action', ...extra,
+}) // prettier-ignore
+const searchReply = (query: string, results: unknown[], source = 'yahoo') => ({ r: { query, kind: 'stock', source, results } })
+const found = (symbol: string, name: string) => ({ r: { id: `stock:${symbol}`, kind: 'stock', symbol, name, price: 182.4, currency: 'USD', source: 'yahoo' } })
+
+test('Recherche : un résultat est vérifié puis ajouté d’un seul toucher, la liste complète part dans l’ordre', async ({ page, stack }) => {
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => {
+      if (act.a === 'dock.markets.search') return searchReply(String(act.p.query), [hit('AAPL', 'Apple Inc.'), hit('APLE', 'Apple Hospitality REIT', { exchange: 'NYSE' })])
+      if (act.a === 'dock.markets.check') return found(String(act.p.symbol), 'Apple Inc.')
+      return undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-kind-stock').tap()
+  await page.getByTestId('mk-search').tap()
+  await typeOnKeyboard(page, 'apple')
+  await page.getByTestId('keyboard-ok').tap()
+  await expect(page.getByTestId('mk-results')).toContainText('Apple Hospitality REIT')
+  await expect(page.getByTestId('mk-results')).toContainText('APLE · NYSE · Action')
+  await page.getByTestId('mk-result-AAPL').tap()
+  await expect(page.getByTestId('toast')).toContainText('« Apple Inc. » ajouté')
+  expect(mock.acts.map((a) => [a.a, a.p])).toEqual([
+    ['dock.markets.search', { kind: 'stock', query: 'apple' }],
+    ['dock.markets.check', { kind: 'stock', symbol: 'AAPL' }],
+    ['dock.markets.set', { watchlist: [{ kind: 'crypto', symbol: 'BTC' }, { kind: 'stock', symbol: 'AAPL' }] }],
+  ])
+})
+
+test('Recherche : aucun résultat, ou fournisseurs en panne, on peut vérifier le texte tel quel', async ({ page, stack }) => {
+  let searches = 0
+  const mock = await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => {
+      if (act.a === 'dock.markets.search') {
+        searches += 1
+        return searches === 1 ? searchReply(String(act.p.query), []) : refuse('Recherche impossible : Yahoo Finance : Yahoo Finance ne répond pas.')
+      }
+      if (act.a === 'dock.markets.check') return found(String(act.p.symbol), 'Strategy Inc')
+      return undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-kind-stock').tap()
+  await page.getByTestId('mk-search').tap()
+  await typeOnKeyboard(page, 'mstr')
+  await page.getByTestId('keyboard-ok').tap()
+  await expect(page.getByTestId('mk-noresult')).toContainText('Aucun résultat pour « mstr »')
+  await page.getByTestId('mk-search').tap()
+  await page.getByTestId('keyboard-ok').tap() // même texte : on le cherche encore, cette fois sans réseau
+  await expect(page.getByTestId('mk-error')).toContainText('Recherche impossible')
+  await page.getByTestId('mk-asis').tap()
+  await expect(page.getByTestId('mk-found')).toContainText('Strategy Inc')
+  await page.getByTestId('mk-confirm').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.markets.set').length).toBe(1)
+  expect(mock.acts.find((a) => a.a === 'dock.markets.check')?.p).toEqual({ kind: 'stock', symbol: 'MSTR' }) // devenu majuscules
+})
+
+test('Recherche : une phrase n’est pas un symbole, « tel quel » n’est pas proposé', async ({ page, stack }) => {
+  await mockDock(page, { markets: marketsData([quote('crypto:BTC')]) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.search' ? searchReply(String(act.p.query), []) : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-kind-stock').tap()
+  await page.getByTestId('mk-search').tap()
+  await typeOnKeyboard(page, 'air liquide')
+  await page.getByTestId('keyboard-ok').tap()
+  await expect(page.getByTestId('mk-noresult')).toBeVisible()
+  await expect(page.getByTestId('mk-asis')).toHaveCount(0)
+})
+
+test('Recherche : les résultats déjà suivis sont grisés, et la liste pleine empêche tout ajout', async ({ page, stack }) => {
+  const items = Array.from({ length: 20 }, (_, i) => quote(`stock:S${i}`, { name: `Valeur ${i}`, source: 'yahoo' }))
+  await mockDock(page, { markets: marketsData(items) }, {
+    startPage: 'markets',
+    onAct: (act) => (act.a === 'dock.markets.search' ? searchReply(String(act.p.query), [hit('S3', 'Valeur 3'), hit('NEW', 'Nouvelle valeur')]) : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('markets-edit').tap()
+  await page.getByTestId('mk-kind-stock').tap()
+  await page.getByTestId('mk-search').tap()
+  await typeOnKeyboard(page, 'valeur')
+  await page.getByTestId('keyboard-ok').tap()
+  await expect(page.getByTestId('mk-result-S3')).toHaveText('Suivie')
+  await expect(page.getByTestId('mk-result-S3')).toBeDisabled()
+  await expect(page.getByTestId('mk-result-NEW')).toBeDisabled() // 20/20
+})
+
+test('Dernier échange : une action en séance dont le cours est ancien le dit, pas une crypto ni un marché fermé', async ({ page, stack }) => {
+  const long = (id: string, extra: Record<string, unknown>) => quote(id, { traded_at: nowSeconds() - 1_200, ...extra })
+  await mockDock(page, {
+    markets: marketsData([
+      long('stock:AAPL', { state: 'open', source: 'yahoo' }),
+      long('stock:MSTR', { state: 'closed', source: 'yahoo' }),
+      long('crypto:BTC', {}),
+      quote('stock:NVDA', { state: 'open', source: 'yahoo', traded_at: nowSeconds() - 60 }),
+    ]),
+  }, { startPage: 'markets' })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('lag-stock:AAPL')).toContainText('dernier échange il y a 20 min')
+  await expect(page.getByTestId('lag-stock:MSTR')).toHaveCount(0)
+  await expect(page.getByTestId('lag-crypto:BTC')).toHaveCount(0)
+  await expect(page.getByTestId('lag-stock:NVDA')).toHaveCount(0)
+})
+
+test('Réglages : la fréquence des mises à jour se choisit et part seule', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'settings', markets: { count: 3, currency: 'EUR', refresh: 30, finnhub: false, demo: false } })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('refresh-30')).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('refresh-15')).toHaveAttribute('aria-pressed', 'false')
+  await page.getByTestId('refresh-300').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.markets.set').map((a) => a.p)).toEqual([{ refresh: 300 }])
 })

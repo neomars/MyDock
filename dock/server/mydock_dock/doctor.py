@@ -247,7 +247,8 @@ async def check_markets(
     markets = StateStore(config.state_dir).markets
     report.add(
         INFO,
-        f"{len(markets['watchlist'])} valeur(s) suivie(s), cryptos cotées en {markets['currency']}",
+        f"{len(markets['watchlist'])} valeur(s) suivie(s), cryptos cotées en {markets['currency']}, "
+        f"mises à jour toutes les {markets['refresh']} s au plus vif",
     )
     cache = config.state_dir / "markets-cache.json"
     if cache.is_file():

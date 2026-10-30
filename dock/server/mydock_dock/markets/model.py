@@ -10,6 +10,7 @@ adresse ni une option.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,6 +19,9 @@ from mydock_dock.validation import ValidationFailure
 
 KINDS = ("crypto", "stock")
 CURRENCIES = ("EUR", "USD")
+#: Secondes entre deux mises à jour d'une crypto ; les actions suivent au double (30 s au plus vif).
+REFRESH_CHOICES = (15, 30, 60, 300)
+DEFAULT_REFRESH = 15
 RANGES = ("1d", "5d", "1mo", "1y")
 MAX_WATCHLIST = 20
 SPARK_POINTS = 48
@@ -153,8 +157,53 @@ def parse_currency(value: object) -> str:
     return str(value)
 
 
+def parse_refresh(value: object) -> int:
+    if isinstance(value, bool) or value not in REFRESH_CHOICES:
+        raise ValidationFailure("Fréquence inconnue : 15 s, 30 s, 1 min ou 5 min.")
+    return int(value)  # type: ignore[call-overload]
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """Un résultat de recherche : une valeur qu'on peut proposer d'ajouter."""
+
+    kind: str
+    symbol: str
+    name: str
+    exchange: str | None = None
+    label: str | None = None  # « Action », « ETF », « Indice »…
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {
+            "kind": self.kind,
+            "symbol": self.symbol,
+            "name": self.name,
+            "exchange": self.exchange,
+            "label": self.label,
+        }
+
+
 def crypto_name(symbol: str) -> str:
     return CRYPTO_NAMES.get(symbol, symbol)
+
+
+def fold(text: str) -> str:
+    """Minuscules sans accents : « Éthereum » et « ethereum » se valent."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
+
+
+def search_crypto_names(query: str) -> list[Candidate]:
+    """Les cryptos connues du dock dont le symbole ou le nom commence par la recherche (sans réseau)."""
+    wanted = fold(query.strip())
+    hits: list[Candidate] = []
+    for symbol, name in CRYPTO_NAMES.items():
+        if symbol == "MATIC":
+            continue  # « POL » le remplace
+        if fold(symbol).startswith(wanted) or any(fold(w).startswith(wanted) for w in name.split()):
+            hits.append(Candidate("crypto", symbol, name, None, "Crypto"))
+    hits.sort(key=lambda c: (fold(c.symbol) != wanted, fold(c.name) != wanted))
+    return hits
 
 
 def downsample(values: list[Any], limit: int) -> list[Any]:

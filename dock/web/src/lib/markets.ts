@@ -5,6 +5,7 @@ import type {
   MarketItem,
   MarketProvider,
   MarketRange,
+  MarketRefresh,
   MarketSession,
   Watched,
 } from './protocol'
@@ -18,6 +19,13 @@ export const RANGES: readonly { id: MarketRange; label: string; long: string }[]
   { id: '5d', label: '5 j', long: '5 jours' },
   { id: '1mo', label: '1 mois', long: '1 mois' },
   { id: '1y', label: '1 an', long: '1 an' },
+]
+
+export const REFRESH_OPTIONS: readonly { id: MarketRefresh; label: string }[] = [
+  { id: 15, label: '15 s' },
+  { id: 30, label: '30 s' },
+  { id: 60, label: '1 min' },
+  { id: 300, label: '5 min' },
 ]
 
 export const SOURCE_LABELS: Record<string, string> = {
@@ -94,6 +102,26 @@ export function toneOf(pct: number | null | undefined): Tone {
 }
 
 // --- fraîcheur -------------------------------------------------------------------------------
+
+/** Au-delà de ce délai sans échange pendant la séance, on le dit : cours différés, ou valeur peu échangée. */
+export const LAG_AFTER = 300
+
+/** Secondes depuis le dernier échange d'une action en séance, si c'est assez ancien pour être signalé. */
+export function tradeLag(
+  item: Pick<MarketItem, 'kind' | 'state' | 'traded_at'>,
+  now: number,
+): number | null {
+  if (item.kind !== 'stock' || item.state !== 'open' || item.traded_at === null) return null
+  const lag = now - item.traded_at
+  return lag >= LAG_AFTER ? Math.round(lag) : null
+}
+
+/** « dernier échange il y a 15 min » : arrondi à la minute (ou à l'heure), pour ne pas hésiter entre 14 et 15. */
+export function lagLabel(lag: number): string {
+  if (lag < 3_600) return `dernier échange il y a ${Math.max(1, Math.round(lag / 60))}${NBSP}min`
+  if (lag < 86_400) return `dernier échange il y a ${Math.round(lag / 3_600)}${NBSP}h`
+  return `dernier échange il y a ${Math.round(lag / 86_400)}${NBSP}j`
+}
 
 /** « à l'instant », « il y a 12 s », « il y a 3 min », « il y a 2 h », « il y a 3 j ». */
 export function freshness(fetched: number | null | undefined, now: number): string {

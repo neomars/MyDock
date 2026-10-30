@@ -266,10 +266,12 @@ export interface DockInfo {
   pc: { host: string; port: number; token_set: boolean; name: string | null }
   wol: WolInfo
   /** Résumé de la bourse (sans abonnement aux cotations) ; absent d'un dock plus ancien. */
-  markets?: { count: number; currency: 'EUR' | 'USD'; finnhub: boolean; demo: boolean }
+  markets?: { count: number; currency: 'EUR' | 'USD'; refresh: MarketRefresh; finnhub: boolean; demo: boolean }
 }
 
 export type MarketKind = 'crypto' | 'stock'
+/** Secondes entre deux mises à jour d'une crypto ; les actions suivent au double. */
+export type MarketRefresh = 15 | 30 | 60 | 300
 export type MarketRange = '1d' | '5d' | '1mo' | '1y'
 export type MarketSession = 'open' | 'closed' | 'pre' | 'post'
 
@@ -314,6 +316,7 @@ export interface MarketProvider {
 
 export interface MarketsData {
   currency: 'EUR' | 'USD'
+  refresh: MarketRefresh
   demo: boolean
   items: MarketItem[]
   fetched_at: number | null
@@ -328,6 +331,23 @@ export interface MarketHistory {
   /** [heure Unix, cours], du plus ancien au plus récent. */
   points: [number, number][]
   fetched: number
+}
+
+export interface MarketCandidate {
+  kind: MarketKind
+  symbol: string
+  name: string
+  exchange: string | null
+  /** « Action », « ETF », « Indice », « Crypto »… */
+  label: string | null
+}
+
+export interface MarketSearch {
+  query: string
+  kind: MarketKind
+  /** Le fournisseur qui a répondu, ou « local » pour les cryptos que le dock connaît d'avance. */
+  source: string | null
+  results: MarketCandidate[]
 }
 
 export interface MarketCheck {

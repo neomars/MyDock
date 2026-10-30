@@ -1,0 +1,75 @@
+{
+ "explains": [],
+ "count": 8,
+ "quotes": [
+  {
+   "exchange": "CCC",
+   "shortname": "Bitcoin USD",
+   "quoteType": "CRYPTOCURRENCY",
+   "symbol": "BTC-USD",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Cryptocurrency",
+   "exchDisp": "CCC",
+   "isYahooFinance": true
+  },
+  {
+   "exchange": "CCC",
+   "shortname": "Bitcoin EUR",
+   "quoteType": "CRYPTOCURRENCY",
+   "symbol": "BTC-EUR",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Cryptocurrency",
+   "exchDisp": "CCC",
+   "isYahooFinance": true
+  },
+  {
+   "exchange": "CCC",
+   "shortname": "Bitcoin Cash USD",
+   "quoteType": "CRYPTOCURRENCY",
+   "symbol": "BCH-USD",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Cryptocurrency",
+   "exchDisp": "CCC",
+   "isYahooFinance": true
+  },
+  {
+   "exchange": "CCC",
+   "shortname": "Strike USD",
+   "quoteType": "CRYPTOCURRENCY",
+   "symbol": "STRK-USD",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Cryptocurrency",
+   "exchDisp": "CCC",
+   "isYahooFinance": true
+  },
+  {
+   "exchange": "NGM",
+   "shortname": "iShares Bitcoin Trust ETF",
+   "quoteType": "ETF",
+   "symbol": "IBIT",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Etf",
+   "exchDisp": "NASDAQ",
+   "isYahooFinance": true
+  },
+  {
+   "exchange": "NMS",
+   "shortname": "MicroStrategy Incorporated",
+   "quoteType": "EQUITY",
+   "symbol": "MSTR",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Equity",
+   "exchDisp": "NASDAQ",
+   "isYahooFinance": true
+  }
+ ],
+ "news": [],
+ "nav": [],
+ "lists": []
+}

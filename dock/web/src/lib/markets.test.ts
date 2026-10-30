@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_WATCHED,
+  LAG_AFTER,
+  REFRESH_OPTIONS,
   SOURCE_LABELS,
   STALE_AFTER,
   appended,
@@ -14,9 +16,11 @@ import {
   fractionDigits,
   freshness,
   isStale,
+  lagLabel,
   providerProblems,
   sourcesOf,
   toneOf,
+  tradeLag,
   watchedId,
 } from './markets'
 import type { MarketItem, MarketProvider } from './protocol'
@@ -185,5 +189,37 @@ describe('liste suivie', () => {
     const full = Array.from({ length: MAX_WATCHED }, (_, i) => ({ kind: 'stock' as const, symbol: `S${i}` }))
     expect(appended(full, { kind: 'stock', symbol: 'NEW' })).toBeNull()
     expect(list).toHaveLength(1) // la liste d’origine n’est pas modifiée
+  })
+})
+
+
+describe('dernier échange', () => {
+  const now = 1_793_370_000
+  const open = { kind: 'stock' as const, state: 'open' as const, traded_at: now - 900 }
+
+  it('signale une action en séance dont le dernier échange a plus de cinq minutes', () => {
+    expect(tradeLag(open, now)).toBe(900)
+    expect(plain(lagLabel(900))).toBe('dernier échange il y a 15 min')
+    expect(plain(lagLabel(895))).toBe('dernier échange il y a 15 min') // l'horloge de l'écran retarde de quelques secondes
+    expect(plain(lagLabel(300))).toBe('dernier échange il y a 5 min')
+    expect(plain(lagLabel(7_300))).toBe('dernier échange il y a 2 h')
+    expect(plain(lagLabel(3 * 86_400))).toBe('dernier échange il y a 3 j')
+    expect(tradeLag({ ...open, traded_at: now - LAG_AFTER }, now)).toBe(LAG_AFTER)
+    expect(tradeLag({ ...open, traded_at: now - LAG_AFTER + 1 }, now)).toBeNull()
+  })
+
+  it('ne dit rien d’une crypto, d’un marché fermé, ni d’une heure inconnue', () => {
+    expect(tradeLag({ ...open, kind: 'crypto' }, now)).toBeNull()
+    expect(tradeLag({ ...open, state: 'closed' }, now)).toBeNull()
+    expect(tradeLag({ ...open, state: 'pre' }, now)).toBeNull()
+    expect(tradeLag({ ...open, state: null }, now)).toBeNull()
+    expect(tradeLag({ ...open, traded_at: null }, now)).toBeNull()
+  })
+})
+
+describe('fréquence', () => {
+  it('propose quatre rythmes, du plus vif au plus calme', () => {
+    expect(REFRESH_OPTIONS.map((o) => o.id)).toEqual([15, 30, 60, 300])
+    expect(REFRESH_OPTIONS.map((o) => o.label)).toEqual(['15 s', '30 s', '1 min', '5 min'])
   })
 })

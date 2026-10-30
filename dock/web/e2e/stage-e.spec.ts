@@ -98,40 +98,62 @@ test('Modifier : ajouter une crypto proposée, vérifiée avant d’être ajout�
   await expect(dock.getByTestId('quote-crypto:SOL')).toBeVisible() // mémorisé par le Pi
 })
 
-test('Modifier : une valeur se tape au clavier tactile, en majuscules, avec ^ et =', async ({ dock }) => {
+test('Modifier : on cherche par nom ou par symbole au clavier tactile, et un résultat s’ajoute d’un toucher', async ({ dock }) => {
   await openEditor(dock)
   await dock.getByTestId('mk-kind-stock').tap()
-  await dock.getByTestId('mk-symbol').tap()
+  await dock.getByTestId('mk-search').tap()
   await expect(dock.getByTestId('keyboard')).toBeVisible()
-  // Les lettres sont déjà en majuscules sur le clavier : pas de touche Maj à chercher.
-  await expect(dock.getByTestId('keyboard').getByRole('button', { name: 'M', exact: true })).toBeVisible()
-  await typeOnKeyboard(dock, 'MSTR')
-  await expect(dock.getByTestId('keyboard-value')).toHaveText('MSTR')
-  await shot(dock, '06-editeur-clavier', 'e')
+  await typeOnKeyboard(dock, 'strategy')
+  await expect(dock.getByTestId('keyboard-value')).toHaveText('strategy')
   await dock.getByTestId('keyboard-ok').tap()
-  await expect(dock.getByTestId('mk-found')).toContainText('Strategy Inc') // vérifié sans autre appui
-  await dock.getByTestId('mk-confirm').tap()
+  await expect(dock.getByTestId('mk-results')).toContainText('Strategy Inc')
+  await shot(dock, '06-editeur-recherche', 'e')
+  await dock.getByTestId('mk-result-MSTR').tap()
+  await expect(dock.getByTestId('toast')).toContainText('« Strategy Inc » ajouté')
   await expect(dock.getByTestId('mk-item-stock:MSTR')).toBeVisible()
+  await expect(dock.getByTestId('mk-search')).toContainText('Rechercher') // la recherche est vidée
 
-  await dock.getByTestId('mk-symbol').tap()
-  await typeOnKeyboard(dock, '^FCHI')
+  // Les touches ^ et = servent aux symboles comme ^FCHI et EURUSD=X.
+  await dock.getByTestId('mk-search').tap()
+  await typeOnKeyboard(dock, '^fchi')
   await dock.getByTestId('keyboard-ok').tap()
-  await expect(dock.getByTestId('mk-found')).toContainText('CAC 40')
-  await dock.getByTestId('mk-confirm').tap()
+  await expect(dock.getByTestId('mk-results')).toContainText('CAC 40')
+  await dock.getByTestId('mk-result-^FCHI').tap()
   await expect(dock.getByTestId('mk-item-stock:^FCHI')).toBeVisible()
 
-  await dock.getByTestId('mk-symbol').tap()
-  await typeOnKeyboard(dock, 'EURUSD=X')
+  await dock.getByTestId('mk-search').tap()
+  await typeOnKeyboard(dock, 'eurusd=x')
   await dock.getByTestId('keyboard-ok').tap()
-  await expect(dock.getByTestId('mk-found')).toContainText('EUR/USD')
+  await expect(dock.getByTestId('mk-results')).toContainText('EUR/USD')
+  // Une valeur déjà suivie se reconnaît dans les résultats.
+  await dock.getByTestId('mk-clear').tap()
+  await dock.getByTestId('mk-search').tap()
+  await typeOnKeyboard(dock, 'mstr')
+  await dock.getByTestId('keyboard-ok').tap()
+  await expect(dock.getByTestId('mk-result-MSTR')).toBeDisabled()
+  await expect(dock.getByTestId('mk-result-MSTR')).toHaveText('Suivie')
+})
+
+test('Modifier : les cryptos courantes se trouvent par leur nom, même sans réseau', async ({ dock }) => {
+  await openEditor(dock)
+  await dock.getByTestId('mk-search').tap()
+  await typeOnKeyboard(dock, 'bit')
+  await dock.getByTestId('keyboard-ok').tap()
+  await expect(dock.getByTestId('mk-results')).toContainText('Bitcoin')
+  await expect(dock.getByTestId('mk-results')).toContainText('Bitcoin Cash')
+  await dock.getByTestId('mk-result-BCH').tap() // inconnue de la démonstration : l'ajout est refusé, expliqué
+  await expect(dock.getByTestId('mk-error')).toContainText('« BCH » est inconnu')
+  await expect(dock.getByTestId('mk-item-crypto:BCH')).toHaveCount(0)
 })
 
 test('Modifier : un symbole inconnu est expliqué et rien n’est ajouté', async ({ dock }) => {
   await openEditor(dock)
   await dock.getByTestId('mk-kind-stock').tap()
-  await dock.getByTestId('mk-symbol').tap()
-  await typeOnKeyboard(dock, 'NOPE')
+  await dock.getByTestId('mk-search').tap()
+  await typeOnKeyboard(dock, 'nope')
   await dock.getByTestId('keyboard-ok').tap()
+  await expect(dock.getByTestId('mk-noresult')).toContainText('Aucun résultat pour « nope »')
+  await dock.getByTestId('mk-asis').tap() // « Vérifier « NOPE » tel quel »
   await expect(dock.getByTestId('mk-error')).toContainText('« NOPE » est inconnu')
   await expect(dock.getByTestId('mk-found')).toHaveCount(0)
   await expect(dock.getByTestId('mk-chosen')).toContainText('2/20')
@@ -178,6 +200,19 @@ test('Modifier : la devise des cryptos se change en un appui et se retient', asy
   await expect(dock.getByTestId('price-crypto:BTC')).toContainText('€')
 })
 
+test('Bourse : un cours dont le dernier échange est ancien le dit', async ({ dock }) => {
+  await openEditor(dock)
+  await dock.getByTestId('mk-kind-stock').tap()
+  await addSuggested(dock, 'AAPL')
+  await addSuggested(dock, 'MSTR')
+  await dock.getByTestId('mk-done').tap()
+  await expect(dock.getByTestId('lag-stock:AAPL')).toContainText('dernier échange il y a 15 min')
+  await expect(dock.getByTestId('lag-stock:MSTR')).toHaveCount(0)
+  await expect(dock.getByTestId('lag-crypto:BTC')).toHaveCount(0)
+  await dock.getByTestId('quote-stock:AAPL').tap()
+  await expect(dock.getByTestId('detail-meta')).toContainText('dernier échange il y a 15 min')
+})
+
 // --- détail --------------------------------------------------------------------------------------
 
 test('Détail : toucher une valeur ouvre son graphique, les périodes se changent, « Liste » revient', async ({ dock }) => {
@@ -211,6 +246,10 @@ test('Réglages : la carte Bourse dit combien de valeurs sont suivies et ouvre l
   await expect(dock.getByTestId('markets-count')).toContainText('2 valeurs suivies')
   await expect(dock.getByTestId('markets-count')).toContainText('cryptos cotées en euros')
   await expect(dock.getByTestId('markets-note')).toContainText('Mode démonstration')
+  await expect(dock.getByTestId('refresh-15')).toHaveAttribute('aria-pressed', 'true')
+  await dock.getByTestId('refresh-60').tap()
+  await expect(dock.getByTestId('refresh-60')).toHaveAttribute('aria-pressed', 'true')
+  await expect(dock.getByTestId('refresh-15')).toHaveAttribute('aria-pressed', 'false')
   await dock.getByTestId('settings-markets').scrollIntoViewIfNeeded()
   await shot(dock, '07-reglages', 'e')
   await dock.getByTestId('choose-markets').tap()
@@ -219,6 +258,8 @@ test('Réglages : la carte Bourse dit combien de valeurs sont suivies et ouvre l
   await expect(dock.getByTestId('mk-confirm')).toHaveText('Déjà suivie')
   await dock.getByTestId('mk-done').tap()
   await expect(dock.getByTestId('markets-count')).toContainText('2 valeurs suivies')
+  await dock.reload()
+  await expect(dock.getByTestId('refresh-60')).toHaveAttribute('aria-pressed', 'true') // mémorisé par le Pi
 })
 
 // --- toucher et mise en page ----------------------------------------------------------------------

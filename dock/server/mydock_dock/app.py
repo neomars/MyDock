@@ -23,7 +23,7 @@ from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -98,6 +98,12 @@ class UiSetParams(_Strict):
 class MarketsSetParams(_Strict):
     watchlist: list[dict[str, str]] | None = Field(default=None, max_length=40)
     currency: str | None = Field(default=None, max_length=8)
+    refresh: StrictInt | None = None
+
+
+class MarketsSearchParams(_Strict):
+    kind: str = Field(max_length=16)
+    query: str = Field(max_length=120)
 
 
 class MarketsCheckParams(_Strict):
@@ -238,6 +244,7 @@ class DockServer:
         return {
             "count": len(self.markets.watchlist),
             "currency": self.markets.currency,
+            "refresh": int(self.store.markets.get("refresh", 15)),
             "finnhub": bool(self.config.finnhub_key),  # présente ou non : jamais la clé elle-même
             "demo": self.config.demo_markets,
         }
@@ -377,6 +384,12 @@ class DockServer:
         )
         reg.register("dock.markets.refresh", self._act_markets_refresh, timeout=45.0)
         reg.register(
+            "dock.markets.search",
+            self._act_markets_search,
+            params=MarketsSearchParams,
+            timeout=45.0,
+        )
+        reg.register(
             "dock.markets.history",
             self._act_markets_history,
             params=MarketsHistoryParams,
@@ -494,6 +507,11 @@ class DockServer:
         self, _ctx: ActionContext, params: MarketsCheckParams
     ) -> dict[str, Any]:
         return await self._provider_call(self.markets.check(params.kind, params.symbol))
+
+    async def _act_markets_search(
+        self, _ctx: ActionContext, params: MarketsSearchParams
+    ) -> dict[str, Any]:
+        return await self._provider_call(self.markets.search(params.kind, params.query))
 
     async def _act_markets_refresh(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         return await self._provider_call(self.markets.refresh())
