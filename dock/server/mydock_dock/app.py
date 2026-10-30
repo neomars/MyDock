@@ -34,6 +34,7 @@ from mydock_common.outbox import Outbox
 from mydock_dock import __version__
 from mydock_dock.agent_link import AgentLink, LinkSettings, LinkStatus, backoff_delay, probe
 from mydock_dock.config import DockConfig
+from mydock_dock.netinfo import local_ipv4_addresses
 from mydock_dock.store import StateStore
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
 from mydock_dock.wol import send_magic_packet
@@ -191,6 +192,7 @@ class DockServer:
                 "version": __version__,
                 "proto": proto.PROTOCOL_VERSION,
                 "hostname": socket.gethostname(),
+                "ips": local_ipv4_addresses(),
                 "pc": {
                     "host": self.config.agent_host,
                     "port": self.config.agent_port,

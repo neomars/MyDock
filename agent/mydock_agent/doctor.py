@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import psutil
@@ -21,6 +23,9 @@ from mydock_common.auth import bearer_headers
 from mydock_common.config import ConfigError
 from mydock_common.protocol import PROTOCOL_VERSION, loads
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
+
+UFW_CONF = Path("/etc/ufw/ufw.conf")
+LOOPBACK_BINDS = ("127.0.0.1", "localhost")
 
 
 def check_python(report: Report) -> None:
@@ -37,6 +42,13 @@ def check_config(report: Report, path: Path) -> AgentConfig | None:
         return None
     report.add(OK, "Fichier lisible, en droits 600, jeton valide (non affiché)")
     report.add(INFO, f"Écoute sur {config.bind_host}:{config.port}")
+    if config.bind_host in LOOPBACK_BINDS:
+        report.add(
+            WARN,
+            f"bind_host = {config.bind_host} : l'agent n'accepte que les connexions de ce PC, le "
+            'Pi ne pourra jamais le joindre. Mets bind_host = "0.0.0.0" (ou l\'adresse du PC sur '
+            "le réseau) dans ce fichier, puis : systemctl --user restart mydock-agent",
+        )
     if not config.allowed_clients:
         lan = ", ".join(str(n) for n in local_lan_networks()) or "aucun réseau détecté"
         report.add(
@@ -102,6 +114,93 @@ def check_network(report: Report) -> None:
             "Aucun câble Ethernet actif : le réveil d'un PC éteint (Wake-on-LAN) ne fonctionne "
             "en général qu'en Ethernet. En Wi-Fi, au mieux depuis la veille et selon la machine.",
         )
+
+
+def _service_active(unit: str) -> bool:
+    if not shutil.which("systemctl"):
+        return False
+    result = subprocess.run(
+        ["systemctl", "is-active", unit], capture_output=True, text=True, check=False
+    )
+    return result.stdout.strip() == "active"
+
+
+def firewall_sources(config: AgentConfig) -> list[str]:
+    """Qui autoriser dans le pare-feu : l'adresse du Pi, sinon les réseaux locaux de ce PC."""
+    networks = config.allowed_clients or tuple(local_lan_networks())
+    return [str(n.network_address) if n.prefixlen == 32 else str(n) for n in networks]
+
+
+def check_firewall(
+    report: Report,
+    config: AgentConfig,
+    *,
+    ufw_conf: Path = UFW_CONF,
+    service_active: Callable[[str], bool] = _service_active,
+) -> None:
+    """Un pare-feu actif est la première cause d'un PC « hors ligne » alors que l'agent tourne."""
+    report.section("Pare-feu")
+    port = config.port
+    shown = False
+    try:
+        ufw_enabled = any(
+            line.replace(" ", "").lower() == "enabled=yes"
+            for line in ufw_conf.read_text().splitlines()
+        )
+        ufw_known = True
+    except OSError:
+        ufw_enabled, ufw_known = False, False
+    if ufw_known and ufw_enabled:
+        shown = True
+        report.add(
+            WARN,
+            f"ufw est actif. Sans règle pour le port {port}, le Pi ne joint pas l'agent et le "
+            "dock affiche « PC hors ligne ». Ses règles ne se lisent qu'avec sudo ; vérifie :",
+        )
+        report.add(INFO, f"    sudo ufw status | grep {port}")
+        report.add(INFO, "S'il n'y a aucune ligne, autorise le Pi :")
+        for source in firewall_sources(config):
+            report.add(INFO, f"    sudo ufw allow from {source} to any port {port} proto tcp")
+    elif ufw_known:
+        shown = True
+        report.add(OK, "ufw est installé mais inactif : il ne bloque rien")
+    if service_active("firewalld"):
+        shown = True
+        report.add(
+            WARN,
+            f"firewalld est actif : ouvre le port {port} si ce n'est pas déjà fait :",
+        )
+        report.add(INFO, f"    sudo firewall-cmd --permanent --add-port={port}/tcp")
+        report.add(INFO, "    sudo firewall-cmd --reload")
+    if not shown:
+        report.add(INFO, "Aucun pare-feu courant (ufw, firewalld) détecté : rien à ouvrir")
+
+
+def curl_check(address: str, port: int) -> str:
+    """Commande à lancer depuis le Pi : affiche le code HTTP renvoyé par l'agent (404 = joint)."""
+    return f"curl -sS -m 5 -o /dev/null -w '%{{http_code}}\\n' http://{address}:{port}/"
+
+
+def check_from_pi(report: Report, config: AgentConfig) -> None:
+    """La seule vraie preuve que le Pi joint ce PC est un essai depuis le Pi : on le prépare."""
+    report.section("Vérifier depuis le Pi")
+    reachable = [
+        (itf, address) for itf in list_interfaces() if itf["up"] for address in itf["ipv4"]
+    ]
+    if not reachable:
+        report.add(
+            WARN,
+            "Ce PC n'a aucune adresse IPv4 sur un réseau actif : le Pi ne peut pas le joindre.",
+        )
+        return
+    report.add(INFO, "Sur le Pi, lance cette commande (une par adresse possible du PC) :")
+    for itf, address in reachable:
+        route = " [route par défaut]" if itf["default"] else ""
+        report.add(INFO, f"    {curl_check(address, config.port)}   # {itf['name']}{route}")
+    report.add(INFO, "404 = le port répond et l'agent est joint (le résultat voulu)")
+    report.add(INFO, "403 = l'agent est joint mais refuse l'adresse du Pi (voir allowed_clients)")
+    report.add(INFO, "« Connection timed out » = pare-feu du PC, ou Wi-Fi qui isole les appareils")
+    report.add(INFO, "« Connection refused » = mauvaise adresse ou port, ou agent arrêté")
 
 
 def check_tools(report: Report) -> None:
@@ -186,9 +285,12 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     config = check_config(report, path)
     check_session(report)
     check_network(report)
+    if config is not None:
+        check_firewall(report, config)
     check_tools(report)
     if config is not None:
         check_running(report, config, cpu_seconds)
+        check_from_pi(report, config)
     print(report.render())
     return 1 if report.failed else 0
 

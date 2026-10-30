@@ -85,6 +85,8 @@ test('PC éteint : écran hors ligne, réveil Wake-on-LAN, reconnexion automatiq
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toHaveText('PC hors ligne', { timeout: 20_000 })
   await expect(dock.getByTestId('offline-detail')).toContainText('éteint, en veille')
+  // Le message nomme l'adresse essayée : c'est ce qui permet de comprendre une panne à distance.
+  await expect(dock.getByTestId('offline-detail')).toContainText(/127\.0\.0\.1:\d+/)
   await expect(dock.getByTestId('wake')).toBeVisible()
   await expect(dock.getByTestId('clock')).toHaveText(/^\d{2}:\d{2}$/)
   await shot(dock, '06-hors-ligne')
@@ -110,6 +112,7 @@ test('agent arrêté seul : message dédié, sans proposer de réveil', async ({
   stack.agentDown()
   await expect(dock.getByTestId('offline-title')).toHaveText('PC allumé, agent arrêté', { timeout: 20_000 })
   await expect(dock.getByTestId('offline-detail')).toContainText("n'écoute pas")
+  await expect(dock.getByTestId('offline-detail')).toContainText(/127\.0\.0\.1:\d+/)
   await expect(dock.getByTestId('wake')).toHaveCount(0)
   await shot(dock, '08-agent-arrete')
   stack.pcOn()
@@ -126,6 +129,8 @@ test('hors ligne, Bourse et Réglages restent utilisables ; les pages du PC mont
   await expect(dock.getByTestId('soon')).toBeVisible()
   await dock.getByTestId('tab-settings').tap()
   await expect(dock.getByTestId('settings-pc')).toBeVisible()
+  await expect(dock.getByTestId('pc-resolved')).toContainText('Dernière adresse essayée')
+  await expect(dock.getByTestId('pc-resolved')).toContainText(/127\.0\.0\.1:\d+/)
   await dock.getByTestId('tab-power').tap()
   await expect(dock.getByTestId('wol-card')).toBeVisible()
   await dock.getByTestId('tab-music').tap()
@@ -145,6 +150,13 @@ test('l’écran hors ligne ne clignote pas pendant les nouvelles tentatives', a
 })
 
 // --- Réglages ---------------------------------------------------------------------------------
+
+test('Réglages : montre l’adresse du PC jointe et celle du Pi', async ({ dock }) => {
+  await dock.getByTestId('tab-settings').tap()
+  await expect(dock.getByTestId('pc-resolved')).toContainText('Connecté à')
+  await expect(dock.getByTestId('pc-resolved')).toContainText(/127\.0\.0\.1:\d+/)
+  await expect(dock.getByTestId('pi-ips')).toHaveText(/^(\d{1,3}\.){3}\d{1,3}( · (\d{1,3}\.){3}\d{1,3})*$|^—$/)
+})
 
 test('Réglages : saisir l’adresse du PC au clavier tactile', async ({ dock }) => {
   await dock.getByTestId('tab-settings').tap()

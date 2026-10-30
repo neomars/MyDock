@@ -130,6 +130,12 @@
         <span class="value mono" data-testid="pc-token">{dock?.pc.token_set ? '••••••••••••' : 'non défini'}</span>
         <button class="btn" data-testid="edit-token" onclick={editToken}>Remplacer</button>
       </div>
+      {#if link?.resolved}
+        <p class="dim small" data-testid="pc-resolved">
+          {link.state === 'connected' ? 'Connecté à' : 'Dernière adresse essayée :'}
+          <span class="mono">{link.resolved}:{link.port}</span>
+        </p>
+      {/if}
       <div class="test">
         <button class="btn primary" data-testid="test-connection" disabled={test.busy} onclick={testConnection}>
           <PlugZap size={26} aria-hidden="true" />
@@ -200,6 +206,8 @@
         <dd>version {dock?.version ?? '—'} · protocole {dock?.proto ?? '—'}</dd>
         <dt>Cet appareil</dt>
         <dd class="mono">{dock?.hostname ?? '—'}</dd>
+        <dt>Adresse du Pi</dt>
+        <dd class="mono" data-testid="pi-ips">{dock?.ips?.length ? dock.ips.join(' · ') : '—'}</dd>
         <dt>Agent</dt>
         <dd>{link?.agent ? `version ${link.agent.version}` : 'non connecté'}</dd>
         <dt>Liaison</dt>

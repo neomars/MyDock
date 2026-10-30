@@ -76,6 +76,8 @@ export interface DockInfo {
   version: string
   proto: number
   hostname: string
+  /** Adresses IPv4 de ce Pi : celles que le PC voit, à mettre dans allowed_clients. */
+  ips: string[]
   pc: { host: string; port: number; token_set: boolean; name: string | null }
   wol: WolInfo
 }
