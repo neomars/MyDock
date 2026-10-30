@@ -77,9 +77,15 @@ def test_doctor_explains_without_leaking(tmp_path, monkeypatch, capsys):
     args += ["--web-dir", str(tmp_path / "web")]
     main(args)
     capsys.readouterr()
-    assert main(["doctor", "--config", str(path)]) == 1  # interface web absente
+    assert main(["doctor", "--config", str(path), "--offline"]) == 1  # interface web absente
     out = capsys.readouterr().out
-    for section in ("diagnostic du dock", "Configuration", "Interface web", "Liaison avec le PC"):
+    for section in (
+        "diagnostic du dock",
+        "Configuration",
+        "Interface web",
+        "Liaison avec le PC",
+        "Bourse",
+    ):
         assert section in out
     assert "index.html introuvable" in out
     assert "l'agent MyDock n'écoute pas" in out

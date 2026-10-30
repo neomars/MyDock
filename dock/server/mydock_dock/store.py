@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from mydock_dock.markets.model import parse_currency, parse_watchlist
 from mydock_dock.validation import ValidationFailure
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ def _default_state() -> dict[str, Any]:
         "version": 1,
         "ui": {"last_page": DEFAULT_PAGE, "order": [], "hidden": [], "pinned_apps": []},
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
+        "markets": {
+            "watchlist": [{"kind": "crypto", "symbol": "BTC"}, {"kind": "crypto", "symbol": "ETH"}],
+            "currency": "EUR",
+        },
     }
 
 
@@ -101,6 +106,24 @@ class StateStore:
             new["pinned_apps"] = _app_list(patch["pinned_apps"])
         if new != ui:
             self._data["ui"] = new
+            self._save()
+        return copy.deepcopy(new)
+
+    # --- la bourse : valeurs suivies et devise ----------------------------------------------
+
+    @property
+    def markets(self) -> dict[str, Any]:
+        return copy.deepcopy(self._data["markets"])
+
+    def update_markets(self, patch: Mapping[str, Any]) -> dict[str, Any]:
+        markets = self._data["markets"]
+        new = copy.deepcopy(markets)
+        if "watchlist" in patch:
+            new["watchlist"] = [item.to_dict() for item in parse_watchlist(patch["watchlist"])]
+        if "currency" in patch:
+            new["currency"] = parse_currency(patch["currency"])
+        if new != markets:
+            self._data["markets"] = new
             self._save()
         return copy.deepcopy(new)
 

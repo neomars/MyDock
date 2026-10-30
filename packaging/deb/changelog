@@ -1,3 +1,11 @@
+mydock-agent (0.5.0) unstable; urgency=medium
+
+  * Étape e : la bourse (cryptos et actions) tourne sur le Pi, pas sur le PC : l'agent n'a aucun
+    changement fonctionnel. Le numéro de version suit celui du dock (0.5.0) pour que les trois
+    paquets restent alignés.
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 22:00:00 +0000
+
 mydock-agent (0.4.0) unstable; urgency=medium
 
   * Étape d : thèmes « apps » (applications installées : fichiers .desktop du système, de

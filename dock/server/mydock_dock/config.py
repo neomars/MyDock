@@ -14,8 +14,12 @@
     state_dir = "/var/lib/mydock"
     web_dir = "/opt/mydock/src/dock/web/dist"
 
-Les clés d'API des fournisseurs de bourse (étape e) viendront dans une section [markets] de ce
-même fichier, jamais dans le dépôt.
+    [markets]
+    finnhub_key = ""            # facultatif : clé gratuite finnhub.io, cotation de secours des actions
+
+Les clés d'API des fournisseurs de bourse vont dans la section [markets] de ce fichier (droits 600),
+jamais dans le dépôt, jamais dans un journal, jamais à l'écran. Yahoo Finance et Binance n'en
+demandent pas.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from __future__ import annotations
 import copy
 import ipaddress
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,10 +40,11 @@ DEFAULT_PORT = 8080
 DEFAULT_AGENT_PORT = 8765
 DEFAULT_STATE_DIR = Path("/var/lib/mydock")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+API_KEY_RE = re.compile(r"^[A-Za-z0-9_.~-]{8,128}$")
 
 HEADER = (
     "MyDock - serveur dock (Raspberry Pi).\n"
-    "Fichier privé (droits 600) : il contient le jeton de l'agent et, plus tard, des clés d'API.\n"
+    "Fichier privé (droits 600) : il contient le jeton de l'agent et, si tu en ajoutes, des clés d'API.\n"
     "Ne le publie jamais."
 )
 
@@ -61,6 +67,8 @@ class DockConfig:
     wol_mac: str = ""
     state_dir: Path = DEFAULT_STATE_DIR
     web_dir: Path | None = None
+    finnhub_key: str = field(default="", repr=False)  # un secret : jamais dans un affichage
+    demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -74,6 +82,7 @@ class DockConfig:
         server = _section(raw, "server")
         pc = _section(raw, "pc")
         paths = _section(raw, "paths")
+        markets = _section(raw, "markets")
         try:
             listen_host = str(ipaddress.IPv4Address(str(server.get("listen_host", "127.0.0.1"))))
             port = validate_port(server.get("port", DEFAULT_PORT), "server.port")
@@ -88,6 +97,11 @@ class DockConfig:
         if token and not is_valid_token_format(token):
             raise ConfigError(
                 "pc.token est invalide (24 à 256 caractères : lettres, chiffres, . _ ~ -)."
+            )
+        finnhub_key = str(markets.get("finnhub_key", "") or "").strip()
+        if finnhub_key and not API_KEY_RE.fullmatch(finnhub_key):
+            raise ConfigError(
+                "markets.finnhub_key est invalide (8 à 128 caractères : lettres, chiffres, . _ ~ -)."
             )
         level = str(server.get("log_level", "INFO")).upper()
         if level not in LOG_LEVELS:
@@ -104,6 +118,7 @@ class DockConfig:
             wol_mac=wol_mac,
             state_dir=Path(paths.get("state_dir", DEFAULT_STATE_DIR)),
             web_dir=Path(paths["web_dir"]) if paths.get("web_dir") else None,
+            finnhub_key=finnhub_key,
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:

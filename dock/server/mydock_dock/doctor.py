@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from mydock_common.config import ConfigError
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
@@ -27,6 +28,10 @@ from mydock_dock.agent_link import (
     resolve_ipv4_all,
 )
 from mydock_dock.config import DockConfig, default_config_path
+from mydock_dock.markets.errors import ProviderError
+from mydock_dock.markets.factory import build_providers
+from mydock_dock.markets.http import Fetcher
+from mydock_dock.markets.model import Instrument, Quote
 from mydock_dock.netinfo import local_address_towards, local_ipv4_addresses
 from mydock_dock.store import StateStore
 
@@ -221,6 +226,85 @@ def check_wol(report: Report, config: DockConfig) -> None:
         )
 
 
+MARKETS_PROBES = {
+    "binance": Instrument("crypto", "BTC"),
+    "yahoo": Instrument("stock", "AAPL"),
+    "finnhub": Instrument("stock", "AAPL"),
+}
+MARKETS_TIMEOUT = 8.0
+
+
+async def check_markets(
+    report: Report,
+    config: DockConfig,
+    *,
+    online: bool = True,
+    fetcher: Fetcher | None = None,
+    timeout: float = MARKETS_TIMEOUT,
+) -> None:
+    """La bourse : ce qui est suivi, les clés présentes (jamais affichées), et chaque fournisseur."""
+    report.section("Bourse")
+    markets = StateStore(config.state_dir).markets
+    report.add(
+        INFO,
+        f"{len(markets['watchlist'])} valeur(s) suivie(s), cryptos cotées en {markets['currency']}",
+    )
+    cache = config.state_dir / "markets-cache.json"
+    if cache.is_file():
+        age = max(0, int(time.time() - cache.stat().st_mtime))
+        report.add(INFO, f"Dernières cotations gardées : il y a {age // 60} min")
+    report.add(
+        INFO,
+        "Clé Finnhub : configurée (non affichée)"
+        if config.finnhub_key
+        else "Clé Finnhub : aucune (facultative : Yahoo Finance et Binance n'en demandent pas)",
+    )
+    if not online:
+        report.add(INFO, "Test des fournisseurs ignoré (--offline)")
+        return
+    providers = build_providers(finnhub_key=config.finnhub_key, fetcher=fetcher)
+
+    async def probe_one(provider: Any) -> tuple[Any, float, Quote | ProviderError | str]:
+        instrument = MARKETS_PROBES[provider.id]
+        started = time.monotonic()
+        try:
+            async with asyncio.timeout(timeout):
+                results = await provider.quotes([instrument], markets["currency"])
+            outcome: Quote | ProviderError | str = results[instrument.id]
+        except ProviderError as exc:
+            outcome = exc
+        except TimeoutError:
+            outcome = "ne répond pas (délai dépassé)"
+        return provider, time.monotonic() - started, outcome
+
+    answers = await asyncio.gather(*(probe_one(p) for p in providers))
+    failures = 0
+    for provider, seconds, outcome in answers:
+        instrument = MARKETS_PROBES[provider.id]
+        if isinstance(outcome, Quote):
+            price = f"{outcome.price:g}" + (f" {outcome.currency}" if outcome.currency else "")
+            report.add(
+                OK,
+                f"{provider.label} répond ({instrument.symbol} : {price}, {seconds * 1000:.0f} ms)",
+            )
+            continue
+        failures += 1
+        message = outcome.message if isinstance(outcome, ProviderError) else outcome
+        report.add(WARN, f"{provider.label} : {message}")
+    if failures == len(providers):
+        report.add(
+            WARN,
+            "Aucun fournisseur ne répond : le Pi a-t-il accès à Internet ? Essaie "
+            "`curl -sI https://query2.finance.yahoo.com` et vérifie le DNS ; la page Bourse "
+            "montre alors les dernières cotations gardées, avec leur âge.",
+        )
+    elif failures:
+        report.add(
+            INFO,
+            "Un fournisseur en panne est remplacé par le suivant (Yahoo Finance prend les cryptos de Binance).",
+        )
+
+
 def check_running(report: Report, config: DockConfig) -> None:
     report.section("Services")
     url = f"http://127.0.0.1:{config.port}/api/health"
@@ -249,7 +333,12 @@ def check_running(report: Report, config: DockConfig) -> None:
         report.add(OK if path else INFO, f"{tool} {'présent' if path else 'absent'} ({why})")
 
 
-def run_doctor(config_path: Path | None = None) -> int:
+def run_doctor(
+    config_path: Path | None = None,
+    *,
+    offline: bool = False,
+    markets_fetcher: Fetcher | None = None,
+) -> int:
     path = Path(config_path) if config_path else default_config_path()
     report = Report()
     report.section(
@@ -260,6 +349,7 @@ def run_doctor(config_path: Path | None = None) -> int:
         check_web(report, config)
         asyncio.run(_check_pc(report, config))
         check_wol(report, config)
+        asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)
     print(report.render())
     return 1 if report.failed else 0

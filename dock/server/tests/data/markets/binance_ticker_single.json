@@ -1,0 +1,23 @@
+{
+ "symbol": "SOLEUR",
+ "priceChange": "3.10000000",
+ "priceChangePercent": "2.474",
+ "weightedAvgPrice": "128.40000000",
+ "prevClosePrice": "125.30000000",
+ "lastPrice": "128.40000000",
+ "lastQty": "0.00100000",
+ "bidPrice": "128.30000000",
+ "bidQty": "1.20000000",
+ "askPrice": "128.50000000",
+ "askQty": "0.70000000",
+ "openPrice": "125.30000000",
+ "highPrice": "130.00000000",
+ "lowPrice": "124.00000000",
+ "volume": "812.34000000",
+ "quoteVolume": "49812345.12000000",
+ "openTime": 1793283600000,
+ "closeTime": 1793369999000,
+ "firstId": 100,
+ "lastId": 9000,
+ "count": 8901
+}

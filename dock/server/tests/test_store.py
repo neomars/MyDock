@@ -86,6 +86,60 @@ def test_a_state_file_from_an_older_version_gets_an_empty_launcher(tmp_path):
     assert store.ui["pinned_apps"] == []
 
 
+def test_the_market_list_starts_with_bitcoin_and_ethereum_in_euros(tmp_path):
+    assert StateStore(tmp_path).markets == {
+        "watchlist": [{"kind": "crypto", "symbol": "BTC"}, {"kind": "crypto", "symbol": "ETH"}],
+        "currency": "EUR",
+    }
+
+
+def test_the_market_list_keeps_its_order_and_persists(tmp_path):
+    store = StateStore(tmp_path)
+    wanted = [
+        {"kind": "stock", "symbol": "mstr"},
+        {"kind": "crypto", "symbol": "sol"},
+        {"kind": "stock", "symbol": "^fchi"},
+    ]
+    saved = store.update_markets({"watchlist": wanted, "currency": "USD"})
+    assert saved["watchlist"] == [
+        {"kind": "stock", "symbol": "MSTR"},
+        {"kind": "crypto", "symbol": "SOL"},
+        {"kind": "stock", "symbol": "^FCHI"},
+    ]
+    assert StateStore(tmp_path).markets == saved
+    assert store.update_markets({"watchlist": []})["watchlist"] == []  # vider la liste est permis
+    assert StateStore(tmp_path).markets["watchlist"] == []
+    assert store.update_markets({"currency": "EUR"})["currency"] == "EUR"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"watchlist": "BTC"},
+        {"watchlist": [{"kind": "crypto", "symbol": "BTC"}, {"kind": "crypto", "symbol": "btc"}]},
+        {"watchlist": [{"kind": "crypto"}]},
+        {"watchlist": [{"kind": "action", "symbol": "MSTR"}]},
+        {"watchlist": [{"kind": "stock", "symbol": f"S{i}"} for i in range(21)]},
+        {"currency": "GBP"},
+        {"currency": None},
+    ],
+)
+def test_an_invalid_market_list_is_refused_and_changes_nothing(tmp_path, patch):
+    store = StateStore(tmp_path)
+    before = store.markets
+    with pytest.raises(ValidationFailure):
+        store.update_markets(patch)
+    assert store.markets == before
+
+
+def test_a_state_file_from_before_the_stock_market_gets_the_default_list(tmp_path):
+    (tmp_path / "state.json").write_text(
+        '{"version": 1, "ui": {"last_page": "power", "order": [], "hidden": []}}'
+    )
+    store = StateStore(tmp_path)
+    assert [i["symbol"] for i in store.markets["watchlist"]] == ["BTC", "ETH"]
+
+
 def test_every_page_can_be_hidden_except_settings(tmp_path):
     store = StateStore(tmp_path)
     others = [p for p in PAGE_IDS if p != "settings"]

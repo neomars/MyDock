@@ -34,6 +34,10 @@ from mydock_common.outbox import Outbox
 from mydock_dock import __version__
 from mydock_dock.agent_link import AgentLink, LinkSettings, LinkStatus, backoff_delay, probe
 from mydock_dock.config import DockConfig
+from mydock_dock.markets.errors import NotFound, ProviderError
+from mydock_dock.markets.factory import build_providers
+from mydock_dock.markets.http import Fetcher
+from mydock_dock.markets.service import MarketsService, Timing
 from mydock_dock.netinfo import local_ipv4_addresses
 from mydock_dock.store import StateStore
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
@@ -46,6 +50,9 @@ MAX_INFLIGHT_ACTIONS = 32
 #: « host » (nom du PC) et « system » (l'agent garde l'historique de 60 s, la page Système l'affiche
 #: aussitôt ouverte). Les autres ne sont suivis que quand une page les montre.
 BASELINE_TOPICS = frozenset({"host", "system"})
+#: Thèmes locaux que le navigateur doit demander (ils pèsent plus et lancent un travail du dock) :
+#: « markets » n'est suivi, et les cotations ne sont redemandées, que page Bourse ouverte.
+ON_DEMAND_TOPICS = ("markets",)
 MAX_CONSECUTIVE_BAD_MESSAGES = 10
 LOOPBACK_NAMES = {"127.0.0.1", "localhost"}
 CSP = (
@@ -88,6 +95,21 @@ class UiSetParams(_Strict):
     pinned_apps: list[str] | None = None
 
 
+class MarketsSetParams(_Strict):
+    watchlist: list[dict[str, str]] | None = Field(default=None, max_length=40)
+    currency: str | None = Field(default=None, max_length=8)
+
+
+class MarketsCheckParams(_Strict):
+    kind: str = Field(max_length=16)
+    symbol: str = Field(max_length=40)
+
+
+class MarketsHistoryParams(_Strict):
+    id: str = Field(max_length=48)
+    range: str = Field(max_length=8)
+
+
 # --- connexion navigateur -------------------------------------------------------------------
 
 
@@ -98,6 +120,7 @@ class BrowserConn:
         self.id = next(self._ids)
         self.peer = peer
         self.topics: set[str] = set()  # thèmes de l'agent demandés par ce navigateur
+        self.markets = False  # la page Bourse est ouverte : les cotations se mettent à jour
         self.outbox = Outbox()
 
 
@@ -127,10 +150,27 @@ def pick_wol_interface(interfaces: list[Mapping[str, Any]]) -> dict[str, str] | 
 
 
 class DockServer:
-    def __init__(self, config: DockConfig, *, link_backoff: Callable[[int], float] = backoff_delay):
+    def __init__(
+        self,
+        config: DockConfig,
+        *,
+        link_backoff: Callable[[int], float] = backoff_delay,
+        markets_fetcher: Fetcher | None = None,
+        markets_timing: Timing | None = None,
+    ):
         self.config = config
         self.store = StateStore(config.state_dir)
         self.browsers: set[BrowserConn] = set()
+        self.markets = MarketsService(
+            store=self.store,
+            providers=build_providers(
+                demo=config.demo_markets, finnhub_key=config.finnhub_key, fetcher=markets_fetcher
+            ),
+            cache_path=None if config.demo_markets else config.state_dir / "markets-cache.json",
+            on_change=lambda: self.push_local("markets"),
+            timing=markets_timing,
+            demo=config.demo_markets,
+        )
         self.link = AgentLink(
             self._link_settings,
             on_status=self._on_link_status,
@@ -138,8 +178,9 @@ class DockServer:
             backoff=link_backoff,
         )
         self.actions = ActionRegistry()
-        self._revs = {topic: 0 for topic in proto.DOCK_TOPICS}
+        self._revs = {topic: 0 for topic in (*proto.DOCK_TOPICS, *ON_DEMAND_TOPICS)}
         self._link_task: asyncio.Task[None] | None = None
+        self._markets_task: asyncio.Task[None] | None = None
         self._register_actions()
 
     # --- cycle de vie --------------------------------------------------------------------
@@ -147,6 +188,7 @@ class DockServer:
     def start(self) -> None:
         self.link.set_subscriptions(set(BASELINE_TOPICS))
         self._link_task = asyncio.create_task(self._run_link(), name="agent-link")
+        self._markets_task = asyncio.create_task(self.markets.run(), name="markets")
 
     async def _run_link(self) -> None:
         while True:  # la liaison ne doit jamais rester morte à cause d'une erreur inattendue
@@ -159,9 +201,11 @@ class DockServer:
                 await asyncio.sleep(5)
 
     async def stop(self) -> None:
-        if self._link_task is not None:
-            self._link_task.cancel()
-            await asyncio.gather(self._link_task, return_exceptions=True)
+        tasks = [t for t in (self._link_task, self._markets_task) if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.markets.save()
         await self.link.close()
         for conn in tuple(self.browsers):
             conn.outbox.close()
@@ -189,6 +233,15 @@ class DockServer:
             return {**learned, "source": "auto", "interfaces": interfaces}
         return {"mac": None, "source": None, "iface": None, "kind": None, "interfaces": interfaces}
 
+    def markets_info(self) -> dict[str, Any]:
+        """Le résumé de la bourse pour les Réglages (sans abonnement aux cotations, donc sans trafic)."""
+        return {
+            "count": len(self.markets.watchlist),
+            "currency": self.markets.currency,
+            "finnhub": bool(self.config.finnhub_key),  # présente ou non : jamais la clé elle-même
+            "demo": self.config.demo_markets,
+        }
+
     def payload(self, topic: str) -> dict[str, Any]:
         if topic == "link":
             return self.link.status.to_dict()
@@ -205,9 +258,12 @@ class DockServer:
                     "name": self.store.pc.get("hostname"),
                 },
                 "wol": self.wol_info(),
+                "markets": self.markets_info(),
             }
         if topic == "ui":
             return self.store.ui
+        if topic == "markets":
+            return self.markets.payload()
         raise KeyError(topic)
 
     def local_text(self, topic: str) -> str:
@@ -262,6 +318,10 @@ class DockServer:
         for topic in topics:
             if topic in proto.DOCK_TOPICS:
                 conn.outbox.push_snapshot(topic, self.local_text(topic))
+            elif topic in ON_DEMAND_TOPICS:
+                conn.markets = True
+                conn.outbox.push_snapshot(topic, self.local_text(topic))
+                self._sync_markets()
             elif topic in proto.AGENT_TOPICS:
                 conn.topics.add(topic)
                 cached = self.link.snapshots.get(topic)
@@ -275,7 +335,13 @@ class DockServer:
 
     def unsubscribe(self, conn: BrowserConn, topics: list[str]) -> None:
         conn.topics.difference_update(topics)
+        if "markets" in topics:
+            conn.markets = False
+            self._sync_markets()
         self._sync_upstream()
+
+    def _sync_markets(self) -> None:
+        self.markets.set_watching(any(c.markets for c in self.browsers))
 
     def _sync_upstream(self) -> None:
         wanted = set(BASELINE_TOPICS).union(*(c.topics for c in self.browsers))
@@ -283,6 +349,7 @@ class DockServer:
 
     def detach(self, conn: BrowserConn) -> None:
         self.browsers.discard(conn)
+        self._sync_markets()
         self._sync_upstream()
 
     # --- actions -------------------------------------------------------------------------
@@ -304,6 +371,17 @@ class DockServer:
         reg.register("dock.wol.send", self._act_wol_send, timeout=8.0)
         reg.register("dock.wol.set_mac", self._act_wol_set_mac, params=WolMacParams)
         reg.register("dock.ui.set", self._act_ui_set, params=UiSetParams)
+        reg.register("dock.markets.set", self._act_markets_set, params=MarketsSetParams)
+        reg.register(
+            "dock.markets.check", self._act_markets_check, params=MarketsCheckParams, timeout=45.0
+        )
+        reg.register("dock.markets.refresh", self._act_markets_refresh, timeout=45.0)
+        reg.register(
+            "dock.markets.history",
+            self._act_markets_history,
+            params=MarketsHistoryParams,
+            timeout=45.0,
+        )
 
     def _persist(self, change: Any) -> None:
         """Exécute une modification de configuration en traduisant les erreurs pour l'écran."""
@@ -385,6 +463,45 @@ class DockServer:
         self._persist(apply)
         self.push_local("ui")
         return ui
+
+    async def _act_markets_set(
+        self, _ctx: ActionContext, params: MarketsSetParams
+    ) -> dict[str, Any]:
+        patch = params.model_dump(exclude_none=True)
+        result: dict[str, Any] = {}
+
+        def apply() -> None:
+            result.update(self.store.update_markets(patch))
+
+        self._persist(apply)
+        self.markets.watchlist_changed()
+        self.push_local("markets")
+        self.push_local("dock")  # le résumé des Réglages
+        return result
+
+    async def _provider_call(self, call: Any) -> Any:
+        """Traduit les échecs d'un fournisseur en réponses lisibles à l'écran."""
+        try:
+            return await call
+        except NotFound as exc:
+            raise ActionError("not_found", exc.message) from None
+        except ProviderError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, exc.message) from None
+        except ValidationFailure as exc:
+            raise ActionError(proto.ErrorCode.BAD_PARAMS, str(exc)) from None
+
+    async def _act_markets_check(
+        self, _ctx: ActionContext, params: MarketsCheckParams
+    ) -> dict[str, Any]:
+        return await self._provider_call(self.markets.check(params.kind, params.symbol))
+
+    async def _act_markets_refresh(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        return await self._provider_call(self.markets.refresh())
+
+    async def _act_markets_history(
+        self, _ctx: ActionContext, params: MarketsHistoryParams
+    ) -> dict[str, Any]:
+        return await self._provider_call(self.markets.history(params.id, params.range))
 
 
 # --- HTTP / WebSocket -----------------------------------------------------------------------

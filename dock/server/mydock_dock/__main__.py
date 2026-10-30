@@ -40,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--port", type=int, help="remplace server.port")
     run.add_argument("--web-dir", type=Path, help="remplace paths.web_dir")
     run.add_argument("--state-dir", type=Path, help="remplace paths.state_dir")
+    run.add_argument(
+        "--demo-markets",
+        action="store_true",
+        help="cotations de démonstration, sans réseau (captures d'écran et tests)",
+    )
 
     init = sub.add_parser("init", help="crée ou met à jour la configuration (idempotent)")
     init.add_argument("--config", type=Path)
@@ -59,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="diagnostic de l'installation")
     doctor.add_argument("--config", type=Path)
+    doctor.add_argument(
+        "--offline",
+        action="store_true",
+        help="ne teste pas les fournisseurs de cotations sur Internet",
+    )
     return parser
 
 
@@ -74,6 +84,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         config.web_dir = args.web_dir
     if args.state_dir:
         config.state_dir = args.state_dir
+    if args.demo_markets:
+        config.demo_markets = True
     logging.basicConfig(level=config.log_level, format="%(levelname)s %(name)s: %(message)s")
 
     server = DockServer(config)
@@ -142,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return cmd_init(args)
     if args.command == "doctor":
-        return run_doctor(args.config or default_config_path())
+        return run_doctor(args.config or default_config_path(), offline=args.offline)
     parser.error(f"commande inconnue : {args.command}")
     return 2
 

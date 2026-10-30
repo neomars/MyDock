@@ -146,6 +146,7 @@ class Stack:
                 str(config),
                 "--port",
                 str(self.args.dock_port),
+                "--demo-markets",  # des cotations calculées : aucun accès à Internet
             ],
             env=env,
             stdout=subprocess.DEVNULL,
