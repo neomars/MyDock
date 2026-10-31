@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import struct
+import zlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -82,10 +84,12 @@ async def running_agent(
     block: float = 300.0,
     clock: Callable[[], float] | None = None,
     port: int = 0,
+    registry: ActionRegistry | None = None,
 ) -> AsyncIterator[RunningAgent]:
     hub = Hub(providers if providers is not None else [ScriptedProvider("host", lazy=False)])
-    registry = ActionRegistry()
-    register_builtin(registry, demo=demo)
+    if registry is None:
+        registry = ActionRegistry()
+        register_builtin(registry, demo=demo)
     gate_kwargs: dict[str, Any] = {"max_failures": max_failures, "block": block}
     if clock is not None:
         gate_kwargs["clock"] = clock
@@ -113,6 +117,33 @@ async def running_agent(
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 5)
+
+
+def png_bytes(width: int = 2, height: int = 2, *, alpha: bool = False) -> bytes:
+    """Un PNG minimal valide, fabriqué à la main (aucune bibliothèque d'image requise)."""
+    channels, color_type = (4, 6) if alpha else (3, 2)
+    raw = b"".join(b"\x00" + bytes([200, 40, 40, 255][:channels]) * width for _ in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, color_type, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+async def eventually(
+    predicate: Callable[[], Any], timeout: float = 3.0, interval: float = 0.01
+) -> None:
+    """Attend qu'une condition devienne vraie (TimeoutError sinon)."""
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(interval)
 
 
 async def recv_json(ws: ClientConnection, timeout: float = 2.0) -> dict[str, Any]:

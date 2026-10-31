@@ -1,0 +1,9 @@
+{
+ "chart": {
+  "result": null,
+  "error": {
+   "code": "Bad Request",
+   "description": "Invalid input - interval=7m is not supported"
+  }
+ }
+}

@@ -44,6 +44,9 @@ class ActionContext:
 
 
 Handler = Callable[[ActionContext, Any], Awaitable[Any]]
+#: Libellé de confirmation : un texte fixe, ou une fonction des paramètres validés
+#: (« Terminer firefox (PID 1234) » : la fenêtre de confirmation dit ce qui va arriver).
+Label = str | Callable[[Any], str]
 
 
 @dataclass(frozen=True)
@@ -52,8 +55,16 @@ class ActionSpec:
     handler: Handler
     params: type[BaseModel]
     sensitive: bool
-    label: str
+    label: Label
     timeout: float
+
+    def confirmation_label(self, params: BaseModel) -> str:
+        try:
+            text = self.label(params) if callable(self.label) else self.label
+        except Exception:
+            log.exception("Libellé de confirmation illisible pour %s", self.name)
+            text = ""
+        return text or self.name  # jamais de fenêtre sans texte
 
 
 class ConfirmStore:
@@ -119,7 +130,7 @@ class ActionRegistry:
         *,
         params: type[BaseModel] | None = None,
         sensitive: bool = False,
-        label: str = "",
+        label: Label = "",
         timeout: float = 5.0,
     ) -> None:
         if not ACTION_NAME_RE.fullmatch(name):
@@ -162,7 +173,7 @@ class ActionRegistry:
                         "confirm": {
                             "token": token,
                             "ttl": self.confirmations.ttl,
-                            "label": spec.label,
+                            "label": spec.confirmation_label(params),
                         }
                     },
                 )

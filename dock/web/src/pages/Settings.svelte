@@ -6,18 +6,37 @@
   import PageHeader from '../components/PageHeader.svelte'
   import { editText } from '../lib/keyboard.svelte'
   import { formatMs, ifaceKindLabel, type LatencyStats } from '../lib/format'
-  import type { Ack } from '../lib/protocol'
+  import { MAX_PINNED } from '../lib/launcher'
+  import { MAX_WATCHED, REFRESH_OPTIONS } from '../lib/markets'
+  import { marketsUi } from '../lib/markets.svelte'
+  import { pageRows, pagesSummary } from '../lib/pages'
+  import { pagesUi } from '../lib/pagesEditor.svelte'
+  import { picker } from '../lib/picker.svelte'
+  import { SLEEP_OPTIONS, sleepPhrase } from '../lib/screen'
+  import { screenSleep } from '../lib/screen.svelte'
+  import type { Ack, MarketRefresh } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
   const dock = $derived(sock.dock)
   const link = $derived(sock.link)
+  const pagesLine = $derived(pagesSummary(pageRows(sock.ui?.order ?? [], sock.ui?.hidden ?? [])))
 
   /** Affiche le résultat d'une modification : succès en vert, sinon le message d'erreur du dock. */
   function report(ack: Ack, done: string): boolean {
     if (ack.ok) notify(done, 'good')
     else notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
     return ack.ok
+  }
+
+  async function setRefresh(refresh: MarketRefresh): Promise<void> {
+    const ack = await sock.act('dock.markets.set', { refresh })
+    if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
+  }
+
+  async function setSleep(seconds: number): Promise<void> {
+    const ack = await sock.act('dock.ui.set', { screen_sleep: seconds })
+    if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
   }
 
   async function editHost(): Promise<void> {
@@ -130,6 +149,12 @@
         <span class="value mono" data-testid="pc-token">{dock?.pc.token_set ? '••••••••••••' : 'non défini'}</span>
         <button class="btn" data-testid="edit-token" onclick={editToken}>Remplacer</button>
       </div>
+      {#if link?.resolved}
+        <p class="dim small" data-testid="pc-resolved">
+          {link.state === 'connected' ? 'Connecté à' : 'Dernière adresse essayée :'}
+          <span class="mono">{link.resolved}:{link.port}</span>
+        </p>
+      {/if}
       <div class="test">
         <button class="btn primary" data-testid="test-connection" disabled={test.busy} onclick={testConnection}>
           <PlugZap size={26} aria-hidden="true" />
@@ -165,9 +190,94 @@
         <p class="warn small">Wi-Fi : réveiller un PC éteint par Wi-Fi ne marche en général pas.</p>
       {/if}
     </section>
+
+    <section class="card" data-testid="settings-screen">
+      <h2>Écran du dock</h2>
+      <div class="pace compact" role="group" aria-label="Extinction de l'écran après inactivité">
+        <span class="dim small">Éteindre l'écran après</span>
+        {#each SLEEP_OPTIONS as option (option.id)}
+          <button
+            class="seg"
+            class:on={(sock.ui?.screen_sleep ?? 0) === option.id}
+            aria-pressed={(sock.ui?.screen_sleep ?? 0) === option.id}
+            disabled={!sock.ui}
+            data-testid="sleep-{option.id}"
+            onclick={() => setSleep(option.id)}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+      <p class="dim small" data-testid="screen-note">
+        {#if (sock.ui?.screen_sleep ?? 0) === 0}
+          L'écran reste allumé.
+        {:else}
+          Sans toucher pendant {sleepPhrase(sock.ui?.screen_sleep ?? 0)}, l'écran s'éteint ; le premier toucher le rallume sans rien déclencher.
+        {/if}
+      </p>
+      <button class="btn trial" data-testid="sleep-now" onclick={() => screenSleep.sleepNow()}>Éteindre maintenant (essai)</button>
+      <p class="dim small">L'essai noircit seulement l'image : c'est le Pi (swayidle) qui coupe le rétroéclairage, après le délai.</p>
+    </section>
   </div>
 
   <div class="col">
+    <section class="card" data-testid="settings-pages">
+      <h2>Pages du dock</h2>
+      <p data-testid="pages-count">{pagesLine}</p>
+      <button class="btn" data-testid="choose-pages" onclick={() => pagesUi.edit()}>
+        Choisir les pages et leur ordre…
+      </button>
+    </section>
+
+    <section class="card" data-testid="settings-launcher">
+      <h2>Lanceur d'applications</h2>
+      <p data-testid="launcher-count">
+        {#if (sock.ui?.pinned_apps.length ?? 0) === 0}
+          Aucune application choisie pour la page Applis.
+        {:else}
+          {sock.ui?.pinned_apps.length} application{(sock.ui?.pinned_apps.length ?? 0) > 1 ? 's' : ''} sur {MAX_PINNED} au plus, dans l'ordre que tu as choisi.
+        {/if}
+      </p>
+      <button class="btn" data-testid="choose-apps" disabled={!sock.connected} onclick={() => picker.show()}>
+        Choisir les applications…
+      </button>
+      {#if !sock.connected}<p class="dim small">Le PC doit être allumé : c'est lui qui connaît ses applications.</p>{/if}
+    </section>
+
+    <section class="card" data-testid="settings-markets">
+      <h2>Bourse</h2>
+      <p data-testid="markets-count">
+        {#if !dock?.markets}
+          Lecture de la liste…
+        {:else if dock.markets.count === 0}
+          Aucune valeur suivie.
+        {:else}
+          {dock.markets.count} valeur{dock.markets.count > 1 ? 's' : ''} suivie{dock.markets.count > 1 ? 's' : ''} sur {MAX_WATCHED} au plus, cryptos cotées en {dock.markets.currency === 'USD' ? 'dollars' : 'euros'}.
+        {/if}
+      </p>
+      <button class="btn" data-testid="choose-markets" onclick={() => marketsUi.edit()}>Choisir les valeurs…</button>
+      <div class="pace" role="group" aria-label="Fréquence des mises à jour">
+        <span class="dim small">Mise à jour des cryptos toutes les</span>
+        {#each REFRESH_OPTIONS as option (option.id)}
+          <button
+            class="seg"
+            class:on={dock?.markets?.refresh === option.id}
+            aria-pressed={dock?.markets?.refresh === option.id}
+            disabled={!dock?.markets}
+            data-testid="refresh-{option.id}"
+            onclick={() => setRefresh(option.id)}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+      <p class="dim small" data-testid="markets-note">
+        Le Pi lit lui-même les cotations (Yahoo Finance et Binance, sans clé) : la Bourse marche PC éteint.
+        {#if dock?.markets?.demo}Mode démonstration : cotations calculées, sans réseau.
+        {:else if dock?.markets}Clé Finnhub de secours : {dock.markets.finnhub ? 'configurée' : 'aucune (facultative)'}.{/if}
+      </p>
+    </section>
+
     <section class="card" data-testid="settings-latency">
       <h2>Latence appui → PC</h2>
       <button class="btn" data-testid="measure-latency" disabled={latency.busy} onclick={measureLatency}>
@@ -200,6 +310,8 @@
         <dd>version {dock?.version ?? '—'} · protocole {dock?.proto ?? '—'}</dd>
         <dt>Cet appareil</dt>
         <dd class="mono">{dock?.hostname ?? '—'}</dd>
+        <dt>Adresse du Pi</dt>
+        <dd class="mono" data-testid="pi-ips">{dock?.ips?.length ? dock.ips.join(' · ') : '—'}</dd>
         <dt>Agent</dt>
         <dd>{link?.agent ? `version ${link.agent.version}` : 'non connecté'}</dd>
         <dt>Liaison</dt>
@@ -270,6 +382,45 @@
   .small {
     font-size: var(--fs-small);
     margin-top: 6px;
+  }
+  .pace {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .pace .small {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  .seg {
+    height: 48px;
+    min-width: 76px;
+    padding: 0 16px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    font-weight: 600;
+    text-align: center;
+  }
+  .pace.compact {
+    gap: 6px;
+  }
+  .pace.compact .seg {
+    min-width: 0;
+    padding: 0 10px;
+  }
+  .trial {
+    margin-top: 12px;
+  }
+  .seg.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .seg:disabled {
+    opacity: 0.4;
   }
   .warn {
     color: var(--warn);

@@ -163,6 +163,48 @@ async def test_a_second_browser_sees_changes_made_by_the_first(stack):
         assert ui["data"]["hidden"] == ["steam"]
 
 
+async def test_the_launcher_applications_are_shared_between_browsers_and_validated(stack):
+    chosen = ["org.mozilla.firefox.desktop", "spotify.desktop"]
+    async with stack.dock.connect() as first, stack.dock.connect() as second:
+        await hello_and_topics(first)
+        await hello_and_topics(second)
+        assert (await call(first, "a1", "dock.ui.set", {"pinned_apps": chosen}))["ok"] is True
+        assert (await snapshot_of(second, "ui"))["data"]["pinned_apps"] == chosen
+        for bad in (
+            ["firefox"],
+            ["a.desktop", "a.desktop"],
+            "firefox.desktop",
+            ["../../x.desktop"],
+        ):
+            refused = await call(first, "a2", "dock.ui.set", {"pinned_apps": bad})
+            assert refused["ok"] is False
+        again = await call(first, "a3", "dock.ui.set", {"last_page": "apps"})
+        assert again["r"]["pinned_apps"] == chosen  # un réglage refusé n'a rien changé
+
+
+async def test_the_screen_sleep_delay_is_shared_validated_and_readable_by_the_pi_script(stack):
+    async with httpx.AsyncClient(trust_env=False, base_url=stack.dock.origin) as client:
+        assert (await client.get("/api/screen")).json() == {"sleep_after": 0}
+        async with stack.dock.connect() as first, stack.dock.connect() as second:
+            await hello_and_topics(first)
+            await hello_and_topics(second)
+            assert (await call(first, "s1", "dock.ui.set", {"screen_sleep": 300}))["ok"] is True
+            assert (await snapshot_of(second, "ui"))["data"]["screen_sleep"] == 300
+            reply = await client.get("/api/screen")
+            assert reply.json() == {"sleep_after": 300}
+            assert reply.headers["cache-control"] == "no-store"
+            for bad in (45, "300", True, -1):
+                refused = await call(first, "s2", "dock.ui.set", {"screen_sleep": bad})
+                assert refused["ok"] is False
+            assert (await client.get("/api/screen")).json() == {"sleep_after": 300}
+
+
+async def test_the_screen_endpoint_refuses_a_rebinding_host(stack):
+    async with httpx.AsyncClient(trust_env=False, base_url=stack.dock.origin) as client:
+        rebound = await client.get("/api/screen", headers={"Host": "evil.example"})
+        assert rebound.status_code == 421
+
+
 # --- actions -------------------------------------------------------------------------------
 
 
@@ -408,6 +450,19 @@ async def test_upstream_subscriptions_follow_the_browsers(stack):
         assert hub.subscriber_count("music") == 1  # le premier navigateur est toujours là
     await eventually(lambda: hub.subscriber_count("music") == 0)
     assert hub.subscriber_count("host") == 1  # « host » reste toujours demandé
+
+
+async def test_the_dock_always_follows_system_so_the_history_is_ready_when_the_page_opens(stack):
+    hub = stack.agent.hub
+    # Aucun navigateur connecté : le dock suit quand même « system » (l'agent garde 60 s d'historique).
+    await eventually(lambda: hub.subscriber_count("system") == 1)
+    assert hub.subscriber_count("procs") == 0  # les processus, eux, seulement page Système ouverte
+    async with stack.dock.connect() as browser:
+        await send_json(browser, {"t": "sub", "topics": ["procs"]})
+        await eventually(lambda: hub.subscriber_count("procs") == 1)
+        assert hub.subscriber_count("system") == 1  # toujours une seule demande
+    await eventually(lambda: hub.subscriber_count("procs") == 0)
+    assert hub.subscriber_count("system") == 1
 
 
 # --- sécurité du serveur local --------------------------------------------------------------

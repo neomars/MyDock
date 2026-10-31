@@ -1,0 +1,20 @@
+#!/bin/sh
+# Après installation ou mise à jour de mydock-agent.
+set -e
+
+case "$1" in
+    configure)
+        if command -v py3compile >/dev/null 2>&1; then
+            py3compile -p mydock-agent || true
+        fi
+        if [ -n "$2" ]; then
+            # Mise à jour : les sessions déjà ouvertes passent à la nouvelle version.
+            /usr/lib/mydock-agent/restart-user-agents try-restart || true
+        else
+            echo "mydock-agent est installé. Pour le configurer, dans un terminal de ta session :"
+            echo "    mydock-agent setup --pi ADRESSE_IP_DU_PI --open-firewall"
+        fi
+        ;;
+esac
+
+exit 0

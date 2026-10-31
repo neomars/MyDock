@@ -1,0 +1,21 @@
+# Versions EXACTES des paquets Python d'Ubuntu 26.04 « Resolute » (archive du 23 avril 2026,
+# amd64, pockets resolute + resolute-updates). Le paquet .deb de l'agent dépend de ces paquets
+# système, pas de pip : les tests doivent donc aussi passer avec ces versions-là.
+#
+#   make test-ubuntu     crée .venv-ubuntu (Python 3.14) avec ces versions et lance les tests
+#
+# Les dépendances de test (pytest, ruff…) ne viennent pas de l'archive et restent libres.
+fastapi==0.118.0
+starlette==0.50.0
+uvicorn==0.38.0
+websockets==15.0.1
+psutil==7.1.0
+pydantic==2.12.5
+pydantic-core==2.41.5
+tomli-w==1.2.0
+anyio==4.11.0
+h11==0.14.0
+typing-extensions==4.15.0
+httpx==0.28.1
+dbus-fast==4.0.0
+pillow==12.1.1

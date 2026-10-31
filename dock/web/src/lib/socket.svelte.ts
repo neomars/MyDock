@@ -28,6 +28,9 @@ class DockSocket {
   ui = $state<UiState | null>(null)
   /** Derniers instantanés des thèmes du PC, par nom de thème. */
   topics = $state.raw<Record<string, unknown>>({})
+  /** Heure (`performance.now()`) de réception du dernier instantané de chaque thème : la page
+   *  Musique prolonge la position du morceau à partir de là. */
+  stamps = $state.raw<Record<string, number>>({})
   /** Dernier aller-retour mesuré avec le dock (ms), pour l'affichage de débogage. */
   lastPingMs = $state<number | null>(null)
 
@@ -116,7 +119,10 @@ class DockSocket {
       this.link = next
     } else if (topic === 'dock') this.dock = data as DockInfo
     else if (topic === 'ui') this.ui = data as UiState
-    else this.topics = { ...this.topics, [topic]: data }
+    else {
+      this.topics = { ...this.topics, [topic]: data }
+      this.stamps = { ...this.stamps, [topic]: performance.now() }
+    }
   }
 
   private ping(): void {

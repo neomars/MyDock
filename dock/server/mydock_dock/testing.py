@@ -63,6 +63,8 @@ async def running_dock(
     web_dir: Path | None = None,
     wol_mac: str | None = None,
     fast_retry: bool = True,
+    demo_markets: bool = False,
+    **server_options: Any,
 ) -> AsyncIterator[RunningDock]:
     config_path = tmp_path / "dock.toml"
     config = init_config(
@@ -75,8 +77,11 @@ async def running_dock(
     )
     if wol_mac:
         config.set_wol_mac(wol_mac)
+    config.demo_markets = demo_markets
     server = DockServer(
-        config, link_backoff=(lambda _attempt: 0.05) if fast_retry else backoff_delay
+        config,
+        link_backoff=(lambda _attempt: 0.05) if fast_retry else backoff_delay,
+        **server_options,
     )
     uvicorn_server = uvicorn.Server(
         uvicorn.Config(

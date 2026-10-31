@@ -9,7 +9,7 @@ export const LETTER_ROWS = [
   ['q', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'm'],
   ['w', 'x', 'c', 'v', 'b', 'n'],
 ]
-export const SYMBOLS = ['.', '-', '_', ':', '/', '@']
+export const SYMBOLS = ['.', '-', '_', ':', '/', '@', '^', '=']
 
 const LETTERS = /^[a-zA-Z]$/
 const ALLOWED: Record<KeyboardKind, RegExp> = {

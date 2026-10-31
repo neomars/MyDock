@@ -10,7 +10,7 @@ import path from 'node:path'
 // Les tests se lancent depuis dock/web (npm run e2e).
 const ROOT = path.resolve(process.cwd(), '../..')
 const PYTHON = process.env.MYDOCK_PYTHON ?? path.join(ROOT, '.venv/bin/python')
-export const SHOTS_DIR = path.join(ROOT, 'docs', 'etapes', 'a')
+export const SHOTS_ROOT = path.join(ROOT, 'docs', 'etapes')
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -107,11 +107,17 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
 
 export { expect }
 
-/** Capture 1024x600 rangée avec le rapport d'étape (seulement avec MYDOCK_SHOTS=1). */
-export async function shot(page: Page, name: string): Promise<void> {
-  if (!process.env.MYDOCK_SHOTS) return
-  fs.mkdirSync(SHOTS_DIR, { recursive: true })
-  await page.screenshot({ path: path.join(SHOTS_DIR, `${name}.png`) })
+/**
+ * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
+ * MYDOCK_SHOTS=f ne refait que les captures de l'étape f, MYDOCK_SHOTS=a, b, c, d ou e celles des étapes
+ * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
+ */
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' = 'a'): Promise<void> {
+  const wanted = process.env.MYDOCK_SHOTS
+  if (!wanted || (wanted !== '1' && wanted !== stage)) return
+  const dir = path.join(SHOTS_ROOT, stage)
+  fs.mkdirSync(dir, { recursive: true })
+  await page.screenshot({ path: path.join(dir, `${name}.png`) })
 }
 
 /** Tape un texte sur le clavier tactile, touche par touche (vrais appuis tactiles). */

@@ -18,8 +18,8 @@ describe('disposition', () => {
     expect(DIGITS).toHaveLength(10)
   })
 
-  it('offre les symboles nécessaires aux adresses et aux jetons', () => {
-    for (const needed of ['.', '-', '_', ':', '/']) expect(SYMBOLS).toContain(needed)
+  it('offre les symboles nécessaires aux adresses, aux jetons et aux symboles boursiers', () => {
+    for (const needed of ['.', '-', '_', ':', '/', '^', '=']) expect(SYMBOLS).toContain(needed)
   })
 })
 

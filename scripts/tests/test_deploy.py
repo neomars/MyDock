@@ -8,13 +8,16 @@ ufw, NetworkManager, labwc, Chromium et l'écran lui-même.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -82,7 +85,7 @@ def offline(wheels: Path) -> dict[str, str]:
 
 @pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: str(p.relative_to(ROOT)))
 def test_scripts_are_valid_bash_and_executable(script):
-    shell = "sh" if script.name == "kiosk-browser.sh" else "bash"
+    shell = "sh" if script.name in ("kiosk-browser.sh", "screen-sleep.sh") else "bash"
     assert subprocess.run([shell, "-n", str(script)], check=False).returncode == 0
     if script.name != "lib.sh":
         assert os.access(script, os.X_OK), f"{script} n'est pas exécutable"
@@ -148,7 +151,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 0.1.0")
+    assert version.stdout.startswith("mydock-agent 0.6.0")
 
 
 @pytest.mark.slow
@@ -193,6 +196,30 @@ def test_pc_rotating_the_token_gives_a_new_one(pc_install):
     assert result.returncode == 0, result.stdout + result.stderr
     assert after != before
     assert after in result.stdout
+
+
+@pytest.mark.slow
+def test_pc_final_message_gives_an_ip_address_not_a_local_name(pc_install):
+    out = pc_install["first"].stdout
+    assert "sudo ./deploy/pi/install-dock.sh --pc " in out
+    assert "Préfère l'adresse IP" in out
+    assert "bail DHCP" in out
+    assert "-w '%{http_code}\\n'" in out  # le test curl à lancer depuis le Pi
+
+
+def test_pc_script_steps_aside_when_the_deb_package_is_installed(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    stub = fake_bin / "dpkg-query"
+    stub.write_text("#!/bin/sh\necho 'install ok installed'\n")
+    stub.chmod(0o755)
+    env = base_env(HOME=str(tmp_path), MYDOCK_ALLOW_ROOT="1")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    result = sh([PC / "install-agent.sh", "--pi", "192.0.2.50", "--no-apt"], env=env)
+    assert result.returncode != 0
+    assert "paquet mydock-agent est installé" in result.stderr
+    assert "mydock-agent setup" in result.stderr
+    assert not (tmp_path / ".config" / "mydock").exists()  # rien n'a été touché
 
 
 def test_pc_dry_run_touches_nothing(tmp_path):
@@ -264,9 +291,10 @@ def test_pi_install_writes_everything_where_the_services_expect_it(pi_install):
     assert first.returncode == 0, first.stdout + first.stderr
     assert (prefix / "opt/mydock/src/dock/web/dist/index.html").is_file()
     assert (prefix / "opt/mydock/src/deploy/pi/kiosk-browser.sh").stat().st_mode & stat.S_IXUSR
+    assert (prefix / "opt/mydock/src/deploy/pi/screen-sleep.sh").stat().st_mode & stat.S_IXUSR
     assert (prefix / "opt/mydock/venv/bin/mydock-dock").exists()
     version = sh([prefix / "opt/mydock/venv/bin/mydock-dock", "--version"], env=pi_install["env"])
-    assert version.stdout.startswith("mydock-dock 0.1.0")
+    assert version.stdout.startswith("mydock-dock 0.6.0")
     # les tests et les sources inutiles n'encombrent pas le Pi
     assert not list((prefix / "opt/mydock/src").rglob("tests"))
 
@@ -323,6 +351,7 @@ def test_pi_kiosk_configuration_is_readable_by_the_browser_user(pi_install):
     prefix = pi_install["prefix"]
     autostart = (prefix / "etc/mydock-kiosk/labwc/autostart").read_text()
     assert "/opt/mydock/src/deploy/pi/kiosk-browser.sh &" in autostart
+    assert "/opt/mydock/src/deploy/pi/screen-sleep.sh &" in autostart  # la veille de l'écran
     assert (
         'MYDOCK_OUTPUT_MODE="1024x600@60"' in (prefix / "etc/mydock-kiosk/display.conf").read_text()
     )
@@ -575,3 +604,213 @@ def test_put_file_only_writes_when_content_or_mode_changes(tmp_path):
     assert verbs == ["+", "=", "+", "+"]  # écrit, inchangé, contenu changé, droits changés
     assert mode(target) == 0o600
     assert target.read_text() == "b\n"
+
+
+# --- la veille de l'écran, avec de faux swayidle, wlopm, wlr-randr et curl --------------------------------
+
+
+class ScreenSleep:
+    """Le script de veille de l'écran lancé pour de bon, avec de faux programmes qui notent tout."""
+
+    def __init__(self, tmp_path: Path, *, tools: tuple[str, ...] = ("swayidle", "wlopm", "curl")):
+        self.bin = tmp_path / "bin"
+        self.bin.mkdir()
+        self.calls = tmp_path / "calls.log"
+        # Ce que « répond » le dock ; absent : le dock est en panne.
+        self.seconds = tmp_path / "seconds"
+        self.pids = tmp_path / "pids"  # un par swayidle lancé
+        self.script = PI / "screen-sleep.sh"
+        if "curl" in tools:
+            make_fake_bin(
+                self.bin,
+                "curl",
+                f'[ -f "{self.seconds}" ] || exit 22\nprintf \'{{"sleep_after":%s}}\' "$(cat "{self.seconds}")"\n',
+            )
+        if "swayidle" in tools:
+            make_fake_bin(
+                self.bin,
+                "swayidle",
+                f'echo "swayidle $*" >> "{self.calls}"\necho $$ >> "{self.pids}"\nexec sleep 300\n',
+            )
+        if "wlopm" in tools:
+            make_fake_bin(self.bin, "wlopm", f'echo "wlopm $*" >> "{self.calls}"\n')
+        if "wlr-randr" in tools:
+            make_fake_bin(
+                self.bin,
+                "wlr-randr",
+                f'if [ "$#" -eq 0 ]; then echo "HDMI-A-1 \\"écran\\""; echo "  1024x600"; echo "DSI-1"; '
+                f'else echo "wlr-randr $*" >> "{self.calls}"; fi\n',
+            )
+        self.env = {
+            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "MYDOCK_SCREEN_POLL": "0.2",
+            "MYDOCK_PORT": "8081",
+        }
+        self.process: subprocess.Popen[str] | None = None
+
+    def set_seconds(self, value: int | None) -> None:
+        if value is None:
+            self.seconds.unlink(missing_ok=True)
+        else:
+            self.seconds.write_text(str(value))
+
+    def start(self) -> None:
+        self.process = subprocess.Popen(
+            ["sh", str(self.script)],
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def lines(self) -> list[str]:
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def watcher_pids(self) -> list[int]:
+        return [int(p) for p in self.pids.read_text().split()] if self.pids.exists() else []
+
+    def wait_for(self, predicate, timeout: float = 8.0) -> None:
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if predicate():
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"condition jamais atteinte ; appels : {self.lines()}")
+
+    def stop(self) -> tuple[int, str]:
+        assert self.process is not None
+        self.process.terminate()
+        out, err = self.process.communicate(timeout=10)
+        return self.process.returncode, out + err
+
+
+@pytest.fixture
+def screen(tmp_path):
+    made: list[ScreenSleep] = []
+
+    def build(**kwargs) -> ScreenSleep:
+        fake = ScreenSleep(tmp_path, **kwargs)
+        made.append(fake)
+        return fake
+
+    yield build
+    for fake in made:  # jamais de swayidle orphelin après un test
+        if fake.process is not None and fake.process.poll() is None:
+            fake.process.kill()
+            fake.process.communicate()
+        for pid in fake.watcher_pids():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+
+def swayidle_lines(fake: ScreenSleep) -> list[str]:
+    return [line for line in fake.lines() if line.startswith("swayidle ")]
+
+
+def test_the_screen_sleeps_after_the_delay_chosen_in_the_settings(screen):
+    fake = screen()
+    fake.set_seconds(300)
+    fake.start()
+    fake.wait_for(lambda: swayidle_lines(fake))
+    [line] = swayidle_lines(fake)
+    script = fake.script.resolve()
+    assert line == f"swayidle -w timeout 300 '{script}' --off resume '{script}' --on"
+    code, _ = fake.stop()
+    assert code == 0
+
+
+def test_a_delay_of_zero_never_starts_the_watcher(screen):
+    fake = screen()
+    fake.set_seconds(0)
+    fake.start()
+    fake.wait_for(lambda: fake.process.poll() is None and fake.process is not None)
+    time.sleep(0.8)  # plusieurs tours d'interrogation
+    assert swayidle_lines(fake) == []
+    fake.stop()
+
+
+def test_changing_the_delay_restarts_the_watcher_and_never_leaves_the_screen_off(screen):
+    fake = screen()
+    fake.set_seconds(300)
+    fake.start()
+    fake.wait_for(lambda: len(swayidle_lines(fake)) == 1)
+    fake.set_seconds(600)
+    fake.wait_for(lambda: len(swayidle_lines(fake)) == 2)
+    assert "timeout 600" in swayidle_lines(fake)[1]
+    # entre les deux, l'ancien est arrêté et l'écran explicitement rallumé
+    calls = fake.lines()
+    first, second = [i for i, line in enumerate(calls) if line.startswith("swayidle ")]
+    assert "wlopm --on *" in calls[first + 1 : second]
+    fake.set_seconds(0)  # « jamais » : le dernier est arrêté, écran rallumé
+    fake.wait_for(lambda: fake.lines()[-1] == "wlopm --on *")
+    assert len(swayidle_lines(fake)) == 2
+    fake.stop()
+
+
+def test_a_dock_that_does_not_answer_changes_nothing_then_works_once_it_is_back(screen):
+    fake = screen()
+    fake.start()  # le dock ne répond pas encore (curl échoue)
+    time.sleep(0.6)
+    assert fake.lines() == []
+    fake.set_seconds(60)
+    fake.wait_for(lambda: swayidle_lines(fake))
+    fake.set_seconds(None)  # le dock retombe : on garde ce qui est en place, sans relancer
+    time.sleep(0.6)
+    assert len(swayidle_lines(fake)) == 1
+    fake.stop()
+
+
+def test_a_watcher_that_dies_by_itself_is_started_again(screen):
+    fake = screen()
+    fake.set_seconds(300)
+    fake.start()
+    fake.wait_for(lambda: len(swayidle_lines(fake)) == 1)
+    os.kill(fake.watcher_pids()[0], signal.SIGKILL)  # swayidle « plante »
+    fake.wait_for(lambda: len(swayidle_lines(fake)) == 2)
+    assert len(set(fake.watcher_pids())) == 2
+    fake.stop()
+
+
+def test_stopping_the_script_stops_the_watcher_and_turns_the_screen_back_on(screen):
+    fake = screen()
+    fake.set_seconds(300)
+    fake.start()
+    fake.wait_for(lambda: swayidle_lines(fake))
+    code, _ = fake.stop()
+    assert code == 0
+    assert fake.lines()[-1] == "wlopm --on *"
+
+
+def test_off_and_on_use_wlopm_when_it_exists(screen):
+    fake = screen()
+    for flag in ("--off", "--on"):
+        assert sh(["sh", fake.script, flag], env=fake.env).returncode == 0
+    assert fake.lines() == ["wlopm --off *", "wlopm --on *"]
+
+
+def test_without_wlopm_every_output_is_switched_with_wlr_randr(screen):
+    fake = screen(tools=("swayidle", "curl", "wlr-randr"))
+    assert sh(["sh", fake.script, "--off"], env=fake.env).returncode == 0
+    assert sh(["sh", fake.script, "--on"], env=fake.env).returncode == 0
+    assert fake.lines() == [
+        "wlr-randr --output HDMI-A-1 --off",
+        "wlr-randr --output DSI-1 --off",
+        "wlr-randr --output HDMI-A-1 --on",
+        "wlr-randr --output DSI-1 --on",
+    ]
+
+
+def test_without_swayidle_the_script_says_so_and_stops_quietly(screen):
+    fake = screen(tools=("curl", "wlopm"))
+    result = sh(["sh", fake.script], env=fake.env, timeout=10)
+    assert result.returncode == 0
+    assert "swayidle est absent" in result.stderr
+    assert "apt install swayidle" in result.stderr
+
+
+def test_without_any_way_to_power_the_screen_the_script_says_so(screen):
+    fake = screen(tools=("curl", "swayidle"))
+    result = sh(["sh", fake.script], env=fake.env, timeout=10)
+    assert result.returncode == 0
+    assert "ni wlopm ni wlr-randr" in result.stderr

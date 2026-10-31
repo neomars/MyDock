@@ -1,0 +1,104 @@
+[
+ {
+  "index": 66,
+  "driver": "PipeWire",
+  "owner_module": null,
+  "client": "65",
+  "source": 82,
+  "sample_specification": "s16le 2ch 48000Hz",
+  "channel_map": "front-left,front-right",
+  "format": "pcm, format.sample_format = \"\\\"s16le\\\"\"  format.rate = \"48000\"  format.channels = \"2\"  format.channel_map = \"\\\"front-left,front-right\\\"\"",
+  "corked": false,
+  "mute": false,
+  "volume": {
+   "front-left": {
+    "value": 65536,
+    "value_percent": "100%",
+    "db": "0.00 dB"
+   },
+   "front-right": {
+    "value": 65536,
+    "value_percent": "100%",
+    "db": "0.00 dB"
+   }
+  },
+  "balance": 0.0,
+  "buffer_latency_usec": 0.0,
+  "source_latency_usec": 0.0,
+  "resample_method": "PipeWire",
+  "properties": {
+   "application.name": "Discord",
+   "node.name": "pw-cat",
+   "node.rate": "1/48000",
+   "media.type": "Audio",
+   "media.category": "Capture",
+   "media.role": "music",
+   "media.filename": "-",
+   "media.name": "-",
+   "stream.is-live": "true",
+   "node.want-driver": "true",
+   "node.autoconnect": "true",
+   "media.class": "Stream/Input/Audio",
+   "adapt.follower.spa-node": "",
+   "object.register": "false",
+   "factory.id": "8",
+   "clock.quantum-limit": "8192",
+   "factory.mode": "merge",
+   "audio.adapt.follower": "",
+   "library.name": "audioconvert/libspa-audioconvert",
+   "client.id": "52",
+   "object.id": "53",
+   "object.serial": "66",
+   "module-stream-restore.id": "source-output-by-media-role:music"
+  }
+ },
+ {
+  "index": 132,
+  "driver": "PipeWire",
+  "owner_module": null,
+  "client": "131",
+  "source": 82,
+  "sample_specification": "s16le 1ch 48000Hz",
+  "channel_map": "mono",
+  "format": "pcm, format.sample_format = \"\\\"s16le\\\"\"  format.rate = \"48000\"  format.channels = \"1\"  format.channel_map = \"\\\"mono\\\"\"",
+  "corked": false,
+  "mute": false,
+  "volume": {
+   "mono": {
+    "value": 65536,
+    "value_percent": "100%",
+    "db": "0.00 dB"
+   }
+  },
+  "balance": 0.0,
+  "buffer_latency_usec": 0.0,
+  "source_latency_usec": 0.0,
+  "resample_method": "PipeWire",
+  "properties": {
+   "application.name": "pavucontrol",
+   "node.name": "pw-cat",
+   "application.id": "org.PulseAudio.pavucontrol",
+   "media.name": "Peak detect",
+   "node.rate": "1/48000",
+   "media.type": "Audio",
+   "media.category": "Capture",
+   "media.role": "music",
+   "media.filename": "-",
+   "stream.is-live": "true",
+   "node.want-driver": "true",
+   "node.autoconnect": "true",
+   "media.class": "Stream/Input/Audio",
+   "adapt.follower.spa-node": "",
+   "object.register": "false",
+   "factory.id": "8",
+   "clock.quantum-limit": "8192",
+   "factory.mode": "merge",
+   "audio.adapt.follower": "",
+   "library.name": "audioconvert/libspa-audioconvert",
+   "client.id": "75",
+   "object.id": "76",
+   "object.serial": "132",
+   "module-stream-restore.id": "source-output-by-media-role:music"
+  }
+ }
+]

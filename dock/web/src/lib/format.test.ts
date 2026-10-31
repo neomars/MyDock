@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatBytes,
   formatCountdown,
   formatDate,
   formatDuration,
+  formatFreq,
   formatMs,
+  formatPercent,
+  formatRate,
+  formatTemp,
+  formatTrackTime,
+  formatUsage,
+  formatWatts,
   ifaceKindLabel,
   latencyStats,
   sessionLabel,
@@ -81,5 +89,74 @@ describe('petits libellés', () => {
     expect(sessionLabel('wayland')).toBe('Wayland')
     expect(sessionLabel('x11')).toBe('X11')
     expect(sessionLabel('n_importe_quoi')).toBe('Session inconnue')
+  })
+})
+
+const nb = (text: string) => text.replace(/ /g, '\u00a0')
+
+describe('formatBytes et formatRate', () => {
+  it.each([
+    [0, '0 o'],
+    [512, '512 o'],
+    [1_024, '1 Ko'],
+    [12 * 1_024, '12 Ko'],
+    [1_536, '1,5 Ko'],
+    [612 * 1_048_576, '612 Mo'],
+    [1.4 * 1_073_741_824, '1,4 Go'],
+    [31.2 * 1_073_741_824, '31,2 Go'],
+    [2 * 1_099_511_627_776, '2 To'],
+    [-5, '0 o'],
+  ])('%d octets -> %s', (bytes, expected) => {
+    expect(formatBytes(bytes)).toBe(nb(expected))
+  })
+
+  it('formate les débits', () => {
+    expect(formatRate(0)).toBe(nb('0 o/s'))
+    expect(formatRate(1.8 * 1_048_576)).toBe(nb('1,8 Mo/s'))
+    expect(formatRate(120 * 1_024)).toBe(nb('120 Ko/s'))
+  })
+})
+
+describe('autres mesures', () => {
+  it('pourcentage, température, puissance', () => {
+    expect(formatPercent(12.4)).toBe(nb('12 %'))
+    expect(formatPercent(99.6)).toBe(nb('100 %'))
+    expect(formatTemp(54.4)).toBe(nb('54 °C'))
+    expect(formatWatts(34.5)).toBe(nb('34,5 W'))
+  })
+
+  it.each([
+    [900, '900 MHz'],
+    [999.6, '1000 MHz'],
+    [1_000, '1,0 GHz'],
+    [3_200, '3,2 GHz'],
+    [4_650, '4,7 GHz'],
+  ])('%d MHz -> %s', (mhz, expected) => {
+    expect(formatFreq(mhz)).toBe(nb(expected))
+  })
+
+  it.each([
+    [0, '0:00'],
+    [999, '0:00'],
+    [5_000, '0:05'],
+    [65_000, '1:05'],
+    [222_000, '3:42'],
+    [3_600_000, '1:00:00'],
+    [3_735_000, '1:02:15'],
+    [-1, '0:00'],
+  ])('%d ms -> %s', (ms, expected) => {
+    expect(formatTrackTime(ms)).toBe(expected)
+  })
+})
+
+describe('formatUsage', () => {
+  it.each([
+    [11.4 * 1_073_741_824, 31.2 * 1_073_741_824, '11,4 / 31,2 Go'],
+    [412 * 1_073_741_824, 1000 * 1_073_741_824, '412 / 1000 Go'],
+    [1.2 * 1_099_511_627_776, 2 * 1_099_511_627_776, '1,2 / 2 To'],
+    [300 * 1_048_576, 900 * 1_048_576, '300 / 900 Mo'],
+    [0, 8 * 1_073_741_824, '0 / 8 Go'],
+  ])('%d sur %d -> %s', (used, total, expected) => {
+    expect(formatUsage(used, total)).toBe(nb(expected))
   })
 })

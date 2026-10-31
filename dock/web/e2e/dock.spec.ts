@@ -30,15 +30,14 @@ test('démarre connecté sur la page Système, en 1024×600 sans défilement de 
   expect(dock.viewportSize()).toEqual({ width: 1024, height: 600 })
   await expect(dock.getByTestId('pc-label')).toHaveText('pc-demo')
   await expect(dock.getByTestId('demo-chip')).toBeVisible()
-  await expect(dock.getByTestId('system-host')).toContainText('Ubuntu 26.04 LTS (démo)')
-  await expect(dock.getByTestId('system-network')).toContainText('02:00:5e:10:00:01')
+  await expect(dock.getByTestId('system-host')).toContainText('pc-demo')
+  await expect(dock.getByTestId('system-host')).toHaveAttribute('title', /Ubuntu 26\.04 LTS \(démo\)/)
   await expect(dock.getByTestId('uptime')).toContainText('3 h')
   const size = await dock.evaluate(() => ({
     w: document.documentElement.scrollWidth,
     h: document.documentElement.scrollHeight,
   }))
   expect(size).toEqual({ w: 1024, h: 600 })
-  await shot(dock, '01-systeme')
 })
 
 test('les neuf onglets s’ouvrent au toucher', async ({ dock }) => {
@@ -66,17 +65,10 @@ test('toutes les cibles tactiles font au moins 48 px, clavier compris', async ({
 
 test('retrouve la dernière page affichée après un rechargement', async ({ dock }) => {
   await dock.getByTestId('tab-markets').tap()
-  await expect(dock.getByTestId('soon')).toBeVisible()
+  await expect(dock.getByTestId('markets-status')).toBeVisible()
   await dock.reload()
   await expect(dock.getByTestId('page-markets')).toBeVisible()
   await expect(dock.getByTestId('tab-markets')).toHaveAttribute('aria-selected', 'true')
-})
-
-test('une page non livrée dit ce qu’elle offrira et à quelle étape', async ({ dock }) => {
-  await dock.getByTestId('tab-music').tap()
-  await expect(dock.getByTestId('soon')).toContainText('progression')
-  await expect(dock.getByTestId('soon')).toContainText("étape b")
-  await shot(dock, '10-page-a-venir')
 })
 
 // --- panne et reprise --------------------------------------------------------------------------
@@ -85,6 +77,8 @@ test('PC éteint : écran hors ligne, réveil Wake-on-LAN, reconnexion automatiq
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toHaveText('PC hors ligne', { timeout: 20_000 })
   await expect(dock.getByTestId('offline-detail')).toContainText('éteint, en veille')
+  // Le message nomme l'adresse essayée : c'est ce qui permet de comprendre une panne à distance.
+  await expect(dock.getByTestId('offline-detail')).toContainText(/127\.0\.0\.1:\d+/)
   await expect(dock.getByTestId('wake')).toBeVisible()
   await expect(dock.getByTestId('clock')).toHaveText(/^\d{2}:\d{2}$/)
   await shot(dock, '06-hors-ligne')
@@ -110,6 +104,7 @@ test('agent arrêté seul : message dédié, sans proposer de réveil', async ({
   stack.agentDown()
   await expect(dock.getByTestId('offline-title')).toHaveText('PC allumé, agent arrêté', { timeout: 20_000 })
   await expect(dock.getByTestId('offline-detail')).toContainText("n'écoute pas")
+  await expect(dock.getByTestId('offline-detail')).toContainText(/127\.0\.0\.1:\d+/)
   await expect(dock.getByTestId('wake')).toHaveCount(0)
   await shot(dock, '08-agent-arrete')
   stack.pcOn()
@@ -123,9 +118,13 @@ test('hors ligne, Bourse et Réglages restent utilisables ; les pages du PC mont
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toBeVisible({ timeout: 20_000 })
   await dock.getByTestId('tab-markets').tap()
-  await expect(dock.getByTestId('soon')).toBeVisible()
+  await expect(dock.getByTestId('markets-list')).toBeVisible()
+  await expect(dock.getByTestId('price-crypto:BTC')).not.toHaveText('…', { timeout: 10_000 }) // les cotations ne viennent pas du PC
+  await expect(dock.getByTestId('offline')).toHaveCount(0)
   await dock.getByTestId('tab-settings').tap()
   await expect(dock.getByTestId('settings-pc')).toBeVisible()
+  await expect(dock.getByTestId('pc-resolved')).toContainText('Dernière adresse essayée')
+  await expect(dock.getByTestId('pc-resolved')).toContainText(/127\.0\.0\.1:\d+/)
   await dock.getByTestId('tab-power').tap()
   await expect(dock.getByTestId('wol-card')).toBeVisible()
   await dock.getByTestId('tab-music').tap()
@@ -145,6 +144,13 @@ test('l’écran hors ligne ne clignote pas pendant les nouvelles tentatives', a
 })
 
 // --- Réglages ---------------------------------------------------------------------------------
+
+test('Réglages : montre l’adresse du PC jointe et celle du Pi', async ({ dock }) => {
+  await dock.getByTestId('tab-settings').tap()
+  await expect(dock.getByTestId('pc-resolved')).toContainText('Connecté à')
+  await expect(dock.getByTestId('pc-resolved')).toContainText(/127\.0\.0\.1:\d+/)
+  await expect(dock.getByTestId('pi-ips')).toHaveText(/^(\d{1,3}\.){3}\d{1,3}( · (\d{1,3}\.){3}\d{1,3})*$|^—$/)
+})
 
 test('Réglages : saisir l’adresse du PC au clavier tactile', async ({ dock }) => {
   await dock.getByTestId('tab-settings').tap()

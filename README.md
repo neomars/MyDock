@@ -2,11 +2,23 @@
 
 Un dock tactile pour piloter un PC Ubuntu : un Raspberry Pi 4 avec un écran 7" (1024×600) posé à côté du PC affiche son état et permet de le commander. Le dock reste utile PC éteint : horloge, bourse, et bouton **Allumer le PC** (Wake-on-LAN).
 
-| PC allumé | PC éteint |
-|---|---|
-| ![Page Système](docs/etapes/a/01-systeme.png) | ![PC hors ligne](docs/etapes/a/06-hors-ligne.png) |
+| Système | Musique | Son |
+|---|---|---|
+| ![Page Système](docs/etapes/b/01-systeme.png) | ![Page Musique](docs/etapes/c/04-musique-volume.png) | ![Page Son](docs/etapes/c/01-son.png) |
 
-*Captures prises en mode démo (fausses données), en 1024×600 tactile.*
+| Applis | Steam | Office |
+|---|---|---|
+| ![Page Applis](docs/etapes/d/03-applis.png) | ![Page Steam](docs/etapes/d/05-steam.png) | ![Page Office](docs/etapes/d/07-office.png) |
+
+| Bourse | Détail d'une valeur | Choix des valeurs |
+|---|---|---|
+| ![Page Bourse](docs/etapes/e/02-bourse-liste.png) | ![Détail d'une valeur](docs/etapes/e/03-detail.png) | ![Choix des valeurs](docs/etapes/e/05-editeur.png) |
+
+| Alimentation | Pages et ordre | Veille de l'écran |
+|---|---|---|
+| ![Page Alimentation](docs/etapes/f/01-alimentation.png) | ![Pages et ordre](docs/etapes/f/08-pages-et-ordre.png) | ![Réglage de l'écran](docs/etapes/f/11-reglage-ecran.png) |
+
+*Captures prises en mode démo (fausses données), en 1024×600 tactile. PC éteint : [écran « PC hors ligne »](docs/etapes/a/06-hors-ligne.png).*
 
 ## Où en est le projet
 
@@ -15,13 +27,13 @@ La livraison se fait par étapes, chacune utilisable.
 | Étape | Contenu | État |
 |---|---|---|
 | **a** | Squelette : agent sécurisé, serveur du dock, kiosque, écran « PC hors ligne », Wake-on-LAN, Réglages | **livrée** ([rapport](docs/etapes/a/RAPPORT.md)) |
-| b | Système (CPU, mémoire, GPU, processus) et Musique (MPRIS) | à venir |
-| c | Son (sorties, volume par application, micro) | à venir |
-| d | Lanceur d'applications, Steam, LibreOffice | à venir |
-| e | Bourse (crypto et actions) | à venir |
-| f | Alimentation (verrouiller, veille, redémarrer, éteindre), Réglages complets, finitions | à venir |
+| **b** | Système (CPU, mémoire, GPU sans réveiller la carte NVIDIA, réseau, disques, historique de 60 s, processus avec arrêt confirmé) et Musique (MPRIS, pochette, progression glissable, mini-lecteur) | **livrée** ([rapport](docs/etapes/b/RAPPORT.md)) |
+| **c** | Son (sortie par défaut, volume et muet par sortie et par application, micro et micro utilisé, volume sur la page Musique) | **livrée** ([rapport](docs/etapes/c/RAPPORT.md)) |
+| **d** | Lanceur d'applications (choisies dans Réglages, dans l'ordre voulu), Steam (jaquettes, jeu en cours), LibreOffice (nouveau document, documents récents) | **livrée** ([rapport](docs/etapes/d/RAPPORT.md)) |
+| **e** | Bourse : cryptos et actions lues par le Pi (Yahoo Finance et Binance, sans clé), liste au choix, graphique sur 1 j à 1 an, utilisable PC éteint | **livrée** ([rapport](docs/etapes/e/RAPPORT.md)) |
+| **f** | Alimentation (verrouiller, veille, redémarrer, éteindre, chacun avec ses garde-fous), Réglages complets (pages visibles et ordre, veille de l'écran du dock), finitions | **livrée** ([rapport](docs/etapes/f/RAPPORT.md)) |
 
-Les pages des étapes à venir existent déjà dans l'interface et disent ce qu'elles offriront.
+Le cahier des charges est entièrement livré. Ce qui reste est de **vérifier sur le vrai matériel** ce qu'un conteneur de développement ne peut pas essayer : la liste est à la fin du [rapport de l'étape f](docs/etapes/f/RAPPORT.md).
 
 ## Comment ça marche
 
@@ -34,13 +46,13 @@ Chromium (kiosque)  ──ws──▶  serveur dock (Pi, 127.0.0.1)  ──ws + 
 - **Le serveur du dock** tourne sur le Pi. Il sert l'interface, garde la configuration, envoie le Wake-on-LAN et se reconnecte tout seul à l'agent (1 à 10 s). Le navigateur ne parle qu'à lui, en local : il ne voit jamais le jeton.
 - **L'écran** est un Chromium en mode kiosque dans un compositeur Wayland minimal (labwc).
 
-Le PC est trouvé par son nom mDNS (`mon-pc.local`) ou par son adresse IPv4.
+Le PC est joint par son **adresse IPv4** (recommandé) ou par son nom mDNS (`nom-du-pc.local`). Depuis un Pi, la résolution des noms `.local` échoue souvent : l'adresse IP, réservée dans la box, est plus fiable.
 
 ## Installation
 
 ### Prérequis
 
-- PC : Ubuntu 24.04 ou plus récent (GNOME, session Wayland ou X11 ; conçu pour la 26.04), Python 3.11 ou plus récent, une session graphique ouverte.
+- PC : Ubuntu 26.04 (GNOME, session Wayland ou X11) ou Debian 13 ; une session graphique ouverte. Le paquet dépend des paquets `python3-*` de la distribution (fastapi 0.115+, uvicorn, websockets 13+, psutil, pydantic 2.7+) : tous présents dans Ubuntu 26.04 (dépôt `universe`, activé par défaut sur Ubuntu Desktop).
 - Pi : Raspberry Pi 4 sous Raspberry Pi OS 64 bits (Bookworm ou Trixie), écran tactile USB + HDMI.
 - Le PC et le Pi sur le même réseau local.
 
@@ -51,24 +63,39 @@ git clone https://github.com/neomars/MyDock.git
 cd MyDock
 ```
 
-### 1. Sur le PC : l'agent
+### 1. Sur le PC : le paquet `.deb` de l'agent
 
-Dans un terminal de ta session graphique (pas en SSH, pas avec `sudo`), en donnant l'adresse IP du Pi :
+```bash
+python3 packaging/build_deb.py                          # → build/mydock-agent_<version>_all.deb  (2 s, seul dpkg-deb est requis)
+sudo apt install ./build/mydock-agent_*_all.deb
+mydock-agent setup --pi 192.168.1.50 --open-firewall    # 192.168.1.50 = adresse IP du Pi
+```
+
+`mydock-agent setup`, à lancer dans un terminal de **ta session graphique** (pas en SSH, **pas avec `sudo`**) :
+
+- crée `~/.config/mydock/agent.toml` (droits 600) avec un jeton de 256 bits, et n'autorise que l'adresse du Pi ;
+- démarre le service `mydock-agent` (service systemd *utilisateur*, fourni par le paquet et activé pour tous les utilisateurs mais sans effet tant que `setup` n'a pas été lancé) ;
+- si `ufw` est actif, autorise le Pi sur le port de l'agent (`--open-firewall` : `sudo` demande ton mot de passe) ; sans le drapeau, il affiche la commande à copier ;
+- affiche l'**adresse IP du PC**, la commande à lancer sur le Pi, le test `curl` pour vérifier la liaison, et le **jeton, une seule fois** (le revoir : `mydock-agent show-token`).
+
+La commande est idempotente : la relancer ne change pas le jeton (sauf `--rotate-token`). Elle remplace aussi l'ancienne installation par script (voir plus bas) si elle existe.
+
+**Mise à jour** : `git pull`, `python3 packaging/build_deb.py`, `sudo apt install ./build/mydock-agent_*_all.deb` ; les sessions ouvertes redémarrent leur agent toutes seules. **Désinstallation** : `sudo apt remove mydock-agent` (la configuration reste dans `~/.config/mydock` ; `rm -r` pour l'effacer).
+
+<details>
+<summary>Installation sans paquet (autre distribution, développement)</summary>
 
 ```bash
 ./deploy/pc/install-agent.sh --pi 192.168.1.50
 ```
 
-Le script est idempotent : il crée un environnement Python dédié, génère la configuration et un jeton (fichier en droits 600), installe et démarre le service `mydock-agent`, et ouvre le port dans `ufw` si le pare-feu est actif. Le **jeton est affiché une seule fois** : le copier pour l'étape suivante. Pour le réafficher :
-
-```bash
-~/.local/share/mydock/venv/bin/mydock-agent show-token
-```
+Crée un environnement Python dédié dans `~/.local/share/mydock/venv` et un service utilisateur, même résultat que le paquet ; refuse de tourner si le paquet est installé. Désinstallation : `./deploy/pc/uninstall-agent.sh --purge`.
+</details>
 
 ### 2. Sur le Pi : le dock et le kiosque
 
 ```bash
-sudo ./deploy/pi/install-dock.sh --pc mon-pc.local
+sudo ./deploy/pi/install-dock.sh --pc 192.168.1.3     # l'adresse IP du PC, affichée par « mydock-agent setup »
 ```
 
 Le jeton est demandé (saisie masquée) ; on peut aussi le passer par `--token-file` ou la variable `MYDOCK_TOKEN`. Le script détecte le type d'image :
@@ -77,71 +104,132 @@ Le jeton est demandé (saisie masquée) ; on peut aussi le passer par `--token-f
 - **Raspberry Pi OS Lite** : labwc et Chromium sont lancés sur la console 1 par un service systemd.
 - `--kiosk none` : seulement le serveur.
 
-Redémarrer ensuite le Pi (`sudo reboot`) : l'écran affiche le dock en plein écran. Pour forcer le mode de l'écran : `--force-mode 1024x600@60`.
+Redémarrer ensuite le Pi (`sudo reboot`) : l'écran affiche le dock en plein écran. Pour forcer le mode de l'écran : `--force-mode 1024x600@60`. Le script installe aussi `swayidle` (extinction de l'écran après inactivité, voir plus bas) ; sans lui, tout marche sauf l'extinction réelle du rétroéclairage.
 
 ### 3. Vérifier
 
 ```bash
 # sur le PC
-~/.local/share/mydock/venv/bin/mydock-agent doctor
+mydock-agent doctor
 # sur le Pi
 sudo -u mydock /opt/mydock/venv/bin/mydock-dock doctor
 ```
 
-Les deux affichent un diagnostic lisible (configuration, session, réseau, liaison, Wake-on-LAN). Dans l'interface, **Réglages → Tester la connexion** donne le verdict en un toucher, et **Mesurer** donne la latence appui → PC.
+Les deux affichent un diagnostic lisible. Celui du PC vérifie la configuration, la session, le réseau, le **pare-feu** (avec les commandes exactes si `ufw` est actif), le service systemd, et prépare le test `curl` à lancer depuis le Pi. Celui du Pi teste **chaque adresse du PC** (port ouvert, refusé ou muet, et ping pour distinguer un pare-feu d'un PC éteint) puis le jeton. Dans l'interface, **Réglages → Tester la connexion** donne le verdict en un toucher, et **Mesurer** donne la latence appui → PC.
+
+### La bourse : aucune clé nécessaire
+
+Yahoo Finance (actions, indices, devises, et cryptos en secours) et Binance (cryptos) répondent sans compte ni clé, comme dans `dashboard_crypto`. Si un jour Yahoo cesse de répondre, une clé **Finnhub** gratuite (finnhub.io) ajoute un secours pour les actions américaines :
+
+```bash
+sudo nano /etc/mydock/dock.toml     # ajouter, en gardant les droits 600 :
+#   [markets]
+#   finnhub_key = "ta-clé"
+sudo systemctl restart mydock-dock
+```
 
 ### Mises à jour et désinstallation
 
 ```bash
 git pull
-./deploy/pc/install-agent.sh --pi 192.168.1.50     # PC
-sudo ./deploy/pi/install-dock.sh                   # Pi (la configuration existante est reprise)
+python3 packaging/build_deb.py && sudo apt install ./build/mydock-agent_*_all.deb    # PC
+sudo ./deploy/pi/install-dock.sh                                                      # Pi (la configuration existante est reprise)
 ```
 
-`deploy/pc/uninstall-agent.sh` et `deploy/pi/uninstall-dock.sh` retirent les services (`--purge` supprime aussi configuration et jeton).
+`deploy/pi/uninstall-dock.sh` retire le service du Pi (`--purge` supprime aussi configuration et jeton).
 
 ## Utilisation
 
-Neuf onglets en bas ; le nom du PC, son état et l'horloge en haut (le mini-lecteur s'y ajoutera à l'étape b). Textes d'au moins 20 px (légendes 16 px), cibles tactiles d'au moins 56 px, thème sombre.
+Neuf onglets en bas ; en haut, le nom du PC et son état, le **mini-lecteur** (pochette, titre, précédent, lecture/pause, suivant : présent sur toutes les pages) et l'horloge. Textes d'au moins 16 px (courant 20 px), cibles tactiles d'au moins 48 px, thème sombre.
 
-- **Système** : identité du PC, session (Wayland/X11), durée depuis le démarrage, interfaces réseau.
-- **Alimentation** : Wake-on-LAN. Les commandes verrouiller / veille / redémarrer / éteindre arrivent à l'étape f.
-- **Réglages** : adresse, port et jeton du PC (clavier tactile AZERTY intégré), test de connexion, adresse MAC du réveil, mesure de latence.
-- **PC éteint ou injoignable** : l'écran dit pourquoi — *PC hors ligne* (éteint, en veille, pare-feu), *PC allumé, agent arrêté* (session fermée ?), *Connexion refusée* (jeton ou adresse du Pi non autorisée) — compte à rebours de la prochaine tentative, bouton **Allumer le PC**. Bourse et Réglages restent utilisables.
+- **Musique** : pochette, titre, artiste · album, progression que l'on **fait glisser** (appliquée au relâchement), précédent / lecture-pause / suivant. Tous les lecteurs MPRIS (Spotify, VLC, Firefox, Brave…) ; avec plusieurs, des pastilles choisissent celui qu'on pilote (par défaut celui qui joue, Spotify d'abord).
+- **Son** : la **sortie** (volume au doigt, bouton muet, pastilles pour changer de sortie : haut-parleurs, casque, Bluetooth, HDMI…), le **micro** (volume, muet, choix du micro, et « Micro utilisé par Discord » quand une application l'écoute), et la liste des **applications** qui jouent du son, chacune avec son volume et son bouton muet (Spotify toujours en tête). Le volume de la sortie est aussi sur la page **Musique**. Le dock ne dépasse jamais 100 % ; bouger le curseur d'un son coupé le rétablit.
+- **Applis** : les applications que **tu** choisis (Réglages ou bouton « Modifier » de la page, avec recherche au clavier tactile, ajout, retrait et ordre), en grande grille d'icônes ; un toucher lance l'application. Elles viennent des fichiers `.desktop` du PC (système, utilisateur, Flatpak, Snap), avec le nom dans la langue de la session et l'icône du thème.
+- **Steam** : tes jeux installés (tous les disques de jeux, sans les outils comme Proton), avec leurs **jaquettes** (celles du cache de Steam, demandées au fil du défilement) ; les jeux joués récemment d'abord ; un toucher lance le jeu, et le jeu **en cours** passe en tête avec son badge.
+- **Office** : trois boutons « Nouveau texte / tableur / présentation » (LibreOffice Writer, Calc, Impress) et la liste de tes **documents récents** (celle de LibreOffice) : un toucher rouvre le document.
+- **Bourse** : tes cryptos et tes valeurs (actions, indices, ETF, devises) avec prix, variation **toujours écrite avec son signe** (+1,41 %, −0,32 %), mini-graphique et, pour une action, l'état du marché (ouvert, fermé) et **le dernier échange quand il est ancien** (cours différés ou valeur peu échangée). Un toucher ouvre le graphique de la valeur sur **1 jour, 5 jours, 1 mois ou 1 an**. **Modifier** : on **cherche par nom ou par symbole** au clavier tactile (`apple`, `bitcoin`, `MSTR`, `^FCHI`, `CW8.PA`…) ; le dock interroge Yahoo Finance (il connaît d'avance les cryptos courantes, même sans réseau) et un résultat s'ajoute d'un toucher après vérification de son prix ; on ordonne et on retire ; la devise des cryptos (euro ou dollar) se règle au même endroit, et **la fréquence des mises à jour** (15 s, 30 s, 1 min, 5 min) dans Réglages. C'est **le Pi** qui lit les cotations : la page marche PC éteint, et elle ne demande rien à Internet tant qu'elle n'est pas ouverte. Si un fournisseur ne répond plus, un bandeau dit lequel et pourquoi, et les derniers cours connus restent affichés **avec leur âge**.
+- **Système** : processeur (charge, fréquence, température), mémoire, **carte graphique**, réseau ↓↑, graphique des 60 dernières secondes (charge ou réseau), une barre par cœur, disques, batterie, et les 8 processus les plus gourmands avec un bouton ✕ qui demande **confirmation** avant d'arrêter un processus (« Forcer » s'il résiste). Sur un portable hybride, la carte NVIDIA endormie s'affiche « En veille » : le dock ne la réveille jamais.
+- **Alimentation** : à gauche le **réveil** (Wake-on-LAN), à droite quatre commandes pour **le PC** : **Verrouiller** (un toucher : l'écran de verrouillage de la session s'affiche), **Mettre en veille**, **Redémarrer** et **Éteindre** (chacune demande d'abord **confirmation à l'écran**, avec le nom du PC et ce qui va arriver). Un bouton grisé dit pourquoi : PC hors ligne, indisponible sur ce PC, « Bloqué par « Mises à jour logicielles » » (le programme qui s'oppose est nommé), mot de passe exigé par le système. Voir [Alimentation](#alimentation-verrouiller-veille-redémarrer-éteindre).
+- **Réglages** : adresse, port et jeton du PC (clavier tactile AZERTY intégré), test de connexion, adresse MAC du réveil, **écran du dock** (extinction après 1, 5, 10 ou 30 minutes sans toucher), **pages du dock** (lesquelles s'affichent dans la barre d'onglets, et dans quel ordre ; les Réglages restent toujours visibles), mesure de latence, lanceur d'applications, valeurs de la bourse, adresse(s) du Pi.
+- **Écran qui s'éteint** : après le délai choisi (par défaut : jamais), l'écran passe au noir ; **le premier toucher le rallume sans rien déclencher** (le doigt ne tape jamais sur ce qui se trouve dessous). Voir [Veille de l'écran](#veille-de-lécran-du-dock).
+- **PC éteint ou injoignable** : l'écran dit pourquoi, **en nommant l'adresse essayée** — *PC hors ligne* (éteint, en veille, pare-feu), *PC allumé, agent arrêté* (session fermée ?), *Connexion refusée* (jeton ou adresse du Pi non autorisée) — compte à rebours de la prochaine tentative, bouton **Allumer le PC**. Bourse et Réglages restent utilisables.
 - **`?debug=1`** ajouté à l'adresse (ou `chromium.flags`) affiche les images par seconde et l'état des liaisons.
 
 ## Sécurité
 
 - **Jeton** de 256 bits généré à l'installation, dans un fichier en droits 600 de chaque côté (le programme refuse de démarrer s'ils sont plus ouverts). Envoyé dans l'en-tête `Authorization`, jamais dans une URL, jamais journalisé, jamais envoyé au navigateur.
 - **Réseau** : l'agent refuse en silence toute adresse hors de `allowed_clients` (idéalement l'IP du Pi) avant même de regarder le jeton, et bloque une minute une adresse qui échoue 8 fois. Il n'écoute qu'en IPv4. Le serveur du dock n'écoute que sur `127.0.0.1` et refuse toute autre origine (contre les sites malveillants et le « DNS rebinding »).
-- **Actions** : jamais de commande venue du dock, seulement des actions nommées d'une liste blanche, aux paramètres validés (champs inconnus refusés). Les actions sensibles exigent une confirmation à l'écran **et** un jeton de confirmation à usage unique côté agent, lié à la connexion, à l'action et à ses paramètres (10 s).
+- **Actions** : jamais de commande venue du dock, seulement des actions nommées d'une liste blanche, aux paramètres validés (champs inconnus refusés). Les actions sensibles exigent une confirmation à l'écran **et** un jeton de confirmation à usage unique côté agent, lié à la connexion, à l'action et à ses paramètres (10 s). Lancer une application, un jeu ou un document (`apps.launch`, `steam.launch`, `office.*`) ne demande pas de confirmation non plus, mais le dock n'envoie jamais qu'un identifiant que l'agent a lui-même listé (fichier `.desktop` installé, jeu de la bibliothèque Steam, document de la liste de LibreOffice qui existe encore) : le chemin et la commande sont reconstruits par l'agent, sans shell, et le programme est lancé par `gio launch` dans son propre scope systemd. Régler le volume, couper le son ou changer de sortie (`audio.*`) ne demande pas de confirmation (réversible, sans danger) mais n'agit que sur un périphérique ou une application que l'écran montre, avec un volume entre 0 et 100 %. Les actions sensibles sont **arrêter un processus** (`system.kill`) et **mettre en veille, redémarrer, éteindre** (`power.suspend`, `power.reboot`, `power.poweroff`) : l'écran de confirmation dit ce qui va arriver. Pour `system.kill`, l'agent revérifie lui-même que c'est le même processus (heure de démarrage), qu'il appartient à ton utilisateur et que ce n'est ni lui-même ni un processus de session (gnome-shell, pipewire…). Les ordres d'alimentation, eux, ne contiennent aucun paramètre (rien à détourner) : l'agent les passe à **logind par D-Bus**, jamais par une commande ni un shell, **sans jamais demander de mot de passe** (`interactive = false`) et sans jamais forcer : si le système refuse, l'ordre échoue en le disant. Verrouiller (`power.lock`) ne demande pas de confirmation (on le défait avec son mot de passe). Jamais deux ordres d'alimentation en même temps, et chacun est écrit dans le journal de l'agent avec l'adresse qui l'a demandé. Les pochettes de musique ne sont lues que si le fichier est une image, ou en https vers une machine publique (jamais le réseau local).
 - **Séparation des privilèges sur le Pi** : le serveur (qui détient le jeton) et le navigateur tournent sous deux utilisateurs système différents ; un navigateur compromis ne lit pas le jeton.
-- **Secrets** : jamais dans le dépôt (`.gitignore`, et un test vérifie qu'aucun secret n'y est suivi). Les clés d'API de la bourse (étape e) iront dans le fichier de configuration du Pi, en droits 600.
+- **Secrets** : jamais dans le dépôt (`.gitignore`, et un test vérifie qu'aucun secret n'y est suivi). La clé d'API facultative de la bourse (Finnhub) va dans la section `[markets]` du fichier de configuration du Pi, en droits 600 : elle n'est jamais envoyée à l'écran, jamais mise dans une adresse (elle part dans un en-tête) et jamais écrite dans un journal ni dans le diagnostic.
+- **Accès à Internet** : seul le serveur du dock sort, et seulement vers Yahoo Finance, Binance (et Finnhub si une clé est configurée), à des adresses écrites dans le code. Les symboles saisis sont validés (lettres, chiffres, `. ^ = - _`), une redirection vers un autre site est refusée, une réponse de plus de 2 Mo est abandonnée, et chaque fournisseur a sa limite de débit et sa pause après un refus. Le navigateur du kiosque ne contacte jamais Internet (`connect-src 'self'`).
 
-Limite connue : le trafic sur le réseau local n'est pas chiffré (le jeton ne l'est pas dans la poignée de main). Le chiffrement TLS avec certificat épinglé est prévu en option à l'étape f.
+Limite connue : le trafic sur le réseau local n'est pas chiffré (le jeton ne l'est pas dans la poignée de main). Il reste protégé par le jeton et par la liste des adresses autorisées, mais une personne qui écouterait le réseau local le verrait passer. Le chiffrement TLS avec certificat épinglé n'est pas fait : à envisager si ton réseau n'est pas de confiance.
 
 ## Wake-on-LAN
 
 Allumer un PC **éteint** à distance n'est possible qu'en **Ethernet** : la carte réseau doit rester à l'écoute, et le BIOS doit l'autoriser. En Wi-Fi, au mieux depuis la veille et selon la machine.
 
 1. Brancher le PC en Ethernet (portable : le laisser sur secteur).
-2. Lancer sur le PC `./deploy/pc/enable-wol.sh` (réglage durable via NetworkManager).
+2. Lancer sur le PC `mydock-agent enable-wol` (réglage durable via NetworkManager ; `--dry-run` pour voir sans appliquer).
 3. Dans le BIOS : activer « Wake on LAN » / « Power on by PCI-E », désactiver « ErP / Deep Sleep ».
 4. Le dock mémorise tout seul l'adresse MAC du PC tant qu'il est allumé ; elle se voit et se corrige dans **Réglages**. Le dock préfère l'Ethernet au Wi-Fi et avertit si seule l'adresse du Wi-Fi est connue.
+
+## Alimentation (verrouiller, veille, redémarrer, éteindre)
+
+L'agent demande à **logind** (le service de session de systemd) ce qu'il autorise à ton utilisateur, et ne propose que cela : sur un PC où la veille n'existe pas, le bouton est grisé « Indisponible sur ce PC ». Il ne force jamais rien. Si un programme demande à bloquer l'extinction (une mise à jour qui s'installe, une copie de fichiers), le bouton dit « Bloqué par « … » » et ce programme est nommé sur la page : termine-le d'abord.
+
+- **Verrouiller** envoie à ta session graphique le signal de verrouillage de logind (GNOME, KDE et la plupart des bureaux y répondent) ; l'écran de verrouillage de GNOME sert de repli.
+- **Veille** : le PC s'endort, le dock affiche « PC hors ligne » puis se reconnecte tout seul au réveil. Le réveil depuis la veille par le réseau marche si le Wake-on-LAN est réglé (voir plus haut) : bouton **Allumer le PC**.
+- **Redémarrer** et **éteindre** ferment les programmes ouverts : la confirmation le dit.
+- **Le système demande un mot de passe** (« Mot de passe exigé par le système ») : rare avec Ubuntu 26.04, plus fréquent si un autre utilisateur est aussi connecté. `mydock-agent doctor` (section « Alimentation ») montre les droits **tels que l'agent en marche les voit**, et donne la règle polkit qui autorise veille, redémarrage et extinction sans mot de passe à ton utilisateur :
+
+  ```js
+  // /etc/polkit-1/rules.d/50-mydock-power.rules   (à créer avec sudo, remplace « mars » par ton nom d'utilisateur)
+  polkit.addRule(function (action, subject) {
+    if (subject.user == "mars" && ["org.freedesktop.login1.suspend",
+        "org.freedesktop.login1.reboot", "org.freedesktop.login1.power-off"]
+        .indexOf(action.id) >= 0) {
+      return polkit.Result.YES;
+    }
+  });
+  ```
+
+## Veille de l'écran du dock
+
+**Réglages → Écran du dock** : *Jamais* (le choix de départ : le dock ne coupe rien sans que tu l'aies demandé), 1, 5, 10 ou 30 minutes. Deux étages :
+
+1. **L'interface** noircit l'écran après le délai (elle ne dépend de rien) et avale le premier toucher : on rallume en touchant, sans rien déclencher dessous. Le bouton **Éteindre maintenant (essai)** montre l'effet tout de suite.
+2. **Le Pi** coupe réellement l'écran (rétroéclairage) avec `swayidle` : `deploy/pi/screen-sleep.sh`, lancé par le compositeur à côté du navigateur, lit la durée choisie auprès du dock (`/api/screen`), relance `swayidle` quand elle change, éteint avec `wlopm` (ou `wlr-randr` à défaut) et rallume au premier toucher. Si le script ne trouve pas `swayidle` il le dit dans le journal et l'écran reste seulement noirci par l'interface (`sudo apt install swayidle`).
 
 ## Dépannage
 
 | Symptôme | Cause probable | Remède |
 |---|---|---|
-| « PC hors ligne » alors que le PC est allumé | Pare-feu (`ufw`) ; nom `.local` non résolu ; PC en veille | Vérifier `sudo ufw status` ; essayer l'adresse IP dans Réglages ; `getent hosts mon-pc.local` sur le Pi |
-| « PC allumé, agent arrêté » | Session fermée (l'agent vit dans ta session) ; service arrêté | `systemctl --user status mydock-agent`, `journalctl --user -u mydock-agent -e` |
-| « Connexion refusée » | Jeton différent, ou IP du Pi absente de `allowed_clients` | Réglages → Jeton ; `mydock-agent doctor` ; relancer l'installateur du PC avec `--pi IP_DU_PI` |
+| « PC hors ligne » alors que le PC est allumé | **Nom `.local` non résolu depuis le Pi** (le plus fréquent) ; pare-feu (`ufw`) ; PC en veille ; Wi-Fi qui isole les appareils | **Saisir l'adresse IP du PC dans Réglages.** L'écran dit l'adresse essayée (`ubuntu.local (192.168.1.3:8765)`) et pourquoi ; sur le Pi : `sudo -u mydock /opt/mydock/venv/bin/mydock-dock doctor` teste chaque adresse ; sur le PC : `mydock-agent doctor` |
+| « PC allumé, agent arrêté » | Session fermée (l'agent vit dans ta session) ; service arrêté | `mydock-agent doctor` (section « Service systemd »), `journalctl --user -u mydock-agent -e` |
+| « Connexion refusée » | Jeton différent, ou IP du Pi absente de `allowed_clients` | Réglages → Jeton ; `mydock-agent doctor` ; `mydock-agent setup --pi IP_DU_PI` sur le PC (le message dit quelle adresse le PC voit arriver) |
 | Le nom `ubuntu.local` change ou ne répond pas | Deux machines nommées « ubuntu » | `sudo hostnamectl set-hostname mon-pc`, ou utiliser l'IP (idéalement réservée dans la box) |
+| Page Musique : « Aucun lecteur ouvert » alors que Spotify joue | Le lecteur ne parle pas MPRIS (Spotify en Flatpak/Snap : accès au bus bloqué) ou l'agent n'a pas la session D-Bus | Sur le PC : `mydock-agent doctor` (section « Musique (MPRIS) » : lecteurs vus) ou `playerctl -l` ; `journalctl --user -u mydock-agent -e` |
+| Page Musique : « Musique indisponible » | Bus de session D-Bus injoignable (agent lancé hors session graphique) | Lancer l'agent par le service (`systemctl --user restart mydock-agent`), pas depuis un terminal SSH |
+| Système : la carte graphique dit « En veille » | La carte NVIDIA dort pour économiser la batterie : c'est voulu, le dock ne la réveille pas | Lancer un programme sur la carte (`prime-run …`) : sa charge apparaît |
+| Toucher une application ne l'ouvre pas | `gio` absent, ou `systemd-run --user` inutilisable (agent lancé hors session) | `mydock-agent doctor` (sections « Lancement des programmes » et « Applications (lanceur) ») ; `sudo apt install libglib2.0-bin` |
+| Steam : « n'est pas installé » ou jeux manquants | Dossier Steam inhabituel, jeu sur un disque non monté | `mydock-agent doctor` (section « Steam ») liste les dossiers lus et le nombre de jeux et de jaquettes |
+| Office : aucun document récent | LibreOffice jamais ouvert, ou profil dans un dossier inhabituel | `mydock-agent doctor` (section « LibreOffice ») |
+| Bourse : « Cotations indisponibles » | Le Pi n'a pas d'accès à Internet ou de DNS, ou les fournisseurs refusent | `sudo -u mydock /opt/mydock/venv/bin/mydock-dock doctor` (section « Bourse ») teste chaque fournisseur ; `curl -sI https://query2.finance.yahoo.com` depuis le Pi |
+| Bourse : bandeau orange et cours « il y a 3 h » | Un fournisseur ne répond plus : ce sont les derniers cours connus | Le dock réessaie seul (pause croissante, 15 min au plus) ; **Actualiser** force un essai |
+| Bourse : « Binance n'est pas accessible depuis ce pays » | Binance coupe l'accès (HTTP 451) dans certains pays | Rien à faire : son miroir de données puis Yahoo Finance prennent le relais |
+| Alimentation : boutons grisés « Mot de passe exigé par le système » | Le système n'autorise pas ces actions au service de l'agent sans mot de passe | `mydock-agent doctor` (section « Alimentation ») : règle polkit à copier, voir la section Alimentation |
+| Alimentation : « Bloqué par « … » » | Un programme de la session empêche l'extinction ou la veille (mise à jour, copie en cours) | Le terminer, ou attendre ; `systemd-inhibit --list` sur le PC |
+| Alimentation : « Le service de session (logind) ne répond pas » | `systemd-logind` arrêté, PC sans logind (conteneur) | `systemctl status systemd-logind` ; le verrouillage peut rester possible |
+| Alimentation : « Cette version de l'agent ne sait pas faire cela » | Le Pi est à jour mais pas le paquet du PC | Mettre le paquet à jour (`python3 packaging/build_deb.py` puis `sudo apt install ./build/mydock-agent_*_all.deb`) |
+| L'écran du dock ne s'éteint pas (il devient noir mais reste allumé) | `swayidle` absent, ou le compositeur ne gère pas l'extinction | `sudo apt install swayidle` ; `pgrep -a swayidle` ; `journalctl -t labwc -e` (ou la sortie du kiosque) ; essayer `wlopm --off '*'` à la main |
+| L'écran du dock se rallume mais l'interface reste noire jusqu'au deuxième toucher | Le premier toucher a servi à réveiller l'écran physique | Normal sur certains écrans : un second toucher suffit |
 | « Allumer le PC » n'a aucun effet | Pas d'Ethernet, BIOS, câble débranché à l'extinction | Voir la section Wake-on-LAN ; Réglages → vérifier l'adresse MAC |
 | Écran noir au démarrage du Pi | Compositeur ou Chromium ne démarre pas | `journalctl -u mydock-kiosk -e` (Lite) ; vérifier `chromium` et `labwc` installés ; essayer `--force-mode 1024x600@60` |
 | Écran à la mauvaise résolution | Mode non détecté | `sudo ./deploy/pi/install-dock.sh --force-mode 1024x600@60` ; ou `video=HDMI-A-1:1024x600@60` dans `/boot/firmware/cmdline.txt` |
 | Interface saccadée | Accélération GPU absente | `?debug=1` pour voir les i/s ; ajouter des options dans `/etc/mydock-kiosk/chromium.flags` (ex. `--use-gl=angle`) |
-| Le jeton a fuité | — | Sur le PC : `./deploy/pc/install-agent.sh --pi IP --rotate-token`, puis ressaisir le jeton dans Réglages |
+| Le jeton a fuité | — | Sur le PC : `mydock-agent setup --pi IP_DU_PI --rotate-token`, puis ressaisir le jeton dans Réglages |
 
 Outils : `./deploy/pc/diagnose.sh [--anonyme]` décrit le PC (session, GPU, audio, Steam, LibreOffice, réseau) sans afficher de secret.
 
@@ -150,23 +238,26 @@ Outils : `./deploy/pc/diagnose.sh [--anonyme]` décrit le PC (session, GPU, audi
 ```bash
 make venv          # environnement Python (3 paquets en mode éditable)
 make test-fast     # tests Python rapides
-make test          # tous les tests Python, déploiement compris
+make test          # tous les tests Python, déploiement et paquet compris
+make test-ubuntu   # tests de l'agent avec les versions EXACTES des paquets Python d'Ubuntu 26.04
+make deb           # construit build/mydock-agent_<version>_all.deb
 make lint          # ruff, svelte-check, shellcheck
 cd dock/web && npm ci && npm test      # tests unitaires de l'interface
 make demo          # agent en mode démo + dock sur http://127.0.0.1:8080
-make e2e           # tests Playwright 1024×600 tactiles ; make shots régénère les captures
+make e2e           # tests Playwright 1024×600 tactiles ; make shots régénère les captures de l'étape en cours
 make web           # recompile l'interface (dock/web/dist est commité : pas de Node sur le Pi)
 ```
 
 ```
 common/   protocole WebSocket, jeton, configuration 600, registre d'actions   (partagé)
-agent/    service du PC : serveur, hub d'état, collecteurs, mode démo, doctor
+agent/    service du PC : serveur, hub d'état, collecteurs (système, GPU, processus, musique, son, applications, Steam, LibreOffice, alimentation), mode démo, doctor
 dock/
-  server/ serveur du Pi : liaison avec l'agent, Wake-on-LAN, configuration
+  server/ serveur du Pi : liaison avec l'agent, Wake-on-LAN, configuration, bourse (fournisseurs, cache, limites de débit), réglage de la veille de l'écran
   web/    interface Svelte 5 + Vite + TypeScript (dist/ compilé et commité)
-deploy/   installateurs idempotents (pc/, pi/), unités systemd, kiosque
+packaging/ construction du paquet .deb de l'agent (build_deb.py), modèles et scripts du paquet
+deploy/   installateurs idempotents (pc/ : sans paquet, pi/), unités systemd, kiosque, veille de l'écran (pi/screen-sleep.sh)
 docs/     rapports d'étape et captures 1024×600
 scripts/  pile de démonstration, contrôle de l'interface compilée, tests de déploiement
 ```
 
-Le protocole est décrit dans [`common/mydock_common/protocol.py`](common/mydock_common/protocol.py). Les tests automatiques tournent sous Python 3.13 et 3.14 ; le code vise Python 3.11 et plus.
+Le protocole est décrit dans [`common/mydock_common/protocol.py`](common/mydock_common/protocol.py). Les tests automatiques tournent sous Python 3.13 et 3.14, ainsi qu'avec les versions exactes des paquets d'Ubuntu 26.04 (`make test-ubuntu`) ; le code vise Python 3.11 et plus.

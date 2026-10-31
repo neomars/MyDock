@@ -1,0 +1,16 @@
+#!/bin/sh
+# Avant désinstallation ou mise à jour de mydock-agent.
+set -e
+
+case "$1" in
+    remove | deconfigure)
+        # Désinstallation : l'agent des sessions ouvertes s'arrête (ses fichiers vont disparaître).
+        /usr/lib/mydock-agent/restart-user-agents stop || true
+        ;;
+esac
+
+if command -v py3clean >/dev/null 2>&1; then
+    py3clean -p mydock-agent || true
+fi
+
+exit 0

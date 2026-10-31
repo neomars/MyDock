@@ -1,0 +1,66 @@
+mydock-agent (0.6.0) unstable; urgency=medium
+
+  * Étape f : thème « power » et actions « power.lock », « power.suspend », « power.reboot » et
+    « power.poweroff » : verrouiller, mettre en veille, redémarrer, éteindre. Tout passe par
+    logind (D-Bus), sans commande ni shell, et sans jamais demander de mot de passe : si le
+    système en exigerait un, ou si un programme s'oppose à l'extinction, le dock le dit et grise
+    le bouton. Veille, redémarrage et extinction exigent la confirmation à l'écran ET un jeton
+    à usage unique ; verrouiller ne les exige pas.
+  * « mydock-agent doctor » : nouvelle section « Alimentation », qui montre les droits tels que
+    l'agent en marche les voit (et la règle polkit à ajouter si le système demande un mot de passe).
+  * Les versions du dock (pages visibles et ordre, veille de l'écran) et du paquet restent alignées.
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 23:30:00 +0000
+
+mydock-agent (0.5.0) unstable; urgency=medium
+
+  * Étape e : la bourse (cryptos et actions) tourne sur le Pi, pas sur le PC : l'agent n'a aucun
+    changement fonctionnel. Le numéro de version suit celui du dock (0.5.0) pour que les trois
+    paquets restent alignés.
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 22:00:00 +0000
+
+mydock-agent (0.4.0) unstable; urgency=medium
+
+  * Étape d : thèmes « apps » (applications installées : fichiers .desktop du système, de
+    l'utilisateur, de Flatpak et de Snap, icônes du thème), « steam » (jeux installés des
+    bibliothèques Steam, jaquettes, jeu en cours) et « office » (LibreOffice : documents récents).
+  * Actions « apps.launch », « apps.icon », « steam.launch », « steam.cover », « office.new » et
+    « office.open » : seulement sur ce que l'agent a lui-même listé, sans shell. Les programmes sont
+    lancés dans leur propre scope systemd (systemd-run --user) : redémarrer l'agent ne les ferme pas,
+    avec l'écran et la langue de la session.
+  * « mydock-agent doctor » : sections « Lancement des programmes », « Applications », « Steam »
+    et « LibreOffice ».
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 20:00:00 +0000
+
+mydock-agent (0.3.0) unstable; urgency=medium
+
+  * Étape c : thème « audio » (sorties, micro, volume et muet de chaque application,
+    micro en cours d'utilisation) lu par « pactl » : PipeWire (par sa couche PulseAudio) ou
+    PulseAudio. Rien n'est interrogé en boucle : « pactl subscribe » signale les changements.
+  * Actions « audio.set_volume », « audio.set_mute » et « audio.set_default » : volume de 0 à
+    100 %, équilibre gauche/droite conservé, seulement sur ce que l'écran montre.
+  * « mydock-agent doctor » : nouvelle section « Son » (serveur, sorties, micros, applications).
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 18:00:00 +0000
+
+mydock-agent (0.2.0) unstable; urgency=medium
+
+  * Étape b : thèmes « system » (processeur, mémoire, carte graphique sans réveiller la
+    carte NVIDIA endormie, réseau, disques, températures, batterie, historique de 60 s),
+    « procs » (processus) et « music » (lecteurs MPRIS : Spotify, navigateurs, VLC…).
+  * Action « system.kill » : arrêt d'un processus de l'utilisateur, avec confirmation à
+    l'écran et jeton à usage unique ; processus de la session protégés.
+  * Nouvelles dépendances : python3-dbus-fast ; recommandé : python3-pil (pochettes).
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 14:00:00 +0000
+
+mydock-agent (0.1.0) unstable; urgency=medium
+
+  * Première version du paquet : agent, service systemd utilisateur, commande
+    « mydock-agent setup », profil ufw, script de réveil à distance.
+  * Diagnostic : « mydock-agent doctor » vérifie le pare-feu (ufw, firewalld),
+    l'adresse d'écoute et prépare le test à lancer depuis le Pi.
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 30 Oct 2026 10:00:00 +0000

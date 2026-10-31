@@ -97,3 +97,10 @@ def test_hello_carries_protocol_version():
         "proto": p.PROTOCOL_VERSION,
         "agent": {"version": "1"},
     }
+
+
+def test_process_list_is_a_topic_of_its_own():
+    # « procs » n'est échantillonné que page Système ouverte, « system » est suivi en permanence.
+    assert "procs" in p.AGENT_TOPICS
+    assert p.AGENT_TOPICS.index("system") < p.AGENT_TOPICS.index("procs")
+    assert not set(p.AGENT_TOPICS) & set(p.DOCK_TOPICS)

@@ -1,0 +1,95 @@
+{
+ "explains": [],
+ "count": 8,
+ "quotes": [
+  {
+   "exchange": "NMS",
+   "shortname": "Apple Inc.",
+   "quoteType": "EQUITY",
+   "symbol": "AAPL",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Equity",
+   "exchDisp": "NASDAQ",
+   "isYahooFinance": true,
+   "longname": "Apple Inc.",
+   "sector": "Technology"
+  },
+  {
+   "exchange": "GER",
+   "shortname": "APPLE INC",
+   "quoteType": "EQUITY",
+   "symbol": "APC.DE",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Equity",
+   "exchDisp": "XETRA",
+   "isYahooFinance": true,
+   "longname": "Apple Inc."
+  },
+  {
+   "exchange": "OPR",
+   "shortname": "AAPL Dec 2025 250 call",
+   "quoteType": "OPTION",
+   "symbol": "AAPL251219C00250000",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Option",
+   "exchDisp": "OPRA",
+   "isYahooFinance": true
+  },
+  {
+   "exchange": "NYQ",
+   "shortname": "Apple Hospitality REIT, Inc.",
+   "quoteType": "EQUITY",
+   "symbol": "APLE",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Equity",
+   "exchDisp": "NYSE",
+   "isYahooFinance": true,
+   "longname": "Apple Hospitality REIT, Inc."
+  },
+  {
+   "exchange": "MEX",
+   "shortname": "Apple Inc.",
+   "quoteType": "EQUITY",
+   "symbol": "AAPL",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Equity",
+   "exchDisp": "Mexico",
+   "isYahooFinance": true,
+   "longname": "Apple Inc."
+  },
+  {
+   "exchange": "PCX",
+   "shortname": "YieldMax AAPL Option Income Strategy ETF",
+   "quoteType": "ETF",
+   "symbol": "APLY",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Etf",
+   "exchDisp": "NYSEArca",
+   "isYahooFinance": true
+  },
+  {
+   "quoteType": "EQUITY",
+   "shortname": "Sans symbole"
+  },
+  {
+   "exchange": "NMS",
+   "shortname": "Symbole invalide",
+   "quoteType": "EQUITY",
+   "symbol": "A B",
+   "index": "quotes",
+   "score": 20000.0,
+   "typeDisp": "Equity",
+   "exchDisp": "NASDAQ",
+   "isYahooFinance": true
+  }
+ ],
+ "news": [],
+ "nav": [],
+ "lists": []
+}

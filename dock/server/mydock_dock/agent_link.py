@@ -1,11 +1,14 @@
 """Lien du dock vers l'agent du PC : connexion, reconnexion automatique, requêtes d'actions.
 
 Quand la connexion échoue, la *façon* dont elle échoue dit où est le problème, et l'écran
-« PC hors ligne » l'explique :
+« PC hors ligne » l'explique, en nommant l'adresse essayée (nom, IP et port) :
 
     refus immédiat (RST)        -> le PC est allumé mais l'agent n'écoute pas
     silence / pas de route      -> le PC est éteint, en veille, hors réseau ou derrière un pare-feu
     HTTP 403 à la poignée de main -> jeton incorrect ou adresse du Pi non autorisée par l'agent
+
+Un nom peut désigner plusieurs adresses IPv4 : on les essaie une à une et on garde la panne la
+plus parlante (un 403 prouve que l'agent est là, un refus que le PC est là, un silence ne prouve rien).
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidSta
 
 from mydock_common import protocol as proto
 from mydock_common.auth import bearer_headers
+from mydock_dock.netinfo import is_lan_candidate, local_address_towards
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +39,7 @@ BACKOFF_STEPS = (1.0, 2.0, 3.0, 5.0, 8.0, 10.0)
 SLOW_RETRY = 30.0
 OPEN_TIMEOUT = 4.0
 HELLO_TIMEOUT = 5.0
+MAX_CANDIDATES = 3  # adresses IPv4 essayées pour un même nom, à chaque tentative
 UNREACHABLE_ERRNOS = {
     errno.EHOSTUNREACH,
     errno.ENETUNREACH,
@@ -72,7 +77,7 @@ class LinkStatus:
     since: float  # epoch (s) du dernier changement d'état
     attempt: int = 0
     next_retry_at: float | None = None
-    resolved: str | None = None
+    resolved: str | None = None  # adresse IPv4 visée : connectée, ou la dernière essayée
     agent: dict[str, Any] | None = None
     host: str = ""
     port: int = 0
@@ -92,10 +97,11 @@ class LinkStatus:
 
 
 class LinkFailure(Exception):
-    def __init__(self, state: LinkState, detail: str):
+    def __init__(self, state: LinkState, detail: str, address: str | None = None):
         super().__init__(detail)
         self.state = state
         self.detail = detail
+        self.address = address  # adresse IPv4 essayée ; None si le nom n'a même pas été résolu
 
 
 def backoff_delay(
@@ -106,11 +112,22 @@ def backoff_delay(
     return base * (1 + jitter * (2 * rand() - 1))
 
 
-async def resolve_ipv4(host: str, port: int, timeout: float = 5.0) -> str:
-    """Adresse IPv4 du PC (le nom .local passe par mDNS). L'IPv6 est volontairement ignorée."""
+def target_label(host: str, ip: str, port: int) -> str:
+    """« 192.168.1.3:8765 », ou « ubuntu.local (192.168.1.3:8765) » quand on a saisi un nom."""
+    return f"{ip}:{port}" if host == ip else f"{host} ({ip}:{port})"
+
+
+async def resolve_ipv4_all(host: str, port: int, timeout: float = 5.0) -> list[str]:
+    """Adresses IPv4 du PC, sans doublon, les plus plausibles d'abord (le nom .local passe par mDNS).
+
+    L'IPv6 est volontairement ignorée : l'agent n'écoute qu'en IPv4. Un même nom peut donner
+    plusieurs adresses (Wi-Fi et Ethernet, ou une adresse de pont docker0/virbr0 annoncée par
+    erreur) ; boucle locale et lien-local passent en dernier. Une adresse saisie telle quelle
+    est respectée, même si c'est 127.0.0.1.
+    """
     try:
         ipaddress.IPv4Address(host)
-        return host
+        return [host]
     except ValueError:
         pass
     loop = asyncio.get_running_loop()
@@ -118,20 +135,26 @@ async def resolve_ipv4(host: str, port: int, timeout: float = 5.0) -> str:
         infos = await asyncio.wait_for(
             loop.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM), timeout
         )
+        found = list(dict.fromkeys(str(info[4][0]) for info in infos))
     except (TimeoutError, OSError):
+        found = []
+    if not found:
         raise LinkFailure(
             LinkState.UNREACHABLE,
             f"Le nom « {host} » est introuvable sur le réseau (PC éteint, ou mDNS indisponible). "
             "Tu peux saisir son adresse IP dans Réglages.",
-        ) from None
-    return str(infos[0][4][0])
+        )
+    found.sort(key=lambda address: not is_lan_candidate(address))  # tri stable
+    return found[:MAX_CANDIDATES]
 
 
-def classify_os_error(exc: BaseException, port: int) -> LinkFailure:
+def classify_os_error(exc: BaseException, port: int, target: str | None = None) -> LinkFailure:
+    """Traduit un échec de connexion TCP ; `target` (« ip:port ») est cité dans le message."""
+    where = f"sur {target}" if target else f"sur le port {port}"
     if isinstance(exc, ConnectionRefusedError):
         return LinkFailure(
             LinkState.HOST_UP_AGENT_DOWN,
-            "Le PC répond mais l'agent MyDock n'écoute pas "
+            f"Le PC répond mais l'agent MyDock n'écoute pas {where} "
             "(session fermée ? agent arrêté ? mauvais port ?).",
         )
     if isinstance(exc, TimeoutError) or (
@@ -139,22 +162,46 @@ def classify_os_error(exc: BaseException, port: int) -> LinkFailure:
     ):
         return LinkFailure(
             LinkState.UNREACHABLE,
-            "Le PC ne répond pas : éteint, en veille, hors réseau, ou bloqué par un pare-feu.",
+            f"Le PC ne répond pas {where} : éteint, en veille, hors réseau, "
+            "ou port bloqué par un pare-feu.",
         )
-    return LinkFailure(LinkState.UNREACHABLE, f"Connexion impossible ({exc.__class__.__name__}).")
+    return LinkFailure(
+        LinkState.UNREACHABLE, f"Connexion impossible {where} ({exc.__class__.__name__})."
+    )
 
 
-async def open_session(
+# Quelle panne raconter quand plusieurs adresses ont échoué : la plus proche de l'agent d'abord.
+_INFORMATIVE_FIRST = (
+    LinkState.AUTH_FAILED,
+    LinkState.PROTOCOL_MISMATCH,
+    LinkState.HOST_UP_AGENT_DOWN,
+    LinkState.UNREACHABLE,
+)
+
+
+def most_informative(failures: list[LinkFailure]) -> LinkFailure:
+    """Résume les échecs de plusieurs adresses par le plus parlant, en citant les autres."""
+    best = min(failures, key=lambda f: _INFORMATIVE_FIRST.index(f.state))
+    others = [f.address for f in failures if f.address and f.address != best.address]
+    if not others:
+        return best
+    return LinkFailure(
+        best.state, f"{best.detail} Autres adresses essayées : {', '.join(others)}.", best.address
+    )
+
+
+async def _open_at(
+    ip: str,
     settings: LinkSettings,
-    *,
-    open_timeout: float = OPEN_TIMEOUT,
-    ping_interval: float | None = 8.0,
-) -> tuple[ClientConnection, dict[str, Any], str]:
-    """Ouvre la connexion et attend le `hello` ; sinon lève LinkFailure classée."""
-    ip = await resolve_ipv4(settings.host, settings.port)
+    open_timeout: float,
+    ping_interval: float | None,
+) -> tuple[ClientConnection, dict[str, Any]]:
+    """Connexion à une adresse précise : retourne la session ouverte ou lève LinkFailure."""
+    port = settings.port
+    target = target_label(settings.host, ip, port)
     try:
         ws = await connect(
-            f"ws://{ip}:{settings.port}/ws",
+            f"ws://{ip}:{port}/ws",
             additional_headers=bearer_headers(settings.token),
             open_timeout=open_timeout,
             ping_interval=ping_interval,
@@ -165,40 +212,81 @@ async def open_session(
         )
     except InvalidStatus as exc:
         if exc.response.status_code == 403:
+            source = local_address_towards(ip)
+            this_pi = f"ce Pi ({source})" if source else "ce Pi"
             raise LinkFailure(
                 LinkState.AUTH_FAILED,
-                "Connexion refusée : jeton incorrect, ou l'adresse de ce Pi n'est pas "
-                "autorisée par l'agent (allowed_clients).",
+                f"Connexion refusée par l'agent ({target}) : jeton incorrect, ou l'adresse de "
+                f"{this_pi} n'est pas autorisée par l'agent (allowed_clients).",
+                ip,
             ) from None
         raise LinkFailure(
             LinkState.HOST_UP_AGENT_DOWN,
-            f"Un service répond sur le port {settings.port} mais ce n'est pas l'agent MyDock "
+            f"Un service répond sur {target} mais ce n'est pas l'agent MyDock "
             f"(HTTP {exc.response.status_code}).",
+            ip,
         ) from None
     except InvalidHandshake:
         raise LinkFailure(
             LinkState.HOST_UP_AGENT_DOWN,
-            f"Un service répond sur le port {settings.port} mais ce n'est pas l'agent MyDock.",
+            f"Un service répond sur {target} mais ce n'est pas l'agent MyDock.",
+            ip,
         ) from None
     except (OSError, TimeoutError) as exc:
-        raise classify_os_error(exc, settings.port) from None
+        failure = classify_os_error(exc, port, target)
+        failure.address = ip
+        raise failure from None
 
     try:
         hello = proto.loads(await asyncio.wait_for(ws.recv(), HELLO_TIMEOUT))
     except (TimeoutError, ConnectionClosed, proto.ProtocolError):
         await ws.close()
-        raise LinkFailure(LinkState.HOST_UP_AGENT_DOWN, "L'agent n'a pas répondu.") from None
+        raise LinkFailure(
+            LinkState.HOST_UP_AGENT_DOWN, f"L'agent ({target}) n'a pas répondu.", ip
+        ) from None
     if hello.get("t") != "hello":
         await ws.close()
-        raise LinkFailure(LinkState.HOST_UP_AGENT_DOWN, "Réponse inattendue de l'agent.")
+        raise LinkFailure(
+            LinkState.HOST_UP_AGENT_DOWN, f"Réponse inattendue de l'agent ({target}).", ip
+        )
     if hello.get("proto") != proto.PROTOCOL_VERSION:
         await ws.close()
         raise LinkFailure(
             LinkState.PROTOCOL_MISMATCH,
             f"Versions incompatibles (protocole {hello.get('proto')} côté agent, "
             f"{proto.PROTOCOL_VERSION} côté dock) : mets l'agent et le dock à jour.",
+            ip,
         )
-    return ws, hello, ip
+    return ws, hello
+
+
+async def open_session(
+    settings: LinkSettings,
+    *,
+    open_timeout: float = OPEN_TIMEOUT,
+    ping_interval: float | None = 8.0,
+    prefer: str | None = None,
+) -> tuple[ClientConnection, dict[str, Any], str]:
+    """Ouvre la connexion et attend le `hello` ; sinon lève LinkFailure classée.
+
+    Les adresses du nom sont essayées l'une après l'autre (`prefer`, la dernière qui a marché,
+    en premier). On s'arrête dès qu'une adresse prouve qu'un agent est là (jeton refusé, version
+    incompatible) : insister ferait compter d'autres échecs d'authentification pour rien.
+    """
+    candidates = await resolve_ipv4_all(settings.host, settings.port)
+    if prefer in candidates:
+        candidates.sort(key=lambda address: address != prefer)
+    failures: list[LinkFailure] = []
+    for ip in candidates:
+        try:
+            ws, hello = await _open_at(ip, settings, open_timeout, ping_interval)
+        except LinkFailure as failure:
+            failures.append(failure)
+            if failure.state in (LinkState.AUTH_FAILED, LinkState.PROTOCOL_MISMATCH):
+                break
+        else:
+            return ws, hello, ip
+    raise most_informative(failures)
 
 
 async def probe(settings: LinkSettings) -> tuple[LinkState, str, dict[str, Any] | None]:
@@ -231,6 +319,7 @@ class AgentLink:
         self._desired: set[str] = set()
         self._subscribed: set[str] = set()
         self._ws: ClientConnection | None = None
+        self._last_ip: str | None = None  # dernière adresse qui a répondu : essayée en premier
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._reload = asyncio.Event()
         self._ids = itertools.count(1)
@@ -254,6 +343,9 @@ class AgentLink:
 
     async def run(self) -> None:
         attempt = 0
+        last_failure: tuple[LinkState, str] | None = (
+            None  # pour ne journaliser une panne qu'une fois
+        )
         while True:
             settings = self._get_settings()
             if not settings.configured:
@@ -268,17 +360,23 @@ class AgentLink:
             self._set_status(LinkState.CONNECTING, f"Connexion à {settings.host}…", attempt=attempt)
             was_connected = False
             try:
-                ws, hello, ip = await open_session(settings)
+                ws, hello, ip = await open_session(settings, prefer=self._last_ip)
             except LinkFailure as failure:
-                state, detail = failure.state, failure.detail
+                state, detail, address = failure.state, failure.detail, failure.address
+                if (state, detail) != last_failure:
+                    log.warning("Liaison avec l'agent : %s", detail)
+                last_failure = (state, detail)
             else:
                 was_connected = True
+                last_failure = None
+                self._last_ip = ip
                 self._ws = ws
                 self._set_status(
                     LinkState.CONNECTED, "Connecté.", resolved=ip, agent=hello.get("agent")
                 )
                 log.info("Connecté à l'agent %s (%s)", settings.host, ip)
                 state, detail = await self._session(ws)
+                address = ip
                 self._ws = None
                 self._fail_pending()
                 log.warning("Connexion à l'agent perdue : %s", detail)
@@ -288,7 +386,13 @@ class AgentLink:
             # l'adresse du Pi par l'agent). Corriger les Réglages relance aussitôt la connexion.
             slow = state in (LinkState.AUTH_FAILED, LinkState.PROTOCOL_MISMATCH)
             delay = SLOW_RETRY if slow else self._backoff(attempt)
-            self._set_status(state, detail, attempt=attempt, next_retry_at=self._clock() + delay)
+            self._set_status(
+                state,
+                detail,
+                attempt=attempt,
+                next_retry_at=self._clock() + delay,
+                resolved=address,
+            )
             await self._wait(delay)
 
     async def _wait(self, delay: float | None) -> None:

@@ -1,23 +1,32 @@
 <script lang="ts">
   import type { Component } from 'svelte'
   import { onMount } from 'svelte'
+  import AppPicker from './components/AppPicker.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import DebugOverlay from './components/DebugOverlay.svelte'
   import Keyboard from './components/Keyboard.svelte'
+  import MarketsEditor from './components/MarketsEditor.svelte'
   import OfflineScreen from './components/OfflineScreen.svelte'
+  import PagesEditor from './components/PagesEditor.svelte'
+  import ScreenSleep from './components/ScreenSleep.svelte'
   import TabBar from './components/TabBar.svelte'
   import Toast from './components/Toast.svelte'
   import TopBar from './components/TopBar.svelte'
-  import { pageById, visiblePages } from './lib/pages'
+  import { pageById, shownPage, visiblePages } from './lib/pages'
   import type { PageId } from './lib/protocol'
   import { sock } from './lib/socket.svelte'
   import { wakeDone } from './lib/wake.svelte'
-  import Soon from './pages/Soon.svelte'
 
   const debug = new URLSearchParams(location.search).has('debug')
 
-  // Pages complètes à cette étape ; les autres affichent ce qu'elles offriront (Soon).
-  const loaders: Partial<Record<PageId, () => Promise<{ default: Component }>>> = {
+  // Une page par onglet : le compilateur refuse qu'il en manque une.
+  const loaders: Record<PageId, () => Promise<{ default: Component }>> = {
+    music: () => import('./pages/Music.svelte'),
+    sound: () => import('./pages/Sound.svelte'),
+    apps: () => import('./pages/Apps.svelte'),
+    steam: () => import('./pages/Steam.svelte'),
+    office: () => import('./pages/Office.svelte'),
+    markets: () => import('./pages/Markets.svelte'),
     system: () => import('./pages/System.svelte'),
     power: () => import('./pages/Power.svelte'),
     settings: () => import('./pages/Settings.svelte'),
@@ -25,7 +34,7 @@
 
   const pages = $derived(visiblePages(sock.ui?.order ?? [], sock.ui?.hidden ?? []))
   let selected = $state<PageId | null>(null)
-  const currentId = $derived<PageId>(selected ?? sock.ui?.last_page ?? 'system')
+  const currentId = $derived<PageId>(shownPage(selected ?? sock.ui?.last_page ?? 'system', pages))
   const current = $derived(pageById(currentId))
 
   function select(id: PageId): void {
@@ -33,10 +42,11 @@
     void sock.act('dock.ui.set', { last_page: id })
   }
 
-  // Le nom du PC est toujours affiché dans la barre du haut : on s'abonne à « host » en permanence.
+  // La barre du haut montre toujours le nom du PC (« host ») et le mini-lecteur (« music ») : on s'abonne
+  // à ces deux thèmes en permanence ; les pages suivent les autres (system, procs…) tant qu'elles sont ouvertes.
   onMount(() => {
     sock.connect()
-    return sock.subscribe(['host'])
+    return sock.subscribe(['host', 'music'])
   })
 
   // Quand le PC répond enfin, le « réveil en cours » est terminé.
@@ -57,7 +67,7 @@
 </script>
 
 <div class="app">
-  <TopBar />
+  <TopBar onOpenMusic={() => select('music')} />
 
   <main class="page" data-testid="page-{currentId}">
     {#if dockLost}
@@ -72,14 +82,10 @@
     {:else}
       {@const load = loaders[currentId]}
       {#key currentId}
-        {#if load}
-          {#await load() then module}
-            {@const Page = module.default}
-            <Page />
-          {/await}
-        {:else}
-          <Soon page={current} />
-        {/if}
+        {#await load() then module}
+          {@const Page = module.default}
+          <Page />
+        {/await}
       {/key}
     {/if}
   </main>
@@ -87,9 +93,13 @@
   <TabBar {pages} current={currentId} onSelect={select} />
 </div>
 
+<AppPicker />
+<MarketsEditor />
+<PagesEditor />
 <Keyboard />
 <ConfirmDialog />
 <Toast />
+<ScreenSleep />
 {#if debug}<DebugOverlay />{/if}
 
 <style>
@@ -101,7 +111,7 @@
   .page {
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 16px 20px 20px;
+    padding: 12px 20px 14px;
     overscroll-behavior: contain;
   }
   .lost {

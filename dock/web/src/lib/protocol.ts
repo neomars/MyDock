@@ -63,6 +63,213 @@ export interface HostData {
   interfaces: Iface[]
 }
 
+/** Une carte graphique. `state: 'suspended'` : la carte dort, on n'y touche pas (portable hybride). */
+export interface GpuInfo {
+  id: string
+  vendor: 'nvidia' | 'intel' | 'amd' | 'other'
+  name: string
+  state: 'active' | 'suspended'
+  util: number | null
+  mem_used: number | null
+  mem_total: number | null
+  temp_c: number | null
+  power_w: number | null
+  freq_mhz: number | null
+  note?: string
+}
+
+export interface DiskInfo {
+  mount: string
+  device: string
+  fs: string
+  total: number
+  used: number
+  percent: number
+}
+
+/** Thème « system » (agent) : mesures du PC et historique des 60 dernières secondes. */
+export interface SystemData {
+  cpu: { percent: number; cores: number[]; freq_mhz: number | null; temp_c: number | null; load: number[] }
+  mem: { total: number; used: number; percent: number; swap_total: number; swap_used: number }
+  net: { down: number; up: number }
+  disk_io: { read: number; write: number }
+  disks: DiskInfo[]
+  temps: { cpu?: number; disk?: number; gpu?: number }
+  battery: { percent: number; plugged: boolean | null; secs_left: number | null } | null
+  gpus: GpuInfo[]
+  history: Record<'cpu' | 'mem' | 'gpu' | 'down' | 'up', (number | null)[]>
+  unavailable?: string
+}
+
+export interface ProcInfo {
+  pid: number
+  name: string
+  /** % de la capacité totale du processeur. */
+  cpu: number
+  /** Octets de mémoire résidente. */
+  mem: number
+  user: string
+  /** Heure de démarrage : l'agent la revérifie avant d'arrêter (un PID peut être réattribué). */
+  started: number
+  killable: boolean
+}
+
+/** Thème « procs » (agent) : les processus les plus gourmands. */
+export interface ProcsData {
+  count: number
+  cores: number | null
+  procs: ProcInfo[]
+}
+
+export interface PlayerInfo {
+  id: string
+  name: string
+  status: 'playing' | 'paused' | 'stopped'
+  title: string | null
+  artist: string | null
+  album: string | null
+  length_ms: number | null
+  /** Position au moment de l'instantané ; l'interface la prolonge tant que le morceau joue. */
+  position_ms: number | null
+  rate: number
+  /** Identifiant opaque de la pochette, à demander par l'action `music.art`. */
+  art: string | null
+  can: { play: boolean; pause: boolean; next: boolean; previous: boolean; seek: boolean }
+}
+
+/** Thème « music » (agent) : les lecteurs MPRIS du PC. */
+export interface MusicData {
+  players: PlayerInfo[]
+  active: string | null
+  unavailable?: string
+}
+
+/** Famille d'un périphérique audio, pour choisir son icône. */
+export type AudioKind =
+  | 'speakers'
+  | 'headphones'
+  | 'bluetooth'
+  | 'hdmi'
+  | 'usb'
+  | 'microphone'
+  | 'line'
+  | 'other'
+
+/** Une sortie (haut-parleurs, casque, HDMI…) ou une entrée (micro). `id` est son nom stable côté PC. */
+export interface AudioDevice {
+  id: string
+  /** Nom français affiché ; `detail` garde le nom que donne l'appareil quand il diffère. */
+  label: string
+  detail: string | null
+  kind: AudioKind
+  /** % du canal le plus fort ; peut dépasser 100 si le volume a été amplifié ailleurs. */
+  volume: number | null
+  muted: boolean
+}
+
+/** Une application qui joue du son (un flux de lecture). */
+export interface AudioApp {
+  id: string
+  name: string
+  volume: number
+  muted: boolean
+  /** Faux : le flux existe mais est en pause. */
+  playing: boolean
+  /** Identifiant de la sortie sur laquelle elle joue. */
+  sink: string | null
+}
+
+/** Une application qui écoute un micro en ce moment. */
+export interface AudioRecorder {
+  id: string
+  name: string
+  source: string
+}
+
+/** Thème « audio » (agent) : le son du PC. */
+export interface AudioData {
+  /** Volume maximal que le dock accorde (en %). */
+  max: number
+  default_sink: string | null
+  default_source: string | null
+  sinks: AudioDevice[]
+  sources: AudioDevice[]
+  apps: AudioApp[]
+  recorders: AudioRecorder[]
+  unavailable?: string
+}
+
+/** Une application installée sur le PC (thème « apps »). `icon` : identifiant à demander par `apps.icon`. */
+export interface AppInfo {
+  id: string
+  name: string
+  generic: string | null
+  icon: string | null
+}
+
+export interface AppsData {
+  count: number
+  apps: AppInfo[]
+  unavailable?: string
+}
+
+/** Un jeu Steam installé (thème « steam »). La jaquette se demande par `steam.cover`. */
+export interface GameInfo {
+  appid: number
+  name: string
+  size: number
+  /** Dernière partie (ou dernière mise à jour), en secondes epoch. */
+  played: number | null
+}
+
+export interface SteamData {
+  /** Le client Steam tourne. */
+  client: boolean
+  /** Le jeu en cours, s'il y en a un. */
+  running: number | null
+  games: GameInfo[]
+  unavailable?: string
+}
+
+export type OfficeKind = 'writer' | 'calc' | 'impress' | 'draw' | 'other'
+
+export interface RecentDocument {
+  id: string
+  name: string
+  kind: OfficeKind
+  /** Dossier du document, raccourci (« ~/Documents/Travail »). */
+  where: string
+  modified: number | null
+}
+
+export interface OfficeData {
+  kinds: ('writer' | 'calc' | 'impress')[]
+  recent: RecentDocument[]
+  unavailable?: string
+}
+
+/** Ce que le système autorise pour une commande d'alimentation (thème « power »). */
+export interface PowerControlState {
+  ok: boolean
+  /** Pourquoi la commande est grisée (court : il tient sous le bouton). */
+  why: string | null
+}
+
+/** Un programme qui s'oppose à l'extinction (`shutdown`) ou à la mise en veille (`sleep`). */
+export interface PowerBlocker {
+  who: string
+  why: string
+  scope: ('shutdown' | 'sleep')[]
+}
+
+export interface PowerData {
+  hostname?: string
+  /** Absent quand l'agent est trop ancien pour connaître le thème (seul `unavailable` est alors donné). */
+  controls?: Partial<Record<'lock' | 'suspend' | 'reboot' | 'poweroff', PowerControlState>>
+  blockers?: PowerBlocker[]
+  unavailable?: string
+}
+
 export interface WolInfo {
   mac: string | null
   source: 'auto' | 'manual' | null
@@ -76,8 +283,103 @@ export interface DockInfo {
   version: string
   proto: number
   hostname: string
+  /** Adresses IPv4 de ce Pi : celles que le PC voit, à mettre dans allowed_clients. */
+  ips: string[]
   pc: { host: string; port: number; token_set: boolean; name: string | null }
   wol: WolInfo
+  /** Résumé de la bourse (sans abonnement aux cotations) ; absent d'un dock plus ancien. */
+  markets?: { count: number; currency: 'EUR' | 'USD'; refresh: MarketRefresh; finnhub: boolean; demo: boolean }
+}
+
+export type MarketKind = 'crypto' | 'stock'
+/** Secondes entre deux mises à jour d'une crypto ; les actions suivent au double. */
+export type MarketRefresh = 15 | 30 | 60 | 300
+export type MarketRange = '1d' | '5d' | '1mo' | '1y'
+export type MarketSession = 'open' | 'closed' | 'pre' | 'post'
+
+/** Une valeur suivie : une crypto (« BTC ») ou une valeur de Yahoo Finance (« MSTR », « ^FCHI »). */
+export interface Watched {
+  kind: MarketKind
+  symbol: string
+}
+
+export interface MarketItem {
+  id: string
+  kind: MarketKind
+  symbol: string
+  name: string | null
+  /** Null tant que la première cotation n'est pas arrivée. */
+  price: number | null
+  currency: string | null
+  /** Variation sur 24 h (crypto) ou depuis la clôture de la veille (valeur). */
+  change: number | null
+  change_pct: number | null
+  high: number | null
+  low: number | null
+  state: MarketSession | null
+  traded_at: number | null
+  spark: number[]
+  /** Identifiant du fournisseur : « binance », « yahoo », « finnhub » ou « demo ». */
+  source: string | null
+  /** Quand le dock a obtenu cette cotation (secondes Unix). */
+  fetched: number | null
+  /** Pourquoi la dernière mise à jour a échoué (la cotation affichée est alors la dernière connue). */
+  error: string | null
+}
+
+export interface MarketProvider {
+  id: string
+  label: string
+  state: 'idle' | 'ok' | 'error' | 'paused'
+  message: string | null
+  /** Quand le dock réessaiera (secondes Unix), pendant une pause. */
+  retry_at: number | null
+}
+
+export interface MarketsData {
+  currency: 'EUR' | 'USD'
+  refresh: MarketRefresh
+  demo: boolean
+  items: MarketItem[]
+  fetched_at: number | null
+  providers: MarketProvider[]
+}
+
+export interface MarketHistory {
+  id: string
+  range: MarketRange
+  currency: string
+  source: string
+  /** [heure Unix, cours], du plus ancien au plus récent. */
+  points: [number, number][]
+  fetched: number
+}
+
+export interface MarketCandidate {
+  kind: MarketKind
+  symbol: string
+  name: string
+  exchange: string | null
+  /** « Action », « ETF », « Indice », « Crypto »… */
+  label: string | null
+}
+
+export interface MarketSearch {
+  query: string
+  kind: MarketKind
+  /** Le fournisseur qui a répondu, ou « local » pour les cryptos que le dock connaît d'avance. */
+  source: string | null
+  results: MarketCandidate[]
+}
+
+export interface MarketCheck {
+  id: string
+  kind: MarketKind
+  symbol: string
+  name: string | null
+  price: number
+  currency: string | null
+  source: string
 }
 
 /** Thème « ui » : préférences d'affichage persistées sur le Pi. */
@@ -85,6 +387,10 @@ export interface UiState {
   last_page: PageId
   order: PageId[]
   hidden: PageId[]
+  /** Identifiants .desktop des applications du lanceur, dans l'ordre choisi. */
+  pinned_apps: string[]
+  /** Secondes d'inactivité avant l'extinction de l'écran du dock ; 0 : jamais. */
+  screen_sleep: number
 }
 
 export interface Ack {

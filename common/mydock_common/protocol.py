@@ -37,10 +37,12 @@ PROTOCOL_VERSION = 1
 MAX_MESSAGE_BYTES = 256 * 1024
 MAX_TOPICS_PER_MESSAGE = 16
 
-# Thèmes publiés par l'agent (le PC).
+# Thèmes publiés par l'agent (le PC). « system » (mesures, historique de 60 s) est suivi en
+# permanence par le dock ; « procs » (processus) n'est échantillonné que page Système ouverte.
 AGENT_TOPICS: tuple[str, ...] = (
     "host",
     "system",
+    "procs",
     "music",
     "audio",
     "apps",

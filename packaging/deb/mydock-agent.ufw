@@ -1,0 +1,4 @@
+[MyDock agent]
+title=MyDock agent
+description=Agent MyDock : laisse le dock tactile (Raspberry Pi) piloter ce PC
+ports=8765/tcp

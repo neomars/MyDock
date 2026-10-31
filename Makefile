@@ -4,18 +4,20 @@ VENV    ?= .venv
 BIN     := $(VENV)/bin
 PIP_DEV := pytest pytest-asyncio httpx ruff
 
-.PHONY: help venv test test-fast lint web web-check e2e shots demo clean
+.PHONY: help venv test test-fast test-ubuntu lint web web-check e2e shots demo deb clean
 
 help:
 	@echo "make venv       crée $(VENV) (Python $$($(PY) --version)) avec les trois paquets en mode éditable"
 	@echo "make test       tous les tests Python (agent, dock, common, scripts de déploiement)"
 	@echo "make test-fast  idem sans les tests lents (déploiement, mesure du CPU)"
+	@echo "make test-ubuntu tests de l'agent avec les versions EXACTES des paquets d'Ubuntu 26.04"
 	@echo "make lint       ruff + svelte-check"
 	@echo "make web        compile l'interface dans dock/web/dist"
 	@echo "make web-check  vérifie que dock/web/dist correspond aux sources"
 	@echo "make e2e        tests Playwright 1024x600 (pile démo)"
-	@echo "make shots      comme e2e, et régénère les captures de docs/etapes/a"
+	@echo "make shots      comme e2e, et régénère les captures de l'étape en cours (docs/etapes/f)"
 	@echo "make demo       agent en mode démo + serveur dock sur http://127.0.0.1:8080"
+	@echo "make deb        construit le paquet de l'agent : build/mydock-agent_<version>_all.deb"
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -27,6 +29,10 @@ test:
 
 test-fast:
 	$(BIN)/python -m pytest -m "not slow"
+
+test-ubuntu:
+	./scripts/ubuntu-venv.sh
+	.venv-ubuntu/bin/python -m pytest common agent dock/server scripts/tests/test_deb.py
 
 lint:
 	$(BIN)/ruff check .
@@ -49,5 +55,8 @@ shots:
 demo:
 	./scripts/dev-stack.sh
 
+deb:
+	$(PY) packaging/build_deb.py
+
 clean:
-	rm -rf $(VENV) .pytest_cache .ruff_cache dock/web/node_modules
+	rm -rf $(VENV) .venv-ubuntu .pytest_cache .ruff_cache build dock/web/node_modules

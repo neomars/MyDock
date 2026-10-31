@@ -36,6 +36,11 @@ _VIRTUAL_PREFIXES = (
 )
 
 
+def is_virtual_interface(name: str) -> bool:
+    """Boucle locale, ponts, conteneurs, VPN : interfaces qui ne sont pas le réseau du PC."""
+    return name == "lo" or name.startswith(_VIRTUAL_PREFIXES)
+
+
 def normalize_ip(raw: str | None) -> ipaddress.IPv4Address | None:
     """Adresse IPv4 du client (gère la forme ::ffff:a.b.c.d), ou None si ce n'en est pas une."""
     if not raw:
@@ -53,7 +58,7 @@ def local_lan_networks() -> list[ipaddress.IPv4Network]:
     """Réseaux IPv4 des interfaces physiques de ce PC (repli quand rien n'est configuré)."""
     networks: list[ipaddress.IPv4Network] = []
     for name, entries in psutil.net_if_addrs().items():
-        if name == "lo" or name.startswith(_VIRTUAL_PREFIXES):
+        if is_virtual_interface(name):
             continue
         for entry in entries:
             if entry.family != socket.AF_INET or not entry.netmask:

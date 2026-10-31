@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 GRAPHICAL_VARS = ("WAYLAND_DISPLAY", "DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS")
+# La langue de la session : sans elle, une application lancée par l'agent s'ouvrirait en anglais.
+LOCALE_VARS = ("LANG", "LANGUAGE", "LC_ALL", "LC_MESSAGES")
 
 
 @dataclass(frozen=True)
@@ -71,7 +73,10 @@ def detect_session(env: Mapping[str, str] | None = None, *, ask_logind: bool = T
 
 
 def user_manager_environment() -> dict[str, str] | None:
-    """Variables graphiques vues par `systemctl --user` (None si systemd utilisateur absent)."""
+    """Variables de session vues par `systemctl --user` (None si systemd utilisateur absent).
+
+    Ce sont l'écran (Wayland, X11, bus de session), le type de session et la langue.
+    """
     if not shutil.which("systemctl"):
         return None
     try:
@@ -89,6 +94,10 @@ def user_manager_environment() -> dict[str, str] | None:
     found: dict[str, str] = {}
     for line in result.stdout.splitlines():
         name, _, value = line.partition("=")
-        if name in GRAPHICAL_VARS or name in {"XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP"}:
+        if (
+            name in GRAPHICAL_VARS
+            or name in LOCALE_VARS
+            or name in {"XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP"}
+        ):
             found[name] = value
     return found

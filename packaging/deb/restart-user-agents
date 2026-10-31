@@ -1,0 +1,22 @@
+#!/bin/sh
+# Applique une action systemd (try-restart, stop) à l'agent MyDock de chaque session ouverte.
+# Usage : restart-user-agents [ACTION [DOSSIER_RUN_USER]]     (défaut : try-restart /run/user)
+# Lancé par root depuis les scripts du paquet ; ne fait jamais échouer l'installation.
+action=${1:-try-restart}
+root=${2:-/run/user}
+
+for dir in "$root"/*; do
+    [ -d "$dir" ] || continue
+    uid=${dir##*/}
+    case $uid in
+        '' | *[!0-9]*) continue ;;
+    esac
+    [ -S "$dir/bus" ] || continue
+    user=$(getent passwd "$uid" | cut -d: -f1)
+    [ -n "$user" ] || continue
+    runuser -u "$user" -- env XDG_RUNTIME_DIR="$dir" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$dir/bus" \
+        systemctl --user "$action" mydock-agent.service >/dev/null 2>&1 || true
+done
+
+exit 0

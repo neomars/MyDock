@@ -81,6 +81,17 @@ resolve_ipv4() {
   esac
 }
 
+# Adresse IPv4 de cette machine sur sa route par défaut (celle que le Pi doit utiliser).
+lan_ip() {
+  local address=""
+  if have ip; then
+    address=$(ip -4 route get 1.1.1.1 2>/dev/null |
+      awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i + 1); exit}}')
+  fi
+  [ -n "$address" ] || address=$(hostname -I 2>/dev/null | awk '{print $1}')
+  printf '%s\n' "$address"
+}
+
 # Attend qu'un port local écoute : wait_port PORT [SECONDES]
 wait_port() {
   local port=$1 tries=${2:-10} i
