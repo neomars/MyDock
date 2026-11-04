@@ -5,6 +5,7 @@
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import DebugOverlay from './components/DebugOverlay.svelte'
   import Keyboard from './components/Keyboard.svelte'
+  import LazyPage from './components/LazyPage.svelte'
   import MarketsEditor from './components/MarketsEditor.svelte'
   import OfflineScreen from './components/OfflineScreen.svelte'
   import PagesEditor from './components/PagesEditor.svelte'
@@ -91,12 +92,8 @@
     {:else if current.needsPc && !sock.connected}
       <OfflineScreen onSettings={() => select('settings')} />
     {:else}
-      {@const load = loaders[currentId]}
       {#key currentId}
-        {#await load() then module}
-          {@const Page = module.default}
-          <Page />
-        {/await}
+        <LazyPage load={loaders[currentId]} />
       {/key}
     {/if}
   </main>

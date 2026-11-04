@@ -148,6 +148,8 @@ git pull
 python3 packaging/build_deb.py --target pi && sudo apt install ./build/mydock_*_all.deb    # Pi : le portail propose aussitôt le nouveau paquet du PC
 ```
 
+L'écran du dock se met à jour tout seul : quand le dock revient après son redémarrage, l'interface compare ce qu'elle est à ce que le dock sert et se recharge si elles diffèrent. **Sauf la toute première fois**, de la 1.1.0 à la 1.1.1 : relance alors son navigateur (`pkill -x chromium`) ou le Pi.
+
 Sur le PC, télécharger le nouveau paquet depuis la page du Pi et `sudo apt install ./mydock-agent_*_all.deb` : les sessions ouvertes redémarrent leur agent toutes seules, **sans nouvelle association** (le jeton est conservé).
 
 **Depuis l'ancienne installation par script** (`install-dock.sh`, environnement dans `/opt/mydock`) : `sudo apt install ./build/mydock_*_all.deb` reprend la configuration et le jeton existants, retire l'ancien service et sa vieille unité systemd ; le PC déjà associé continue de marcher tel quel. Libérer ensuite la place : `sudo rm -r /opt/mydock`.
@@ -251,6 +253,7 @@ L'agent demande à **logind** (le service de session de systemd) ce qu'il autori
 | Association : « Le dock ne joint pas ce PC » | Le pare-feu du PC bloque le port de l'agent (8765), ou le PC est sur un autre réseau que le Pi | `mydock-agent setup --pi IP_DU_PI --open-firewall` ; la commande affiche l'adresse que le dock utilise et la règle `ufw` exacte |
 | Écran noir au démarrage du Pi | Compositeur ou Chromium ne démarre pas | `journalctl -u mydock-kiosk -e` (Lite) ; vérifier `chromium` et `labwc` installés ; essayer `--force-mode 1024x600@60` |
 | Écran à la mauvaise résolution | Mode non détecté | `sudo /usr/lib/mydock/setup --force-mode 1024x600@60` ; ou `video=HDMI-A-1:1024x600@60` dans `/boot/firmware/cmdline.txt` |
+| Les onglets du dock n'affichent rien (page vide) juste après une mise à jour | L'écran était ouvert pendant la mise à jour : il garde l'ancienne interface en mémoire et demande des pages qui n'existent plus. **Depuis la 1.1.1 il se recharge tout seul** ; la première fois (de la 1.1.0 à la 1.1.1) il faut relancer son navigateur | Sur le Pi : `pkill -x chromium` (le kiosque repart en 2 s) ou `sudo reboot` ; puis `sudo -u mydock mydock-dock doctor` (section « Interface web » : tous les fichiers sont-ils là, le dock les sert-il ?) |
 | Interface saccadée | Accélération GPU absente | `?debug=1` pour voir les i/s ; ajouter des options dans `/etc/mydock-kiosk/chromium.flags` (ex. `--use-gl=angle`) |
 | Le jeton a fuité | — | Sur le PC : `mydock-agent setup --pi IP_DU_PI --rotate-token` ; le dock doit afficher un code (**Réglages → Associer un PC…**) : le nouveau jeton lui est transmis avec |
 

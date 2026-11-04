@@ -613,6 +613,14 @@ def test_the_packaged_dock_serves_its_interface_and_the_pc_package(extracted, ag
     )
     try:
         wait_for(f"http://127.0.0.1:{portal_port}/api/portal", process)
+        # Chaque fichier de l'interface est servi, octet pour octet : une page de moins et un onglet reste vide.
+        web = extracted / "usr/share/mydock/web"
+        for file in sorted(p for p in web.rglob("*") if p.is_file()):
+            relative = file.relative_to(web).as_posix()
+            got, body = http_get(f"http://127.0.0.1:{server_port}/{relative}")
+            assert got == 200, relative
+            assert body == file.read_bytes(), relative
+
         status, page = http_get(f"http://127.0.0.1:{server_port}/")
         assert status == 200
         assert b'<div id="app">' in page or b'id="app"' in page  # l'interface compilée, embarquée
@@ -689,3 +697,4 @@ def test_the_packaged_doctor_runs_without_a_pc(extracted, tmp_path):
     assert result.returncode in (0, 1), result.stdout + result.stderr  # un dock neuf a des réserves
     assert "Traceback" not in result.stderr
     assert "Portail (installation du PC)" in result.stdout
+    assert "Interface complète" in result.stdout  # l'interface du paquet ne manque d'aucune page

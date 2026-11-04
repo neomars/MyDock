@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mydock-dock"
-version = "1.1.0"
+version = "1.1.1"
 description = "MyDock : serveur local du dock (Raspberry Pi) - sert l'interface, relaie l'agent, Wake-on-LAN, configuration"
 requires-python = ">=3.11"
 dependencies = [

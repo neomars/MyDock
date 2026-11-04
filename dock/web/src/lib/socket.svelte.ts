@@ -6,6 +6,7 @@
 //    d'elles-mêmes la fenêtre de confirmation (voir call()).
 
 import { reconnectDelay } from './backoff'
+import { refreshIfOutdated } from './build'
 import { askConfirmation } from './confirm.svelte'
 import { latencyStats, type LatencyStats } from './format'
 import type { Ack, DockInfo, HostData, LinkStatus, UiState } from './protocol'
@@ -35,6 +36,8 @@ class DockSocket {
   lastPingMs = $state<number | null>(null)
 
   private ws: WebSocket | null = null
+  /** Vrai dès la première connexion réussie : les suivantes sont des retours après une coupure. */
+  private everOpened = false
   private attempt = 0
   private seq = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined
@@ -63,6 +66,10 @@ class DockSocket {
     ws.onopen = () => {
       this.attempt = 0
       this.status = 'open'
+      // Le dock est de retour après une coupure (il redémarre à chaque mise à jour du paquet) : si son
+      // interface a changé pendant ce temps, on recharge celle-ci avant qu'un onglet reste vide.
+      if (this.everOpened) void refreshIfOutdated()
+      this.everOpened = true
       const topics = [...this.wanted.keys()]
       if (topics.length) ws.send(JSON.stringify({ t: 'sub', topics }))
       this.pingTimer = setInterval(() => this.ping(), 15_000)

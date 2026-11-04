@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import dgram from 'node:dgram'
 import fs from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 
 // Les tests se lancent depuis dock/web (npm run e2e).
@@ -34,6 +35,8 @@ export interface Stack {
   portal: string
   /** Port de l'agent de démonstration (celui qu'un PC annonce en s'associant). */
   agentPort: number
+  /** Le dossier de l'interface servie par le dock : une copie jetable de dist/ si `liveWeb`, sinon vide. */
+  webDir: string
   /** « PC éteint » : plus rien ne répond sur le port de l'agent. */
   pcOff(): void
   /** « Agent arrêté seul » : le PC répond mais l'agent est absent (connexion refusée). */
@@ -44,12 +47,22 @@ export interface Stack {
   wolPackets: Buffer[]
 }
 
-export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: string[]; unpaired: boolean }>({
+export const test = base.extend<{
+  stack: Stack
+  dock: Page
+  consoleProblems: string[]
+  unpaired: boolean
+  liveWeb: boolean
+}>({
   /** Vrai : un dock neuf, sans PC, qui affiche un code d'association (test.use({ unpaired: true })). */
   unpaired: [false, { option: true }],
+  /** Vrai : le dock sert une copie jetable de l'interface, que le test peut modifier (mise à jour du paquet). */
+  liveWeb: [false, { option: true }],
 
-  stack: async ({ unpaired }, use) => {
+  stack: async ({ unpaired, liveWeb }, use) => {
     const [dockPort, agentPort, wolPort] = [await freePort(), await freePort(), await freePort()]
+    const webDir = liveWeb ? fs.mkdtempSync(path.join(os.tmpdir(), 'mydock-web-')) : ''
+    if (liveWeb) fs.cpSync(path.join(ROOT, 'dock', 'web', 'dist'), webDir, { recursive: true })
     const wolPackets: Buffer[] = []
     const udp = dgram.createSocket('udp4')
     udp.on('message', (message) => wolPackets.push(message))
@@ -63,6 +76,7 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
         '--agent-port', String(agentPort),
         '--wol-target', `127.0.0.1:${wolPort}`,
         ...(unpaired ? ['--unpaired'] : []),
+        ...(liveWeb ? ['--web-dir', webDir] : []),
       ],
       { stdio: ['ignore', 'pipe', 'inherit'], cwd: ROOT },
     ) // prettier-ignore
@@ -84,6 +98,7 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
       url,
       portal,
       agentPort,
+      webDir,
       pcOff: () => child.kill('SIGUSR1'),
       agentDown: () => child.kill('SIGHUP'),
       pcOn: () => child.kill('SIGUSR2'),
@@ -100,6 +115,7 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
       }, 8_000)
     })
     udp.close()
+    if (webDir) fs.rmSync(webDir, { recursive: true, force: true })
   },
 
   // Erreurs console et exceptions de la page : chaque test vérifie qu'il n'y en a aucune.
@@ -123,6 +139,29 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
 })
 
 export { expect }
+
+/**
+ * Simule la mise à jour du paquet : tous les fichiers dont le nom porte une empreinte (« Music-B9amGNjk.js »)
+ * changent de nom et chaque référence est réécrite, comme après une nouvelle compilation. Les anciens
+ * fichiers disparaissent, ce que fait aussi `apt`.
+ */
+export function rehashInterface(dir: string): void {
+  const assets = path.join(dir, 'assets')
+  const renames = new Map<string, string>()
+  for (const name of fs.readdirSync(assets)) {
+    const match = /^(.*)-([A-Za-z0-9_-]{8})(\.[a-z0-9]+)$/.exec(name)
+    if (match) renames.set(name, `${match[1]}-${[...match[2]].reverse().join('')}${match[3]}`)
+  }
+  expect(renames.size, 'des fichiers à empreinte dans dist/assets').toBeGreaterThan(10)
+  const files = [path.join(dir, 'index.html'), ...fs.readdirSync(assets).map((name) => path.join(assets, name))]
+  for (const file of files) {
+    if (/\.woff2?$/.test(file)) continue
+    let text = fs.readFileSync(file, 'utf8')
+    for (const [from, to] of renames) text = text.split(from).join(to)
+    fs.writeFileSync(file, text)
+  }
+  for (const [from, to] of renames) fs.renameSync(path.join(assets, from), path.join(assets, to))
+}
 
 /**
  * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
