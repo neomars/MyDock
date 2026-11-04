@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 from mydock_common.config import ConfigError
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
@@ -40,6 +42,74 @@ from mydock_dock.store import StateStore
 TCP_TIMEOUT = 3.0
 
 
+def _check_web_files(report: Report, web_dir: Path, entry: str | None) -> None:
+    """Chaque page de l'interface est un fichier à part : un seul manquant et son onglet reste vide."""
+    if entry is None:
+        report.add(
+            INFO, "index.html ne désigne pas de script d'entrée : interface non vérifiée plus loin."
+        )
+        return
+    entry_file = web_dir / entry.lstrip("/")
+    if not (entry_file.is_file() and os.access(entry_file, os.R_OK)):
+        report.add(
+            FAIL,
+            f"index.html demande {entry}, absent ou illisible dans {web_dir} : l'interface est incomplète "
+            "(réinstalle le paquet mydock).",
+        )
+        return
+    missing = missing_assets(web_dir)
+    if missing:
+        shown = ", ".join(missing[:4]) + (" …" if len(missing) > 4 else "")
+        report.add(
+            FAIL,
+            f"L'interface réclame {len(missing)} fichier(s) absent(s) ou illisible(s) : {shown}. "
+            "Les onglets concernés resteraient vides (réinstalle le paquet mydock).",
+        )
+    else:
+        report.add(
+            OK, f"Interface complète : {entry_file.name} et tous les fichiers qu'elle réclame"
+        )
+
+
+def _check_web_served(
+    report: Report,
+    config: DockConfig,
+    entry: str | None,
+    get: Callable[[str], tuple[int, bytes] | None],
+) -> None:
+    """Ce que le dock sert vraiment, par HTTP, est-il l'interface du dossier ?"""
+    base = f"http://127.0.0.1:{config.port}"
+    index = get(f"{base}/")
+    if index is None:
+        report.add(
+            INFO,
+            "Le dock ne répond pas sur 127.0.0.1 : interface non testée en HTTP (voir « Services »).",
+        )
+        return
+    status, body = index
+    served = entry_of(body.decode(errors="ignore")) if status == 200 else None
+    if served is None:
+        report.add(
+            WARN,
+            f"Le dock répond {status} à la page d'accueil, sans interface : journalctl -u mydock-dock -e",
+        )
+    elif entry is not None and served != entry:
+        report.add(
+            WARN,
+            f"Le dock sert {served} alors que le dossier contient {entry} : "
+            "sudo systemctl restart mydock-dock (un écran resté ouvert se recharge alors tout seul).",
+        )
+    else:
+        script = get(f"{base}{served}")
+        if script is not None and script[0] == 200:
+            report.add(OK, f"Le dock sert l'interface en HTTP ({served})")
+        else:
+            report.add(
+                FAIL,
+                f"Le dock sert la page d'accueil mais pas {served} (statut {script[0] if script else 'aucune réponse'}).",
+            )
+
+
 def check_config(report: Report, path: Path) -> DockConfig | None:
     report.section(f"Configuration ({path})")
     try:
@@ -62,16 +132,63 @@ def check_config(report: Report, path: Path) -> DockConfig | None:
     return config
 
 
-def check_web(report: Report, config: DockConfig) -> None:
+# Les noms de fichiers que l'interface compilée réclame : « import("./Music-B9amGNjk.js") », la liste des
+# dépendances « assets/Music-BM5q27xV.css », les polices « url(./inter-latin-wght-normal-Dx4kXJAl.woff2) ».
+ASSET_REFERENCE = re.compile(r"(?:\./|assets/)([\w.\-]+\.(?:js|css|woff2?))")
+
+
+def entry_of(html: str) -> str | None:
+    """Le script d'entrée d'une page index.html (« /assets/index-D5XASdAc.js »), ou None.
+
+    La page compilée écrit « ./assets/… » : le chemin est ramené à la forme absolue, celle qu'on demande au dock.
+    """
+    tag = re.search(r"<script\b[^>]*\btype=[\"']module[\"'][^>]*>", html, re.IGNORECASE)
+    src = re.search(r"\bsrc=[\"']([^\"']+)[\"']", tag.group(0), re.IGNORECASE) if tag else None
+    return urlsplit(urljoin("http://dock.invalid/", src.group(1))).path if src else None
+
+
+def missing_assets(web_dir: Path) -> list[str]:
+    """Les fichiers que l'interface demande et que le dossier n'a pas (ou que ce compte ne peut pas lire)."""
+    assets = web_dir / "assets"
+    missing: set[str] = set()
+    for bundle in sorted([*assets.glob("*.js"), *assets.glob("*.css")]):
+        for name in ASSET_REFERENCE.findall(bundle.read_text(errors="ignore")):
+            target = assets / name
+            if not (target.is_file() and os.access(target, os.R_OK)):
+                missing.add(name)
+    return sorted(missing)
+
+
+def _http_get(url: str, timeout: float = 2.0) -> tuple[int, bytes] | None:
+    """(statut, corps) ou None si rien ne répond : jamais de proxy, c'est le Pi lui-même."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=timeout) as response:
+            return response.status, response.read(1_000_000)
+    except urllib.error.HTTPError as exc:
+        return exc.code, b""
+    except (OSError, urllib.error.URLError, ValueError):
+        return None
+
+
+def check_web(
+    report: Report,
+    config: DockConfig,
+    *,
+    get: Callable[[str], tuple[int, bytes] | None] = _http_get,
+) -> None:
     report.section("Interface web")
     web_dir = config.web_dir
     if web_dir is None:
         report.add(FAIL, "paths.web_dir n'est pas défini dans la configuration.")
-    elif (web_dir / "index.html").is_file():
+    elif not (web_dir / "index.html").is_file():
+        report.add(FAIL, f"{web_dir}/index.html introuvable : compile l'interface (make web).")
+    else:
         assets = list((web_dir / "assets").glob("*")) if (web_dir / "assets").is_dir() else []
         report.add(OK, f"{web_dir} : index.html et {len(assets)} fichier(s) d'assets")
-    else:
-        report.add(FAIL, f"{web_dir}/index.html introuvable : compile l'interface (make web).")
+        entry = entry_of((web_dir / "index.html").read_text(errors="ignore"))
+        _check_web_files(report, web_dir, entry)
+        _check_web_served(report, config, entry, get)
     state_dir = config.state_dir
     if state_dir.is_dir() and os.access(state_dir, os.W_OK):
         report.add(OK, f"Dossier d'état modifiable : {state_dir}")

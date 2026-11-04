@@ -159,9 +159,37 @@ Un conteneur n'est pas un Pi, mais ces points ont été **exécutés pour de bon
 | Portail en panne : la raison est dite, la saisie à la main reste | Jeton refusé : « Associer à nouveau » affiche un code, « Annuler » revient |
 | ![Réglages](05-reglages-association.png) | ![Page vue du PC](06-portail-sur-le-pc.png) |
 | Réglages → Associer un PC : le PC actuel, le code, « Nouveau code » et « Fermer » | La page d'installation vue depuis le PC (un PC est déjà associé et connecté) |
-| ![Dock neuf, page](07-portail-dock-neuf.png) | |
-| La même page sur un dock neuf : le bandeau renvoie vers le code de l'écran | |
+| ![Dock neuf, page](07-portail-dock-neuf.png) | ![Page introuvable](08-page-introuvable.png) |
+| La même page sur un dock neuf : le bandeau renvoie vers le code de l'écran | Un fichier de page manque : l'écran le dit et propose « Recharger » (1.1.1) |
+| ![Page en erreur](09-page-en-erreur.png) | |
+| Une page plante sur des données inattendues : l'erreur est dite, les autres onglets marchent (1.1.1) | |
 
 ## Suite
 
 Le cahier des charges et ta demande d'architecture sont livrés. Il reste à **vérifier chez toi** les points ci-dessus (surtout le premier : `apt install` sur ton Pi), puis, selon tes réponses : un paquet pour Bookworm, d'autres systèmes pour la page, un portail plus fermé, TLS, ta liste de valeurs, alertes et indicateurs, réglages fins sur le Pi.
+
+## Addendum — 1.1.1 : « les onglets n'affichent rien » après la mise à jour
+
+**Signalé sur ton Pi** : l'interface n'affichait rien quand on touchait les icônes (la barre d'onglets) juste après l'installation de la 1.1.0.
+
+**Cause (reproduite, puis corrigée).** Les pages (Musique, Son, Applis…) se chargent **à la demande**, depuis des fichiers dont le nom change à chaque version (`Music-B9amGNjk.js`). Quand le paquet est mis à jour, l'ancien dossier est remplacé : **un écran resté ouvert pendant la mise à jour garde l'ancienne interface en mémoire** et demande des fichiers qui n'existent plus. Chaque onglet touché répond « introuvable », et rien ne le disait : la page restait vide. Je l'ai reproduit dans un vrai Chromium (ancienne interface ouverte, dossier remplacé par la nouvelle, onglets touchés : tous vides, des erreurs 404 dans la console). Je n'ai **pas pu confirmer que c'est ce qui s'est passé chez toi** (je ne vois pas ton écran) : c'est la cause qui correspond exactement au symptôme et à l'instant où il est apparu.
+
+**Remède immédiat chez toi** (la version installée ne sait pas encore se réparer) : relancer le navigateur du kiosque.
+
+```bash
+pkill -x chromium
+```
+
+Le kiosque le relance en deux secondes sur l'interface à jour (sinon `sudo reboot`).
+
+**Ce qui change dans la 1.1.1**
+- **L'écran se répare tout seul.** Quand la liaison avec le dock revient après une coupure (le dock redémarre à chaque mise à jour du paquet), l'interface compare **son** script d'entrée à celui que le dock sert maintenant ; s'ils diffèrent, elle **se recharge, une seule fois** (pas plus d'un rechargement automatique par demi-minute : jamais de boucle). Même chose si une page est introuvable au moment où on la touche.
+- **Plus jamais de page vide.** Si la page manque pour une autre raison (fichier absent, disque), l'écran affiche « Cette page n'a pas pu être chargée », **nomme le fichier** et propose **Recharger** (capture `08`). Si une page **plante sur des données inattendues** (par exemple une mesure absente d'un vrai PC que la démonstration ne produit pas), une **barrière d'erreur** l'isole : l'écran dit « Cette page a rencontré une erreur », **donne le message de l'erreur** et propose **Réessayer**, et les autres onglets continuent de marcher (capture `09`). Un petit « Chargement… » apparaît si le chargement traîne.
+- **Le diagnostic voit le problème.** `sudo -u mydock mydock-dock doctor`, section « Interface web » : tous les fichiers que l'interface réclame sont-ils dans le dossier et lisibles par le service, et le dock sert-il bien cette interface en HTTP ? Une page manquante est une **erreur** qui dit quels onglets resteraient vides.
+- **Version 1.1.1 partout**, parce que `apt install` n'installe pas deux fois la même version : une nouvelle construction de la 1.1.0 n'aurait rien changé sur ton Pi.
+
+**Tests de cette correction** : 16 unitaires (Vitest) pour la reconnaissance de l'interface périmée et le garde-fou ; **6 scénarios Playwright sur la vraie pile**, où le test « met à jour » une copie de l'interface en renommant tous les fichiers à empreinte comme le fait une compilation (un onglet touché après coup se charge et l'écran se recharge ; le dock qui revient met l'écran à jour sans qu'on y touche ; une liaison qui revient sans mise à jour ne recharge **rien** ; si le rechargement ne règle rien, pas de boucle et le fichier manquant est nommé ; un fichier injoignable sans mise à jour montre l'erreur et « Recharger » retente ; une page qui plante montre son erreur sans vider l'écran) ; 18 tests Python pour le diagnostic ; et le dock **extrait du paquet** est maintenant interrogé sur **chacun** des 30 fichiers de l'interface. **Vérifié aussi à l'envers** : les deux scénarios de réparation **échouent** contre l'interface d'avant la correction, et passent avec elle.
+
+**Totaux de la 1.1.1** : Python **1 689 réussis** (2 ignorés : ils supposent un utilisateur non root), Python avec les versions d'Ubuntu 26.04 **1 624**, interface (Vitest) **237**, bout en bout (Playwright) **194**, `ruff`, `svelte-check`, `shellcheck` propres, `dist/` à jour.
+
+**Mise à jour de la 1.1.0 vers la 1.1.1** : relancer le navigateur du kiosque une fois (la 1.1.0 en mémoire ne connaît pas encore la réparation) ; **à partir de la 1.1.1, plus rien à faire**.

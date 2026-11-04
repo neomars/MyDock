@@ -119,7 +119,7 @@ def test_doctor_web_and_wol_checks(tmp_path):
         {"paths": {"web_dir": str(web), "state_dir": str(state)}}, tmp_path / "d.toml"
     )
     report = Report()
-    check_web(report, config)
+    check_web(report, config, get=lambda _url: None)  # pas de réseau : le test reste hermétique
     assert "1 fichier(s) d'assets" in report.render()
     assert not report.failed
 

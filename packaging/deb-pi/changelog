@@ -1,3 +1,18 @@
+mydock (1.1.1) unstable; urgency=medium
+
+  * Correction : après une mise à jour du paquet, un écran resté ouvert gardait l'ancienne interface en
+    mémoire, et chaque onglet touché restait vide (les pages se chargent à la demande, depuis des fichiers
+    dont le nom change à chaque version, et ceux d'avant avaient disparu). L'écran se répare maintenant
+    tout seul : quand le dock revient après son redémarrage, ou quand une page est introuvable, il
+    compare son interface à celle que le dock sert et se recharge une fois si elles diffèrent ; sinon il
+    dit quel fichier manque, avec un bouton « Recharger ». Jamais de page vide.
+  * « mydock-dock doctor » (section « Interface web ») : vérifie que le dossier contient tous les fichiers
+    que l'interface réclame, qu'ils sont lisibles, et que le dock sert bien cette interface en HTTP.
+  * Pense à relancer le navigateur du kiosque après cette mise à jour (« pkill -x chromium », il repart
+    seul, ou « sudo reboot ») : la version d'avant ne sait pas encore se réparer toute seule.
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 04 Nov 2026 18:00:00 +0000
+
 mydock (1.1.0) unstable; urgency=medium
 
   * Un seul paquet pour le Raspberry Pi : le dock (serveur, interface tactile, kiosque Chromium dans

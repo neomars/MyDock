@@ -283,6 +283,28 @@ def test_the_build_is_reproducible(tmp_path):
     assert first.read_bytes() == second.read_bytes()
 
 
+def test_older_builds_of_the_same_package_do_not_pile_up(tmp_path):
+    """« apt install ./build/mydock_*_all.deb » ne doit jamais désigner deux versions."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "mydock_0.0.1_all.deb").write_bytes(b"ancien")
+    (out / "mydock-agent_0.0.1_all.deb").write_bytes(b"ancien")
+    (out / "notes.txt").write_text("à garder")
+
+    pi = builder.build_pi(out)
+    assert [p.name for p in out.glob("mydock_*_all.deb")] == [
+        pi.name
+    ]  # l'ancien paquet du Pi a disparu
+    assert (
+        out / "mydock-agent_0.0.1_all.deb"
+    ).exists()  # celui du PC n'est pas l'affaire de cette construction
+    assert (out / "notes.txt").exists()  # et rien d'étranger n'est touché
+
+    agent = builder.build(out)
+    assert [p.name for p in out.glob("mydock-agent_*_all.deb")] == [agent.name]
+    assert [p.name for p in out.glob("mydock_*_all.deb")] == [pi.name]
+
+
 def test_no_secret_is_packaged(extracted):
     pattern = re.compile(r"[A-Za-z0-9_\-]{43}")
     for path in extracted.rglob("*"):
@@ -613,6 +635,14 @@ def test_the_packaged_dock_serves_its_interface_and_the_pc_package(extracted, ag
     )
     try:
         wait_for(f"http://127.0.0.1:{portal_port}/api/portal", process)
+        # Chaque fichier de l'interface est servi, octet pour octet : une page de moins et un onglet reste vide.
+        web = extracted / "usr/share/mydock/web"
+        for file in sorted(p for p in web.rglob("*") if p.is_file()):
+            relative = file.relative_to(web).as_posix()
+            got, body = http_get(f"http://127.0.0.1:{server_port}/{relative}")
+            assert got == 200, relative
+            assert body == file.read_bytes(), relative
+
         status, page = http_get(f"http://127.0.0.1:{server_port}/")
         assert status == 200
         assert b'<div id="app">' in page or b'id="app"' in page  # l'interface compilée, embarquée
@@ -689,3 +719,4 @@ def test_the_packaged_doctor_runs_without_a_pc(extracted, tmp_path):
     assert result.returncode in (0, 1), result.stdout + result.stderr  # un dock neuf a des réserves
     assert "Traceback" not in result.stderr
     assert "Portail (installation du PC)" in result.stdout
+    assert "Interface complète" in result.stdout  # l'interface du paquet ne manque d'aucune page

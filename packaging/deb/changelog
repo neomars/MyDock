@@ -1,3 +1,10 @@
+mydock-agent (1.1.1) unstable; urgency=medium
+
+  * Aucun changement fonctionnel : la version suit celle du dock (1.1.1), qui corrige l'écran du Pi
+    (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 04 Nov 2026 18:00:00 +0000
+
 mydock-agent (1.1.0) unstable; urgency=medium
 
   * Le paquet se télécharge désormais depuis le Raspberry Pi : le dock sert, sur le réseau local, une
