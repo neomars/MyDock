@@ -15,7 +15,7 @@
       case 'connecting':
         return 'Connexion…'
       case 'not_configured':
-        return 'Aucun PC configuré'
+        return 'Aucun PC associé'
       case 'host_up_agent_down':
         return 'Agent arrêté'
       case 'auth_failed':

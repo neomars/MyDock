@@ -175,7 +175,7 @@ class Pairing:
             raise PairingRefused(
                 "not_open",
                 "Aucune association n'est en cours : sur l'écran du dock, "
-                "touche « Associer un PC » pour afficher un code.",
+                "ouvre Réglages → « Associer un PC » pour afficher un code.",
                 status=409,
             )
         session = self._session
@@ -192,7 +192,7 @@ class Pairing:
             raise PairingRefused(
                 "locked",
                 "Trop d'essais : l'association est annulée. Sur l'écran du dock, "
-                "touche « Associer un PC » pour obtenir un nouveau code.",
+                "ouvre Réglages → « Associer un PC » pour obtenir un nouveau code.",
                 status=403,
             )
         self._on_change()

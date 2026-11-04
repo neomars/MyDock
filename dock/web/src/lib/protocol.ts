@@ -278,6 +278,38 @@ export interface WolInfo {
   interfaces: { name: string; mac: string; kind: string }[]
 }
 
+/** Le portail du Pi : la page web d'où le PC télécharge son paquet et s'associe au dock. */
+export interface PortalInfo {
+  enabled: boolean
+  /** Port d'écoute (80 : pas écrit dans l'adresse) ; null tant que le portail ne tourne pas. */
+  port: number | null
+  /** Adresses à taper dans le navigateur du PC : les IPv4 du Pi d'abord, puis « nom.local ». */
+  urls: string[]
+  /** Pourquoi il ne tourne pas (port pris, droit refusé…) ; null quand tout va bien. */
+  error: string | null
+  /** Le paquet que le PC y télécharge ; null si aucun n'est installé sur le Pi. */
+  client: { file: string; version: string } | null
+}
+
+/** Comment s'est terminée la dernière session d'association. */
+export type PairingLast =
+  | { result: 'paired'; name: string; host: string; at: number }
+  | { result: 'expired' | 'locked' | 'closed'; at: number }
+
+/** L'association d'un PC : un code affiché sur l'écran du Pi, tapé sur le PC. */
+export type PairingInfo =
+  | {
+      open: true
+      /** « K7QM-2XPD ». N'existe que dans ce thème, envoyé à l'écran du Pi seulement. */
+      code: string
+      /** Heure d'expiration (epoch ms). */
+      expires_at: number
+      /** Essais incorrects encore permis avant que le code soit annulé. */
+      wrong_left: number
+      last: null
+    }
+  | { open: false; last: PairingLast | null }
+
 /** Thème « dock » : ce que le Pi sait de lui et du PC. Jamais le jeton. */
 export interface DockInfo {
   version: string
@@ -289,6 +321,10 @@ export interface DockInfo {
   wol: WolInfo
   /** Résumé de la bourse (sans abonnement aux cotations) ; absent d'un dock plus ancien. */
   markets?: { count: number; currency: 'EUR' | 'USD'; refresh: MarketRefresh; finnhub: boolean; demo: boolean }
+  /** Page d'installation du PC ; absent d'un dock plus ancien. */
+  portal?: PortalInfo
+  /** Association d'un PC par code ; absent d'un dock plus ancien. */
+  pairing?: PairingInfo
 }
 
 export type MarketKind = 'crypto' | 'stock'

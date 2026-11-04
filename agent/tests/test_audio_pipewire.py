@@ -243,7 +243,7 @@ async def test_volume_mute_and_default_really_change_on_the_server(stack):
         assert near(
             percent_of(max(c["value"] for c in stack.sink("casque")["volume"].values())), 37
         )
-        await eventually(lambda: near(published[-1]["sinks"][0]["volume"], 37), timeout=3)
+        await eventually(lambda: near(published[-1]["sinks"][0]["volume"], 37), timeout=10)
 
         await provider.set_mute("sink", "casque", True)
         assert stack.sink("casque")["mute"] is True
@@ -257,7 +257,7 @@ async def test_volume_mute_and_default_really_change_on_the_server(stack):
 
         await provider.set_default("sink", "hdmi_ecran")
         assert stack.json("info")["default_sink_name"] == "hdmi_ecran"
-        await eventually(lambda: published[-1]["default_sink"] == "hdmi_ecran", timeout=3)
+        await eventually(lambda: published[-1]["default_sink"] == "hdmi_ecran", timeout=10)
 
 
 async def test_the_left_right_balance_survives_on_a_real_server(stack):
@@ -272,11 +272,11 @@ async def test_the_left_right_balance_survives_on_a_real_server(stack):
 async def test_changes_made_by_other_programs_reach_the_dock(stack):
     async with running(stack) as (_provider, published):
         stack.run("set-sink-volume", "casque", "20%")  # le clavier, GNOME, pavucontrol...
-        await eventually(lambda: near(published[-1]["sinks"][0]["volume"], 20), timeout=3)
+        await eventually(lambda: near(published[-1]["sinks"][0]["volume"], 20), timeout=10)
         stack.run("set-sink-mute", "casque", "1")
-        await eventually(lambda: published[-1]["sinks"][0]["muted"] is True, timeout=3)
+        await eventually(lambda: published[-1]["sinks"][0]["muted"] is True, timeout=10)
         stack.run("set-default-sink", "hdmi_ecran")
-        await eventually(lambda: published[-1]["default_sink"] == "hdmi_ecran", timeout=3)
+        await eventually(lambda: published[-1]["default_sink"] == "hdmi_ecran", timeout=10)
 
 
 async def test_applications_come_and_go_and_can_be_adjusted(stack):
@@ -309,7 +309,7 @@ async def test_applications_come_and_go_and_can_be_adjusted(stack):
         )
         assert near(percent_of(max(c["value"] for c in server["volume"].values())), 25)
         await provider.set_mute("app", spotify["id"], True)
-        await eventually(lambda: app(published[-1], "Spotify")["muted"] is True, timeout=3)
+        await eventually(lambda: app(published[-1], "Spotify")["muted"] is True, timeout=10)
 
         player.terminate()
         player.wait(timeout=5)

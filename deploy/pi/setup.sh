@@ -81,7 +81,8 @@ if [ "$REMOVE" = 1 ]; then
     done
   fi
   run rm -f "$UNIT_DIR/mydock-kiosk.service"
-  [ "$NO_SYSTEMD" = 1 ] || run systemctl daemon-reload
+  # Un systemd injoignable (conteneur, chroot) ne doit pas empêcher de rendre le bureau : la suite se fait quand même.
+  [ "$NO_SYSTEMD" = 1 ] || run systemctl daemon-reload || true
   ok "Services arrêtés"
 
   step "Kiosque en mode bureau"
