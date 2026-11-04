@@ -400,6 +400,11 @@ def _assemble(
         raise BuildError(f"dpkg-deb a échoué :\n{exc.stderr}") from None
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    # Les versions précédentes du même paquet ne restent pas à côté : « apt install ./build/mydock_*_all.deb »
+    # doit désigner un seul fichier, jamais deux versions à la fois.
+    for stale in output.glob(f"{target.package}_*_all.deb"):
+        if stale != deb:
+            stale.unlink()
     return deb
 
 

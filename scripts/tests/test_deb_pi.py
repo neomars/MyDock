@@ -283,6 +283,28 @@ def test_the_build_is_reproducible(tmp_path):
     assert first.read_bytes() == second.read_bytes()
 
 
+def test_older_builds_of_the_same_package_do_not_pile_up(tmp_path):
+    """« apt install ./build/mydock_*_all.deb » ne doit jamais désigner deux versions."""
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "mydock_0.0.1_all.deb").write_bytes(b"ancien")
+    (out / "mydock-agent_0.0.1_all.deb").write_bytes(b"ancien")
+    (out / "notes.txt").write_text("à garder")
+
+    pi = builder.build_pi(out)
+    assert [p.name for p in out.glob("mydock_*_all.deb")] == [
+        pi.name
+    ]  # l'ancien paquet du Pi a disparu
+    assert (
+        out / "mydock-agent_0.0.1_all.deb"
+    ).exists()  # celui du PC n'est pas l'affaire de cette construction
+    assert (out / "notes.txt").exists()  # et rien d'étranger n'est touché
+
+    agent = builder.build(out)
+    assert [p.name for p in out.glob("mydock-agent_*_all.deb")] == [agent.name]
+    assert [p.name for p in out.glob("mydock_*_all.deb")] == [pi.name]
+
+
 def test_no_secret_is_packaged(extracted):
     pattern = re.compile(r"[A-Za-z0-9_\-]{43}")
     for path in extracted.rglob("*"):
