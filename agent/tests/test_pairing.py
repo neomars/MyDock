@@ -515,3 +515,111 @@ def test_the_command_line_passes_the_code_the_portal_port_and_no_pair(monkeypatc
     assert (seen["code"], seen["portal_port"], seen["pair"]) == ("K7QM-2XPD", 8081, True)
     assert cli.main(["setup", "--pi", "192.168.1.60", "--no-pair"]) == 0
     assert (seen["code"], seen["portal_port"], seen["pair"]) == (None, 80, False)
+
+
+# --- « mydock-agent pair » : l'association seule ---------------------------------------------------------------------
+
+
+def pair_cmd(home: Path, dock: Dock, *, asks=(), configure=True, **kw):
+    """Lance `pair` ; par défaut sur un PC déjà configuré (comme après l'installation sans paquet)."""
+    if configure:
+        run_setup(
+            config_path=home / ".config" / "mydock" / "agent.toml",
+            pi=["192.168.1.60"],
+            systemd=FakeSystemd(),
+            wait=lambda _c: True,
+            pair=False,
+            is_root=False,
+            out=lambda _line: None,
+        )
+    lines: list[str] = []
+    answers = iter(asks)
+    kw.setdefault("systemd", FakeSystemd())
+    kw.setdefault("wait", lambda _config: True)
+    kw.setdefault("interactive", bool(asks))
+    kw.setdefault("pi", "192.168.1.60")
+    code = setup.run_pair(
+        config_path=home / ".config" / "mydock" / "agent.toml",
+        out=lines.append,
+        fetch=dock.fetch,
+        pair_with=dock.pair,
+        ask=lambda _prompt: next(answers),
+        **kw,
+    )
+    return code, "\n".join(lines)
+
+
+def test_pair_associates_a_configured_pc_without_touching_the_service(home):
+    systemd = FakeSystemd()
+    dock = Dock(PAIRED)
+    code, text = pair_cmd(home, dock, code="K7QM-2XPD", systemd=systemd)
+    assert code == 0
+    [_, sent] = dock.calls
+    assert sent["token"] == config_of(home).token
+    assert sent["pair"] == ("192.168.1.60", 80)
+    assert "PC associé au dock « raspberrypi »" in text
+    assert systemd.calls == []  # ni démarrage, ni redémarrage : seulement l'association
+
+
+def test_pair_asks_for_the_code_when_none_is_given(home):
+    dock = Dock(PAIRED)
+    code, _ = pair_cmd(home, dock, asks=["k7qm 2xpd"])
+    assert code == 0
+    assert dock.calls[1]["code"] == "k7qm 2xpd"
+
+
+def test_pair_without_a_terminal_or_a_code_says_how_to_come_back(home):
+    dock = Dock()
+    code, text = pair_cmd(home, dock)
+    assert code == 1
+    assert "--code CODE" in text
+    assert [c for c in dock.calls if "pair" in c] == []
+
+
+def test_pair_on_an_unconfigured_pc_sends_to_setup_first(home):
+    dock = Dock()
+    code, text = pair_cmd(home, dock, configure=False)
+    assert code == 2
+    assert "mydock-agent setup" in text
+    assert dock.calls == []
+
+
+def test_pair_needs_the_agent_to_run(home):
+    dock = Dock()
+    code, text = pair_cmd(home, dock, code="K7QM-2XPD", wait=lambda _c: False)
+    assert code == 1
+    assert "L'agent ne répond pas" in text
+    assert dock.calls == []
+
+
+def test_pair_refuses_a_network_and_an_unresolvable_name(home, monkeypatch):
+    dock = Dock()
+    code, text = pair_cmd(home, dock, code="K7QM-2XPD", pi="192.168.1.0/24")
+    assert code == 2
+    assert "pas un réseau" in text
+
+    def refuse(_name, *_a, **_k):
+        raise OSError("nope")
+
+    monkeypatch.setattr(setup.socket, "getaddrinfo", refuse)
+    code, text = pair_cmd(home, dock, code="K7QM-2XPD", pi="raspberrypi.local")
+    assert code == 2
+    assert "Impossible de résoudre" in text
+    assert dock.calls == []
+
+
+def test_pair_reports_a_failed_association_with_a_non_zero_status(home):
+    dock = Dock(PairingError("bad_code", "Code incorrect."))
+    code, text = pair_cmd(home, dock, code="AAAA-AAAA")
+    assert code == 1
+    assert "Code incorrect" in text
+
+
+def test_the_command_line_pair_passes_its_options(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "run_pair", lambda **kw: seen.update(kw) or 0)
+    assert cli.main(["pair", "--pi", "192.168.1.60", "--code", "K7QM-2XPD"]) == 0
+    assert seen["pi"] == "192.168.1.60"
+    assert (seen["code"], seen["portal_port"]) == ("K7QM-2XPD", 80)
+    assert cli.main(["pair", "--pi", "192.168.1.60", "--portal-port", "8081"]) == 0
+    assert (seen["code"], seen["portal_port"]) == (None, 8081)

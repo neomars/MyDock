@@ -1,7 +1,8 @@
 """Tests des scripts de déploiement, sans Pi ni systemd : installation réelle dans un dossier temporaire.
 
-Ce qui est vérifié ici : les fichiers écrits, leurs droits, l'idempotence, la simulation, les refus
-(jeton absent, nom introuvable, root sur le PC) et le lanceur du kiosque (avec un faux Chromium).
+Ce qui est vérifié ici : les fichiers écrits, leurs droits, l'idempotence, la simulation, la
+reprise d'une ancienne installation, le retrait, les refus (nom introuvable, root sur le PC) et le
+lanceur du kiosque (avec un faux Chromium).
 Ce qui ne peut pas l'être ici et reste à valider sur les vraies machines : apt, useradd, systemd,
 ufw, NetworkManager, labwc, Chromium et l'écran lui-même.
 """
@@ -99,9 +100,7 @@ def test_shellcheck_is_clean():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize(
-    "script", [*sorted(PC.glob("install-*.sh")), *sorted(PI.glob("install-*.sh"))]
-)
+@pytest.mark.parametrize("script", [*sorted(PC.glob("install-*.sh")), PI / "setup.sh"])
 def test_help_is_in_french_and_exits_cleanly(script):
     result = sh([script, "--help"], env=base_env())
     assert result.returncode == 0
@@ -151,7 +150,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 0.6.0")
+    assert version.stdout.startswith("mydock-agent 1.1.0")
 
 
 @pytest.mark.slow
@@ -166,16 +165,16 @@ def test_pc_unit_file_points_at_the_installed_venv(pc_install):
 
 
 @pytest.mark.slow
-def test_pc_prints_the_token_once_then_keeps_it(pc_install):
+def test_pc_never_prints_the_token_but_says_how_to_read_it(pc_install):
     first, second = pc_install["first"], pc_install["second"]
     venv = pc_install["home"] / ".local" / "share" / "mydock" / "venv"
     token = sh([venv / "bin" / "mydock-agent", "show-token"], env=pc_install["env"]).stdout.strip()
     assert len(token) >= 43
-    assert "Jeton à saisir sur le Pi" in first.stdout
-    assert token in first.stdout
+    # Le dock reçoit le jeton pendant l'association : plus rien à recopier, donc rien à afficher.
+    assert token not in first.stdout + first.stderr
+    assert token not in second.stdout + second.stderr
     assert second.returncode == 0, second.stdout + second.stderr
-    assert token not in second.stdout  # le jeton n'est plus affiché
-    assert "Jeton existant conservé" in second.stdout
+    assert "mydock-agent show-token" in first.stdout  # pour une saisie à la main
 
 
 @pytest.mark.slow
@@ -186,7 +185,7 @@ def test_pc_second_run_changes_nothing(pc_install):
 
 
 @pytest.mark.slow
-def test_pc_rotating_the_token_gives_a_new_one(pc_install):
+def test_pc_rotating_the_token_gives_a_new_one_and_says_to_pair_again(pc_install):
     venv = pc_install["home"] / ".local" / "share" / "mydock" / "venv"
     before = sh([venv / "bin" / "mydock-agent", "show-token"], env=pc_install["env"]).stdout.strip()
     result = sh(
@@ -195,16 +194,18 @@ def test_pc_rotating_the_token_gives_a_new_one(pc_install):
     after = sh([venv / "bin" / "mydock-agent", "show-token"], env=pc_install["env"]).stdout.strip()
     assert result.returncode == 0, result.stdout + result.stderr
     assert after != before
-    assert after in result.stdout
+    assert after not in result.stdout
+    assert "mydock-agent pair --pi 192.0.2.50" in result.stdout  # le dock reprend le nouveau jeton
 
 
 @pytest.mark.slow
-def test_pc_final_message_gives_an_ip_address_not_a_local_name(pc_install):
+def test_pc_final_message_gives_the_pairing_command(pc_install):
     out = pc_install["first"].stdout
-    assert "sudo ./deploy/pi/install-dock.sh --pc " in out
-    assert "Préfère l'adresse IP" in out
+    venv = pc_install["home"] / ".local" / "share" / "mydock" / "venv"
+    assert f"{venv}/bin/mydock-agent pair --pi 192.0.2.50" in out  # l'adresse du Pi donnée à --pi
+    assert "install-dock" not in out  # l'ancien installateur du Pi n'existe plus
     assert "bail DHCP" in out
-    assert "-w '%{http_code}\\n'" in out  # le test curl à lancer depuis le Pi
+    assert "Réglages du dock → PC piloté" in out  # la saisie à la main reste possible
 
 
 def test_pc_script_steps_aside_when_the_deb_package_is_installed(tmp_path):
@@ -255,146 +256,111 @@ def test_pc_unknown_option_is_explained(tmp_path):
     assert "Option inconnue" in result.stderr
 
 
-# --- Pi : dock ----------------------------------------------------------------------------------
+# --- Pi : intégration système du dock (deploy/pi/setup.sh, lancé par le paquet « mydock ») --------
+
+
+def dock_command(directory: Path) -> Path:
+    """Le « mydock-dock » du paquet, remplacé par le programme du dépôt (l'environnement de test)."""
+    path = directory / "mydock-dock"
+    path.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m mydock_dock "$@"\n')
+    path.chmod(0o755)
+    return path
+
+
+def setup_env(tmp_path: Path) -> dict[str, str]:
+    return base_env(HOME=str(tmp_path), MYDOCK_DOCK_BIN=str(dock_command(tmp_path)))
 
 
 @pytest.fixture(scope="module")
-def pi_install(tmp_path_factory, wheelhouse):
-    prefix = tmp_path_factory.mktemp("pi-root")
-    token_file = prefix.parent / "jeton.txt"
-    token_file.write_text(TOKEN + "\n")
-    env = base_env(HOME=str(prefix.parent), **offline(wheelhouse))
-    args = [
-        "--prefix", str(prefix), "--pc", "Ubuntu.local", "--token-file", str(token_file),
-        "--kiosk", "systemd", "--force-mode", "1024x600@60",
-    ]  # fmt: skip
-    first = sh([PI / "install-dock.sh", *args], env=env)
+def pi_setup(tmp_path_factory):
+    work = tmp_path_factory.mktemp("pi-setup")
+    prefix = work / "root"
+    env = setup_env(work)
+    args = ["--prefix", str(prefix), "--kiosk", "systemd", "--force-mode", "1024x600@60"]
+    first = sh([PI / "setup.sh", *args], env=env)
     config = prefix / "etc" / "mydock" / "dock.toml"
     snapshot = config.read_bytes() if config.exists() else b""
-    second = sh([PI / "install-dock.sh", *args], env=env)
-    # Mise à jour sans rien redonner : la configuration existante suffit.
-    third = sh([PI / "install-dock.sh", "--prefix", str(prefix), "--kiosk", "systemd"], env=env)
+    second = sh([PI / "setup.sh", *args], env=env)
     return {
         "prefix": prefix,
         "env": env,
         "first": first,
         "second": second,
-        "third": third,
         "config": config,
         "snapshot": snapshot,
     }
 
 
-@pytest.mark.slow
-def test_pi_install_writes_everything_where_the_services_expect_it(pi_install):
-    first, prefix = pi_install["first"], pi_install["prefix"]
+def test_pi_setup_creates_a_private_config_for_a_dock_without_a_pc(pi_setup):
+    first, config = pi_setup["first"], pi_setup["config"]
     assert first.returncode == 0, first.stdout + first.stderr
-    assert (prefix / "opt/mydock/src/dock/web/dist/index.html").is_file()
-    assert (prefix / "opt/mydock/src/deploy/pi/kiosk-browser.sh").stat().st_mode & stat.S_IXUSR
-    assert (prefix / "opt/mydock/src/deploy/pi/screen-sleep.sh").stat().st_mode & stat.S_IXUSR
-    assert (prefix / "opt/mydock/venv/bin/mydock-dock").exists()
-    version = sh([prefix / "opt/mydock/venv/bin/mydock-dock", "--version"], env=pi_install["env"])
-    assert version.stdout.startswith("mydock-dock 0.6.0")
-    # les tests et les sources inutiles n'encombrent pas le Pi
-    assert not list((prefix / "opt/mydock/src").rglob("tests"))
-
-
-@pytest.mark.slow
-def test_pi_config_is_private_and_normalized(pi_install):
-    config = pi_install["config"]
     assert mode(config) == 0o600
     text = config.read_text()
-    assert 'host = "ubuntu.local"' in text  # saisi « Ubuntu.local » : normalisé
-    assert f'token = "{TOKEN}"' in text
-    assert 'web_dir = "/opt/mydock/src/dock/web/dist"' in text
-    assert 'listen_host = "127.0.0.1"' in text
+    # Un dock neuf n'a ni PC ni jeton : le PC s'associe avec un code (portail), rien n'est demandé.
+    assert 'host = ""' in text
+    assert 'token = ""' in text
+    assert 'state_dir = "/var/lib/mydock"' in text
+    assert 'web_dir = "/usr/share/mydock/web"' in text
+    assert 'clients_dir = "/usr/share/mydock/clients"' in text
+    assert 'listen_host = "127.0.0.1"' in text  # l'interface du dock reste locale...
+    assert "[portal]" in text
+    assert 'listen_host = "0.0.0.0"' in text  # ... seul le portail est sur le réseau local
+    assert "port = 80" in text
+    assert mode(pi_setup["prefix"] / "etc/mydock") == 0o750
+    assert "--pc" not in first.stdout + first.stderr
 
 
-@pytest.mark.slow
-def test_pi_token_never_leaks_outside_the_private_config(pi_install):
-    prefix, config = pi_install["prefix"], pi_install["config"]
-    for result in ("first", "second", "third"):
-        out = pi_install[result]
-        assert TOKEN not in out.stdout + out.stderr, f"jeton affiché par l'étape {result}"
-    leaks = [
-        p
-        for p in prefix.rglob("*")
-        if p.is_file() and p != config and not p.is_symlink() and "venv" not in p.parts
-        and TOKEN.encode() in p.read_bytes()
-    ]  # fmt: skip
-    assert leaks == []
+def test_pi_setup_says_where_the_pc_goes_next(pi_setup):
+    out = pi_setup["first"].stdout
+    assert "ouvre   http://" in out
+    assert ".local/" in out
+    assert "mydock-dock doctor" in out
 
 
-@pytest.mark.slow
-def test_pi_service_units_are_rendered_and_hardened(pi_install):
-    prefix = pi_install["prefix"]
-    dock = (prefix / "etc/systemd/system/mydock-dock.service").read_text()
-    assert "ExecStart=/opt/mydock/venv/bin/mydock-dock run --config /etc/mydock/dock.toml" in dock
-    assert "ReadWritePaths=/var/lib/mydock /etc/mydock" in dock
-    for hardening in (
-        "NoNewPrivileges=yes",
-        "ProtectSystem=strict",
-        "ProtectHome=yes",
-        "PrivateTmp=yes",
-    ):
-        assert hardening in dock
-    assert "User=mydock\n" in dock
-    kiosk = (prefix / "etc/systemd/system/mydock-kiosk.service").read_text()
-    assert "User=mydock-kiosk" in kiosk
-    assert "ExecStart=/usr/bin/labwc --config-dir /etc/mydock-kiosk/labwc" in kiosk
-    for text in (dock, kiosk):
-        assert not re.findall(r"@[A-Z_]+@", text)  # tous les marqueurs @NOM@ sont remplacés
-
-
-@pytest.mark.slow
-def test_pi_kiosk_configuration_is_readable_by_the_browser_user(pi_install):
-    prefix = pi_install["prefix"]
+def test_pi_kiosk_configuration_is_readable_by_the_browser_user(pi_setup):
+    prefix = pi_setup["prefix"]
     autostart = (prefix / "etc/mydock-kiosk/labwc/autostart").read_text()
-    assert "/opt/mydock/src/deploy/pi/kiosk-browser.sh &" in autostart
-    assert "/opt/mydock/src/deploy/pi/screen-sleep.sh &" in autostart  # la veille de l'écran
+    assert "/usr/lib/mydock/kiosk-browser.sh &" in autostart
+    assert "/usr/lib/mydock/screen-sleep.sh &" in autostart  # la veille de l'écran
+    assert not re.findall(r"@[A-Z_]+@", autostart)
     assert (
         'MYDOCK_OUTPUT_MODE="1024x600@60"' in (prefix / "etc/mydock-kiosk/display.conf").read_text()
     )
     assert (prefix / "etc/mydock-kiosk/chromium.flags").is_file()
     for path in (prefix / "etc/mydock-kiosk").rglob("*"):
         if path.is_file():
-            assert (
-                mode(path) == 0o644
-            )  # lisible par mydock-kiosk, jamais par le jeton (dans /etc/mydock)
-    assert mode(prefix / "etc/mydock") == 0o750
+            # lisible par mydock-kiosk, jamais ce qui tient le jeton (dans /etc/mydock)
+            assert mode(path) == 0o644
 
 
-@pytest.mark.slow
-def test_pi_reinstall_changes_no_config_and_keeps_the_token(pi_install):
-    assert pi_install["second"].returncode == 0, (
-        pi_install["second"].stdout + pi_install["second"].stderr
-    )
-    assert pi_install["config"].read_bytes() == pi_install["snapshot"]
-    assert "= inchangé" in pi_install["second"].stdout
-    assert "+ écrit" not in pi_install["second"].stdout
+def test_pi_kiosk_unit_is_rendered(pi_setup):
+    unit = (pi_setup["prefix"] / "etc/systemd/system/mydock-kiosk.service").read_text()
+    assert "User=mydock-kiosk" in unit
+    assert "ExecStart=/usr/bin/labwc --config-dir /etc/mydock-kiosk/labwc" in unit
+    assert not re.findall(r"@[A-Z_]+@", unit)  # tous les marqueurs @NOM@ sont remplacés
 
 
-@pytest.mark.slow
-def test_pi_update_without_arguments_reuses_the_existing_configuration(pi_install):
-    third = pi_install["third"]
-    assert third.returncode == 0, third.stdout + third.stderr
-    assert pi_install["config"].read_bytes() == pi_install["snapshot"]
-    assert "celui de la configuration existante" in third.stdout
+def test_pi_setup_run_again_changes_nothing(pi_setup):
+    second = pi_setup["second"]
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert pi_setup["config"].read_bytes() == pi_setup["snapshot"]
+    assert "= inchangé" in second.stdout
+    assert "+ écrit" not in second.stdout
 
 
 @pytest.mark.skipif(shutil.which("systemd-analyze") is None, reason="systemd-analyze absent")
-@pytest.mark.slow
 @pytest.mark.parametrize("unit", ["mydock-dock.service", "mydock-kiosk.service"])
-def test_pi_units_are_valid_systemd_syntax(pi_install, unit):
-    prefix = pi_install["prefix"]
+def test_pi_units_are_valid_systemd_syntax(pi_setup, tmp_path, unit):
+    root = tmp_path / "root"
+    (root / "etc/systemd/system").mkdir(parents=True)
+    source = (
+        ROOT / "packaging/deb-pi/mydock-dock.service"
+        if unit == "mydock-dock.service"
+        else pi_setup["prefix"] / "etc/systemd/system" / unit
+    )
+    (root / "etc/systemd/system" / unit).write_text(source.read_text())
     result = subprocess.run(
-        [
-            "systemd-analyze",
-            "verify",
-            "--man=no",
-            f"--root={prefix}",
-            f"/etc/systemd/system/{unit}",
-        ],
+        ["systemd-analyze", "verify", "--man=no", f"--root={root}", f"/etc/systemd/system/{unit}"],
         capture_output=True,
         text=True,
         check=False,
@@ -416,32 +382,57 @@ def test_pi_units_are_valid_systemd_syntax(pi_install, unit):
     assert problems == [], "\n".join(problems)
 
 
-def test_pi_first_install_without_a_token_is_refused_with_instructions(tmp_path):
-    env = base_env(HOME=str(tmp_path))
-    result = sh(
-        [
-            PI / "install-dock.sh",
-            "--prefix",
-            str(tmp_path / "p"),
-            "--pc",
-            "ubuntu.local",
-            "--kiosk",
-            "none",
-        ],
-        env=env,
-    )
-    assert result.returncode != 0
-    assert "jeton" in result.stderr.lower()
-    assert "show-token" in result.stderr
-
-
-def test_pi_first_install_without_a_pc_is_refused(tmp_path):
-    result = sh(
-        [PI / "install-dock.sh", "--prefix", str(tmp_path / "p"), "--kiosk", "none"],
+def test_pi_upgrade_from_the_old_installer_keeps_the_pc_and_the_token(tmp_path):
+    prefix = tmp_path / "root"
+    config = prefix / "etc" / "mydock" / "dock.toml"
+    init = sh(
+        [dock_command(tmp_path), "init", "--config", config, "--pc", "192.0.2.20", "--token-stdin",
+         "--web-dir", "/opt/mydock/src/dock/web/dist", "--state-dir", "/var/lib/mydock"],
         env=base_env(HOME=str(tmp_path)),
+        input=TOKEN + "\n",
+    )  # fmt: skip
+    assert init.returncode == 0, init.stdout + init.stderr
+    unit = prefix / "etc/systemd/system/mydock-dock.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("[Service]\nExecStart=/opt/mydock/venv/bin/mydock-dock run\n")
+
+    result = sh(
+        [PI / "setup.sh", "--prefix", str(prefix), "--kiosk", "none"], env=setup_env(tmp_path)
     )
-    assert result.returncode != 0
-    assert "--pc est nécessaire" in result.stderr
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = config.read_text()
+    assert 'host = "192.0.2.20"' in text
+    assert f'token = "{TOKEN}"' in text
+    assert 'web_dir = "/usr/share/mydock/web"' in text  # l'ancien dossier n'existe plus
+    assert mode(config) == 0o600
+    assert not unit.exists()  # son unité masquerait celle du paquet
+    assert "Ancienne unité mydock-dock retirée" in result.stdout
+    assert "/opt/mydock" in result.stdout  # et on dit quoi supprimer
+    assert TOKEN not in result.stdout + result.stderr
+
+
+def test_pi_setup_never_deletes_a_unit_it_did_not_install(tmp_path):
+    prefix = tmp_path / "root"
+    unit = prefix / "etc/systemd/system/mydock-dock.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("[Service]\nExecStart=/usr/bin/mydock-dock run\n")
+    result = sh(
+        [PI / "setup.sh", "--prefix", str(prefix), "--kiosk", "none"], env=setup_env(tmp_path)
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert unit.exists()
+
+
+def test_pi_without_a_kiosk_writes_only_the_configuration(tmp_path):
+    prefix = tmp_path / "root"
+    result = sh(
+        [PI / "setup.sh", "--prefix", str(prefix), "--kiosk", "none"], env=setup_env(tmp_path)
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (prefix / "etc/mydock/dock.toml").is_file()
+    assert not (prefix / "etc/mydock-kiosk").exists()
+    assert not (prefix / "etc/systemd/system/mydock-kiosk.service").exists()
 
 
 @pytest.mark.parametrize(
@@ -449,62 +440,109 @@ def test_pi_first_install_without_a_pc_is_refused(tmp_path):
     [
         (["--kiosk", "bizarre"], "valeur inconnue"),
         (["--force-mode", "grand"], "format attendu"),
+        (["--kiosk"], "attend une valeur"),
         (["--n-importe-quoi"], "Option inconnue"),
     ],
 )
 def test_pi_bad_options_are_explained(tmp_path, extra, message):
-    result = sh(
-        [PI / "install-dock.sh", "--prefix", str(tmp_path / "p"), "--pc", "x.local", *extra],
-        env=base_env(HOME=str(tmp_path)),
-    )
+    result = sh([PI / "setup.sh", "--prefix", str(tmp_path / "p"), *extra], env=setup_env(tmp_path))
     assert result.returncode != 0
     assert message in result.stderr
+    assert not (tmp_path / "p").exists()  # rien n'est écrit avant l'erreur
 
 
 def test_pi_dry_run_touches_nothing(tmp_path):
     prefix = tmp_path / "p"
-    env = base_env(HOME=str(tmp_path), MYDOCK_TOKEN=TOKEN)
     result = sh(
-        [PI / "install-dock.sh", "--prefix", str(prefix), "--pc", "ubuntu.local", "--dry-run"],
-        env=env,
+        [PI / "setup.sh", "--prefix", str(prefix), "--kiosk", "systemd", "--dry-run"],
+        env=setup_env(tmp_path),
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "simulation" in result.stdout
     assert not prefix.exists() or [p for p in prefix.rglob("*") if p.is_file()] == []
-    assert TOKEN not in result.stdout
 
 
 def test_pi_refuses_to_run_without_root_outside_tests(tmp_path):
     if os.getuid() == 0:
         pytest.skip("le test suppose un utilisateur non root")
-    result = sh([PI / "install-dock.sh", "--pc", "ubuntu.local"], env=base_env(HOME=str(tmp_path)))
+    result = sh([PI / "setup.sh"], env=setup_env(tmp_path))
     assert result.returncode != 0
     assert "avec sudo" in result.stderr
 
 
-@pytest.mark.slow
-def test_pi_desktop_mode_edits_the_session_autostart_and_backs_up_the_original(
-    tmp_path, wheelhouse
-):
+def desktop_install(tmp_path: Path, *extra: str):
+    prefix = tmp_path / "p"
+    home = prefix / "home" / "alice"
+    (home / ".config" / "labwc").mkdir(parents=True, exist_ok=True)
+    cmd = [
+        PI / "setup.sh",
+        "--prefix",
+        prefix,
+        "--kiosk",
+        "desktop",
+        "--kiosk-user",
+        "alice",
+        *extra,
+    ]
+    return prefix, home, sh(cmd, env=setup_env(tmp_path))
+
+
+def test_pi_desktop_mode_edits_the_session_autostart_and_backs_up_the_original(tmp_path):
     prefix = tmp_path / "p"
     home = prefix / "home" / "alice"
     (home / ".config" / "labwc").mkdir(parents=True)
     original = "wf-panel-pi &\npcmanfm --desktop &\n"
     (home / ".config" / "labwc" / "autostart").write_text(original)
-    token_file = tmp_path / "jeton"
-    token_file.write_text(TOKEN)
-    cmd = [
-        PI / "install-dock.sh", "--prefix", str(prefix), "--pc", "192.0.2.20", "--token-file", str(token_file),
-        "--kiosk", "desktop", "--kiosk-user", "alice",
-    ]  # fmt: skip
-    env = base_env(HOME=str(tmp_path), **offline(wheelhouse))
     for _ in range(2):  # deux fois : la sauvegarde ne doit être faite qu'une fois
-        result = sh(cmd, env=env)
+        _, _, result = desktop_install(tmp_path)
         assert result.returncode == 0, result.stdout + result.stderr
     autostart = home / ".config" / "labwc" / "autostart"
-    assert "kiosk-browser.sh" in autostart.read_text()
+    assert "/usr/lib/mydock/kiosk-browser.sh &" in autostart.read_text()
     assert "wf-panel-pi" not in autostart.read_text()  # le bureau ne se lance plus
     assert (autostart.parent / "autostart.avant-mydock").read_text() == original
+
+
+def test_pi_removal_gives_the_desktop_back_and_keeps_the_configuration(tmp_path):
+    prefix, home, _ = desktop_install(tmp_path)
+    autostart = home / ".config" / "labwc" / "autostart"
+    original = "wf-panel-pi &\n"
+    backup = autostart.parent / "autostart.avant-mydock"
+    autostart.write_text(original)
+    desktop_install(tmp_path)  # sauvegarde l'autostart d'origine puis installe celui de MyDock
+    assert backup.read_text() == original
+
+    result = sh([PI / "setup.sh", "--prefix", str(prefix), "--remove"], env=setup_env(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert autostart.read_text() == original
+    assert not backup.exists()
+    assert not (prefix / "etc/mydock-kiosk").exists()
+    assert (prefix / "etc/mydock/dock.toml").is_file()  # « apt remove » garde la configuration
+    assert "apt purge mydock" in result.stdout
+
+
+def test_pi_removal_without_a_backup_removes_only_what_mydock_wrote(tmp_path):
+    prefix, home, _ = desktop_install(tmp_path)
+    autostart = home / ".config" / "labwc" / "autostart"
+    assert "MyDock" in autostart.read_text()
+    other = home / ".config" / "labwc" / "rc.xml"
+    other.write_text("<labwc_config/>")
+
+    result = sh([PI / "setup.sh", "--prefix", str(prefix), "--remove"], env=setup_env(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not autostart.exists()
+    assert other.read_text() == "<labwc_config/>"
+
+
+def test_pi_removal_leaves_an_autostart_that_is_not_ours(tmp_path):
+    prefix = tmp_path / "p"
+    autostart = prefix / "home" / "bob" / ".config" / "labwc" / "autostart"
+    autostart.parent.mkdir(parents=True)
+    autostart.write_text("wf-panel-pi &\n")
+    result = sh([PI / "setup.sh", "--prefix", str(prefix), "--remove"], env=setup_env(tmp_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert autostart.read_text() == "wf-panel-pi &\n"
 
 
 # --- le lanceur du kiosque, avec un faux Chromium ---------------------------------------------------

@@ -1,0 +1,24 @@
+#!/bin/sh
+# Après installation ou mise à jour de mydock (le dock du Raspberry Pi).
+set -e
+
+case "$1" in
+    configure)
+        if command -v py3compile >/dev/null 2>&1; then
+            py3compile -p mydock || true
+        fi
+        # « mydock » tient le jeton de l'agent : un utilisateur système qui ne se connecte jamais.
+        if ! getent passwd mydock >/dev/null 2>&1; then
+            adduser --system --group --home /var/lib/mydock --no-create-home \
+                --shell /usr/sbin/nologin mydock >/dev/null || true
+        fi
+        install -d -m 750 -o mydock -g mydock /etc/mydock /var/lib/mydock || true
+        # Le reste (configuration, services, kiosque) est fait par un script qu'on peut aussi relancer
+        # à la main. Un échec ne doit jamais faire échouer l'installation du paquet.
+        if ! /usr/lib/mydock/setup --kiosk auto; then
+            echo "mydock : la mise en place du dock n'a pas abouti. Relance : sudo /usr/lib/mydock/setup" >&2
+        fi
+        ;;
+esac
+
+exit 0

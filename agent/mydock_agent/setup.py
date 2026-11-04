@@ -23,7 +23,7 @@ from pathlib import Path
 
 from mydock_agent import firewall
 from mydock_agent.collectors.host import list_interfaces
-from mydock_agent.config import AgentConfig, default_config_path, init_config
+from mydock_agent.config import AgentConfig, default_config_path, init_config, load_config
 from mydock_agent.doctor import _handshake, curl_check
 from mydock_agent.pairing import (
     PORTAL_PORT,
@@ -225,6 +225,60 @@ def run_setup(
         )
     _pi_instructions(config, created, paired, out)
     return 1 if failed else 0
+
+
+def run_pair(
+    *,
+    pi: str,
+    config_path: Path | None = None,
+    code: str | None = None,
+    portal_port: int = PORTAL_PORT,
+    systemd: Systemd | None = None,
+    out: Callable[[str], None] = print,
+    wait: Callable[[AgentConfig], bool] = wait_for_agent,
+    fetch: Callable[..., dict | None] = fetch_state,
+    pair_with: Callable[..., object] = pair_with_dock,
+    ask: Callable[[str], str] = input,
+    interactive: bool | None = None,
+) -> int:
+    """`mydock-agent pair --pi ADRESSE` : associe ce PC, déjà configuré, à un dock.
+
+    Pour l'installation sans paquet (deploy/pc/install-agent.sh) et pour changer de dock : ni le
+    service ni le pare-feu ne sont touchés, seulement l'association.
+    """
+    path = config_path or default_config_path()
+    try:
+        config = load_config(path)
+        host = resolve_pi(pi)
+    except (ConfigError, SetupError) as exc:
+        out(f"Erreur : {exc}")
+        if isinstance(exc, ConfigError):
+            out("Configure d'abord l'agent : mydock-agent setup --pi ADRESSE_IP_DU_PI")
+        return 2
+    if "/" in host:
+        out("Erreur : donne l'adresse du Pi, pas un réseau.")
+        return 2
+    if not wait(config):
+        out(
+            "✘ L'agent ne répond pas : le dock vérifie qu'il le joint avant d'accepter l'association. "
+            "Démarre-le (systemctl --user start mydock-agent) puis relance cette commande."
+        )
+        return 1
+    use_ask = (sys.stdin.isatty() if interactive is None else interactive) and code is None
+    paired = _pair_step(
+        config,
+        path,
+        host,
+        code=code,
+        portal_port=portal_port,
+        systemd=systemd or Systemd(),
+        wait=wait,
+        out=out,
+        fetch=fetch,
+        pair_with=pair_with,
+        ask=ask if use_ask else None,
+    )
+    return 0 if paired else 1
 
 
 def _start_service(

@@ -13,6 +13,7 @@ case "$1" in
         else
             echo "mydock-agent est installé. Pour le configurer, dans un terminal de ta session :"
             echo "    mydock-agent setup --pi ADRESSE_IP_DU_PI --open-firewall"
+            echo "Le code d'association à saisir est affiché sur l'écran du dock."
         fi
         ;;
 esac

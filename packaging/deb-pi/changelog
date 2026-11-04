@@ -1,0 +1,12 @@
+mydock (1.1.0) unstable; urgency=medium
+
+  * Un seul paquet pour le Raspberry Pi : le dock (serveur, interface tactile, kiosque Chromium dans
+    labwc, veille de l'écran) et le paquet du PC (mydock-agent), embarqué. L'installation du Pi se
+    réduit à « sudo apt install ./mydock_*.deb ».
+  * Le Pi sert sur le réseau local une page d'installation (port 80) : le PC y télécharge son
+    paquet, l'installe, et « mydock-agent setup --pi ADRESSE » l'associe au dock avec un code affiché
+    sur l'écran du Pi. Plus de jeton à recopier d'une machine à l'autre.
+  * Remplace l'ancien installateur (deploy/pi/install-dock.sh et son environnement dans /opt/mydock) :
+    la configuration et le jeton existants sont conservés, l'ancienne unité est retirée.
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 04 Nov 2026 10:00:00 +0000

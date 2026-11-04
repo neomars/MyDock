@@ -21,7 +21,7 @@ const HOST = {
   kernel: '7.0.0-38-generic',
   arch: 'x86_64',
   python: '3.14.4',
-  agent: { version: '0.6.0', proto: 1, demo: false },
+  agent: { version: '1.1.0', proto: 1, demo: false },
   boot_time: Math.floor(Date.now() / 1000) - 3 * 3600,
   session: { type: 'wayland', desktop: 'GNOME' },
   interfaces: [],
@@ -89,13 +89,13 @@ async function mockDock(
 
   await page.routeWebSocket(/\/ws$/, (ws) => {
     current = ws
-    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '0.6.0' } }))
+    ws.send(JSON.stringify({ t: 'hello', proto: 1, agent: { role: 'dock', version: '1.1.0' } }))
     snap(ws, 'link', {
       state: 'connected', detail: 'Connecté.', since: Date.now(), attempt: 0, next_retry_at: null,
-      resolved: '127.0.0.1', agent: { version: '0.6.0', demo: false }, host: '127.0.0.1', port: 8765,
+      resolved: '127.0.0.1', agent: { version: '1.1.0', demo: false }, host: '127.0.0.1', port: 8765,
     }) // prettier-ignore
     snap(ws, 'dock', {
-      version: '0.6.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
+      version: '1.1.0', proto: 1, hostname: 'raspberrypi', ips: ['192.168.1.60'],
       pc: { host: '127.0.0.1', port: 8765, token_set: true, name: 'portable' },
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
       markets: options.markets ?? { count: 2, currency: 'EUR', refresh: 15, finnhub: false, demo: false },
