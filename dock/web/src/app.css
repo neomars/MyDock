@@ -1,5 +1,5 @@
-/* Thème sombre du dock : écran 7" 1024x600, lu à 50 cm, commandé au doigt.
-   Texte courant 20 px (légendes ≥ 16 px), cibles tactiles ≥ 56 px, aucun effet coûteux
+/* Thème sombre du dock : écran 7" 1024x600, lu à bout de bras, commandé au doigt.
+   Texte courant 40 px (légendes ≥ 32 px : deux fois la taille d'origine), cibles tactiles ≥ 72 px, aucun effet coûteux
    (pas de flou, d'ombre étendue ni de filtre) : on reste à 60 images/s sur un Pi 4. */
 
 @font-face {
@@ -46,15 +46,18 @@
 
   --radius: 14px;
   --radius-s: 10px;
-  --tap: 56px;
-  --topbar: 56px;
-  --tabbar: 72px;
 
-  --fs-cap: 16px;
-  --fs-small: 18px;
-  --fs: 20px;
-  --fs-large: 24px;
-  --fs-title: 30px;
+  /* Échelle du texte : 1 était la taille d'origine, 2 la double (écran de 7" en 1024 x 600, lu à bout de bras).
+     Tout ce qui s'écrit, et ce qui doit grandir avec (cibles tactiles, barre du haut), en découle. */
+  --ts: 2;
+  --tap: calc(56px + 16px * (var(--ts) - 1));
+  --topbar: calc(56px + 32px * (var(--ts) - 1));
+
+  --fs-cap: calc(16px * var(--ts));
+  --fs-small: calc(18px * var(--ts));
+  --fs: calc(20px * var(--ts));
+  --fs-large: calc(24px * var(--ts));
+  --fs-title: calc(30px * var(--ts) * 0.85);
 
   --font:
     'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'DejaVu Sans',

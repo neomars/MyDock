@@ -29,17 +29,17 @@
       <h1>Pages du dock</h1>
       <div class="actions">
         <button class="btn" data-testid="pages-reset" disabled={pristine} onclick={() => save({ order: [], hidden: [] })}>
-          <RotateCcw size={24} aria-hidden="true" />Ordre d'origine
+          <RotateCcw size={32} aria-hidden="true" />Ordre d'origine
         </button>
         <button class="btn primary" data-testid="pages-done" onclick={() => pagesUi.close()}>
-          <Check size={26} aria-hidden="true" />Terminé
+          <Check size={34} aria-hidden="true" />Terminé
         </button>
       </div>
     </header>
 
     <section class="card">
       <p class="muted" data-testid="pages-summary">
-        {shown} page{shown > 1 ? 's' : ''} visible{shown > 1 ? 's' : ''} sur {rows.length} : monte, descends ou cache celles dont tu n'as pas besoin.
+        {shown} page{shown > 1 ? 's' : ''} visible{shown > 1 ? 's' : ''} sur {rows.length}
       </p>
       <div class="list">
         {#each rows as row, index (row.page.id)}
@@ -47,7 +47,7 @@
           {@const locked = row.page.id === 'settings'}
           <div class="row" class:off={!row.visible} data-testid="page-row-{row.page.id}">
             <span class="rank dim">{index + 1}</span>
-            <Icon size={28} aria-hidden="true" />
+            <Icon size={36} aria-hidden="true" />
             <span class="who">
               <strong>{row.page.tab}</strong>
               {#if locked}<small>toujours visible</small>{:else if !row.visible}<small>cachée</small>{/if}
@@ -59,7 +59,7 @@
               disabled={index === 0}
               onclick={() => save({ order: movePage(order, hidden, row.page.id, -1) })}
             >
-              <ArrowUp size={24} aria-hidden="true" />
+              <ArrowUp size={34} aria-hidden="true" />
             </button>
             <button
               class="step"
@@ -68,7 +68,7 @@
               disabled={index === rows.length - 1}
               onclick={() => save({ order: movePage(order, hidden, row.page.id, 1) })}
             >
-              <ArrowDown size={24} aria-hidden="true" />
+              <ArrowDown size={34} aria-hidden="true" />
             </button>
             <button
               class="step eye"
@@ -79,7 +79,7 @@
               disabled={locked}
               onclick={() => save({ hidden: toggleHidden(hidden, row.page.id) })}
             >
-              {#if row.visible}<Eye size={26} aria-hidden="true" />{:else}<EyeOff size={26} aria-hidden="true" />{/if}
+              {#if row.visible}<Eye size={34} aria-hidden="true" />{:else}<EyeOff size={34} aria-hidden="true" />{/if}
             </button>
           </div>
         {/each}
@@ -89,58 +89,59 @@
 {/if}
 
 <style>
+  /* Plein écran sous la barre du haut ; une seule colonne qui défile (texte doublé). */
   .overlay {
     position: fixed;
     inset: var(--topbar) 0 0 0;
     z-index: 30;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 10px 20px 14px;
+    gap: 8px;
+    padding: 8px 16px 10px;
     background: var(--bg);
   }
   header {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
   }
   h1 {
-    font-size: var(--fs-title);
+    font-size: var(--fs);
     font-weight: 700;
+    white-space: nowrap;
   }
   .actions {
     display: flex;
-    gap: 12px;
+    gap: 10px;
   }
   .card {
     flex: 1 1 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 12px 16px 10px;
+    gap: 4px;
+    padding: 8px 16px;
   }
   .card > p {
-    font-size: var(--fs-small);
+    flex: none;
+    font-size: var(--fs-cap);
   }
-  /* Deux colonnes numérotées, de haut en bas : 1 à 5 puis 6 à 9. */
   .list {
     flex: 1 1 0;
     min-height: 0;
-    display: grid;
-    grid-auto-flow: column;
-    grid-template-rows: repeat(5, 1fr);
-    gap: 0 28px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 60px;
+    gap: 12px;
+    min-height: 80px;
     border-top: 1px solid var(--line);
   }
-  .row:nth-child(5n + 1) {
+  .row:first-child {
     border-top: 0;
   }
   .row.off .who strong,
@@ -149,8 +150,8 @@
   }
   .rank {
     flex: none;
-    width: 18px;
-    font-size: var(--fs-small);
+    width: 28px;
+    font-size: var(--fs-cap);
     font-weight: 600;
     text-align: right;
   }
@@ -159,22 +160,22 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    line-height: 1.2;
+    line-height: 1.1;
   }
   .who strong {
-    font-size: var(--fs);
+    font-size: var(--fs-small);
     font-weight: 600;
   }
   .who small {
-    font-size: var(--fs-cap);
+    font-size: calc(13px * var(--ts));
     color: var(--text-3);
   }
   .step {
     flex: none;
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
+    width: var(--tap);
+    height: 64px;
     border-radius: 12px;
     background: var(--surface-3);
   }

@@ -89,14 +89,14 @@
   }
   .track {
     position: relative;
-    height: 48px;
+    height: 64px;
     display: flex;
     align-items: center;
     touch-action: none;
   }
   .rail {
     width: 100%;
-    height: 10px;
+    height: 16px;
     border-radius: 999px;
     background: var(--surface-3);
     overflow: hidden;
@@ -109,17 +109,17 @@
   .thumb {
     position: absolute;
     top: 50%;
-    width: 26px;
-    height: 26px;
-    margin: -13px 0 0 -13px;
+    width: 40px;
+    height: 40px;
+    margin: -20px 0 0 -20px;
     border-radius: 50%;
     background: var(--text);
     box-shadow: 0 0 0 4px var(--bg);
   }
   .thumb.dragging {
-    width: 34px;
-    height: 34px;
-    margin: -17px 0 0 -17px;
+    width: 52px;
+    height: 52px;
+    margin: -26px 0 0 -26px;
     background: var(--accent);
   }
   .times {

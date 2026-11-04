@@ -3,7 +3,7 @@
 // 24 cœurs, processus têtu, textes très longs. Le vrai chemin (dock + agent) est couvert par stage-b.spec.ts.
 
 import type { Page, WebSocketRoute } from '@playwright/test'
-import { expect, shot, test, typeOnKeyboard } from './fixtures'
+import { expect, openPage, shot, test, THUMB, tileOrder, typeOnKeyboard } from './fixtures'
 
 type Topics = Record<string, unknown>
 interface Mock {
@@ -70,6 +70,7 @@ async function mockDock(
   page: Page,
   topics: Topics,
   options: {
+    /** La page ouverte au chargement (on touche son bouton sur l'accueil) ; « home » : on reste sur l'accueil. */
     startPage: string
     pinned?: string[]
     /** Pages cachées, ordre choisi, page de départ : surcharge de l'état d'interface du dock. */
@@ -79,6 +80,16 @@ async function mockDock(
     onAct?: (act: Mock['acts'][number], ws: WebSocketRoute) => unknown
   },
 ): Promise<Mock> {
+  // Le dock repart toujours de l'accueil : pour arriver sur une page, on touche son bouton une fois la page chargée.
+  if (options.startPage !== 'home') {
+    const goto = page.goto.bind(page)
+    page.goto = (async (url: string, gotoOptions?: Parameters<Page['goto']>[1]) => {
+      const response = await goto(url, gotoOptions)
+      await openPage(page, options.startPage)
+      return response
+    }) as Page['goto']
+  }
+
   const subscribed = new Set<string>()
   const acts: Mock['acts'] = []
   const received: Mock['received'] = []
@@ -100,7 +111,7 @@ async function mockDock(
       wol: { mac: null, source: null, iface: null, kind: null, interfaces: [] },
       markets: options.markets ?? { count: 2, currency: 'EUR', refresh: 15, finnhub: false, demo: false },
     }) // prettier-ignore
-    snap(ws, 'ui', { last_page: options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [], ...options.ui })
+    snap(ws, 'ui', { last_page: options.startPage === 'home' ? 'system' : options.startPage, order: [], hidden: [], pinned_apps: options.pinned ?? [], ...options.ui })
     ws.onMessage((raw) => {
       const message = JSON.parse(String(raw))
       received.push(message)
@@ -427,11 +438,11 @@ test('Son : un volume amplifié ailleurs s’affiche tel quel et le curseur rest
   await expect(page.getByTestId('out-slider')).toHaveAttribute('aria-valuenow', '130')
   const track = (await page.getByTestId('out-slider').boundingBox())!
   const thumb = (await page.getByTestId('out-slider').locator('.thumb').boundingBox())!
-  expect(thumb.x + thumb.width / 2).toBeCloseTo(track.x + track.width - 19, 0) // bout de course, pas au-delà
+  expect(thumb.x + thumb.width / 2).toBeCloseTo(track.x + track.width - THUMB.lg / 2, 0) // bout de course, pas au-delà
   await shot(page, '08-son-amplifie', 'c')
 })
 
-test('Son : beaucoup d’applications, des noms longs et des homonymes : la liste défile dans sa carte', async ({ page, stack }) => {
+test('Son : beaucoup d’applications, des noms longs et des homonymes : la page défile dans son cadre', async ({ page, stack }) => {
   const apps = [
     audioApp('1', 'Spotify'),
     audioApp('2', 'Brave'),
@@ -445,15 +456,15 @@ test('Son : beaucoup d’applications, des noms longs et des homonymes : la list
   await expect(page.getByTestId('app-2-name')).toHaveText('Brave 1')
   await expect(page.getByTestId('app-3-name')).toHaveText('Brave 2')
   await noPageScroll(page)
-  const list = page.locator('[data-testid="apps-card"] .list')
-  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  const main = page.getByTestId('page-sound')
+  expect(await main.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true) // texte doublé : on fait glisser la page
   await shot(page, '07-son-beaucoup-d-applications', 'c')
   // Le nom trop long est coupé, il ne pousse ni le curseur ni le bouton hors de la ligne.
   const row = (await page.getByTestId('app-4').boundingBox())!
   const mute = (await page.getByTestId('app-4-mute').boundingBox())!
   expect(mute.x + mute.width).toBeLessThanOrEqual(row.x + row.width + 1)
-  // Au bout de la liste on atteint la dernière application, et la page n'a pas bougé.
-  await list.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  // Au bout de la page on atteint la dernière application, et l'écran n'a pas bougé.
+  await main.evaluate((el) => el.scrollTo(0, el.scrollHeight))
   await expect(page.getByTestId('app-19')).toBeInViewport()
   await noPageScroll(page)
 })
@@ -463,7 +474,7 @@ test('Son : glisser un curseur n’envoie que quelques réglages, et le dernier 
   await page.goto(stack.url)
   const box = (await page.getByTestId('out-slider').boundingBox())!
   const y = box.y + box.height / 2
-  const at = (value: number) => box.x + 19 + (box.width - 38) * (value / 100)
+  const at = (value: number) => box.x + THUMB.lg / 2 + (box.width - THUMB.lg) * (value / 100)
   await page.mouse.move(at(10), y)
   await page.mouse.down()
   await page.mouse.move(at(90), y, { steps: 40 })
@@ -629,15 +640,15 @@ test('Sélecteur : à vingt-quatre applications on ne peut plus qu’en retirer'
   })
   await page.goto(stack.url)
   await page.getByTestId('apps-edit').tap()
-  await expect(page.getByTestId('picker-chosen')).toContainText('24/24')
+  await expect(page.getByTestId('picker-tab-chosen')).toContainText('24/24')
   for (const id of ['a24.desktop', 'a29.desktop']) await expect(page.getByTestId(`pick-${id}`)).toBeDisabled()
   await expect(page.getByTestId('pick-a00.desktop')).toBeEnabled() // retirer reste possible
   await shot(page, '09-selecteur-plein', 'd')
   await page.getByTestId('pick-a00.desktop').tap()
-  await expect(page.getByTestId('picker-chosen')).toContainText('23/24')
+  await expect(page.getByTestId('picker-tab-chosen')).toContainText('23/24')
   await expect(page.getByTestId('pick-a24.desktop')).toBeEnabled()
   await page.getByTestId('pick-a24.desktop').tap()
-  await expect(page.getByTestId('picker-chosen')).toContainText('24/24')
+  await expect(page.getByTestId('picker-tab-chosen')).toContainText('24/24')
   expect(mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => (a.p.pinned_apps as string[]).length)).toEqual([23, 24])
 })
 
@@ -669,7 +680,7 @@ test('Steam : cent cinquante jeux, les jaquettes ne sont demandées qu’au fil 
   await expect(page.getByTestId('steam-count')).toHaveText('150 jeux')
   await page.waitForTimeout(800)
   const first = mock.acts.filter((a) => a.a === 'steam.cover').length
-  expect(first).toBeGreaterThan(5)
+  expect(first).toBeGreaterThanOrEqual(4) // texte doublé : une jaquette fait 354 px de haut, on voit une rangée et demie
   expect(first).toBeLessThan(40) // pas 150 d'un coup : seulement ce qui est visible, avec une marge
   await page.getByTestId('page-steam').evaluate((el) => el.scrollTo(0, el.scrollHeight))
   await page.waitForTimeout(800)
@@ -724,7 +735,7 @@ test('Office : sans document récent, les trois boutons restent utilisables', as
   expect(mock.acts.filter((a) => a.a === 'office.new').map((a) => a.p.kind)).toEqual(['writer', 'calc', 'impress'])
 })
 
-test('Office : des noms de document démesurés sont coupés et la liste défile dans sa carte', async ({ page, stack }) => {
+test('Office : des noms de document démesurés sont coupés et la page défile dans son cadre', async ({ page, stack }) => {
   const recent = Array.from({ length: 12 }, (_, i) => ({
     id: i.toString(16).padStart(16, '0'),
     name: `Document ${i + 1} — compte rendu détaillé de la réunion annuelle des copropriétaires de la résidence.odt`,
@@ -736,8 +747,9 @@ test('Office : des noms de document démesurés sont coupés et la liste défile
   await page.goto(stack.url)
   const size = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
   expect(size).toEqual({ w: 1024, h: 600 })
-  const list = page.locator('[data-testid="office-recent"] .list')
-  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  const main = page.getByTestId('page-office')
+  expect(await main.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true) // douze documents : on fait glisser la page
+  expect(await main.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true) // jamais de côté
   const row = (await page.getByTestId(`recent-${recent[0].id}`).boundingBox())!
   const when = (await page.getByTestId(`recent-${recent[0].id}`).locator('.when').boundingBox())!
   expect(when.x + when.width).toBeLessThanOrEqual(row.x + row.width + 1)
@@ -786,6 +798,7 @@ test('Bourse : aucune valeur suivie, la page propose d’en choisir', async ({ p
   await expect(page.getByTestId('markets-refresh')).toBeDisabled()
   await page.getByTestId('markets-choose').tap()
   await expect(page.getByTestId('mk-editor')).toBeVisible()
+  await page.getByTestId('mk-tab-list').tap() // la liste est sur son volet
   await expect(page.getByTestId('mk-none')).toBeVisible()
 })
 
@@ -910,7 +923,7 @@ test('Bourse : la page s’abonne au thème « markets » en arrivant et s’en 
   const topicsOf = (kind: string) => mock.received.filter((m) => m.t === kind).flatMap((m) => m.topics ?? [])
   expect(topicsOf('sub')).toContain('markets')
   expect(topicsOf('unsub')).not.toContain('markets')
-  await page.getByTestId('tab-settings').tap()
+  await openPage(page, 'settings')
   await expect(page.getByTestId('settings-markets')).toBeVisible()
   await expect.poll(() => topicsOf('unsub')).toContain('markets') // plus personne ne regarde : le dock cesse de demander
 })
@@ -994,6 +1007,7 @@ test('Modifier : la liste complète part dans l’ordre, la devise seule part se
   await page.getByTestId('mk-suggest-MSTR').tap()
   await expect(page.getByTestId('mk-found')).toContainText('Strategy Inc')
   await page.getByTestId('mk-confirm').tap()
+  await page.getByTestId('mk-tab-list').tap() // la devise et l'ordre sont sur le volet « Liste »
   await page.getByTestId('mk-currency-USD').tap()
   await page.getByTestId('mk-down-crypto:BTC').tap()
   const sets = mock.acts.filter((a) => a.a === 'dock.markets.set').map((a) => a.p)
@@ -1026,11 +1040,12 @@ test('Modifier : à vingt valeurs on ne peut plus qu’en retirer', async ({ pag
   })
   await page.goto(stack.url)
   await page.getByTestId('markets-edit').tap()
-  await expect(page.getByTestId('mk-chosen')).toContainText('20/20')
+  await expect(page.getByTestId('mk-tab-list')).toContainText('20/20')
   await page.getByTestId('mk-suggest-BTC').tap()
   await expect(page.getByTestId('mk-found')).toBeVisible()
   await expect(page.getByTestId('mk-confirm')).toBeDisabled()
   expect(mock.acts.filter((a) => a.a === 'dock.markets.set')).toEqual([])
+  await page.getByTestId('mk-tab-list').tap()
   await page.getByTestId('mk-remove-stock:S19').tap()
   expect(mock.acts.filter((a) => a.a === 'dock.markets.set')).toHaveLength(1)
 })
@@ -1328,7 +1343,7 @@ test('Alimentation : le dock ne demande les droits au PC que page ouverte', asyn
   await expect(page.getByTestId('power-lock')).toBeEnabled()
   const topicsOf = (kind: string) => mock.received.filter((m) => m.t === kind).flatMap((m) => m.topics ?? [])
   expect(topicsOf('sub')).toContain('power')
-  await page.getByTestId('tab-settings').tap()
+  await openPage(page, 'settings')
   await expect.poll(() => topicsOf('unsub')).toContain('power')
 })
 
@@ -1336,14 +1351,11 @@ test('Alimentation : le dock ne demande les droits au PC que page ouverte', asyn
 
 const TAB_IDS = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings']
 
-async function tabsShown(page: Page): Promise<string[]> {
-  return page.locator('[role=tablist][aria-label="Pages"] [role=tab]').evaluateAll((tabs) => tabs.map((t) => (t.getAttribute('data-testid') ?? '').replace('tab-', '')))
-}
-
-test('Pages : la barre d’onglets suit l’ordre et les pages cachées du dock', async ({ page, stack }) => {
-  await mockDock(page, {}, { startPage: 'settings', ui: { order: ['power', 'markets'], hidden: ['steam', 'office'] } })
+test('Pages : l’accueil suit l’ordre et les pages cachées du dock', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'home', ui: { order: ['power', 'markets'], hidden: ['steam', 'office'] } })
   await page.goto(stack.url)
-  expect(await tabsShown(page)).toEqual(['power', 'markets', 'music', 'sound', 'apps', 'system', 'settings'])
+  expect(await tileOrder(page)).toEqual(['power', 'markets', 'music', 'sound', 'apps', 'system', 'settings'])
+  await openPage(page, 'settings')
   await expect(page.getByTestId('pages-count')).toHaveText('7 pages visibles sur 9 (cachées : Steam, Office).')
 })
 
@@ -1400,12 +1412,12 @@ test('Pages : « ordre d’origine » rétablit tout, et n’est proposé que s�
   await expect(page.getByTestId('pages-summary')).toContainText('9 pages visibles sur 9')
 })
 
-test('Pages : les onglets suivent aussitôt ce que le dock enregistre', async ({ page, stack }) => {
-  const mock = await mockDock(page, {}, { startPage: 'settings' })
+test('Pages : l’accueil suit aussitôt ce que le dock enregistre', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'home' })
   await page.goto(stack.url)
-  expect(await tabsShown(page)).toEqual(TAB_IDS)
+  expect(await tileOrder(page)).toEqual(TAB_IDS)
   mock.push('ui', { last_page: 'settings', order: ['system'], hidden: ['steam'], pinned_apps: [] })
-  await expect.poll(() => tabsShown(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'power', 'settings'])
+  await expect.poll(() => tileOrder(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'power', 'settings'])
 })
 
 test('Pages : une modification refusée par le dock est expliquée', async ({ page, stack }) => {
@@ -1419,12 +1431,12 @@ test('Pages : une modification refusée par le dock est expliquée', async ({ pa
   await expect(page.getByTestId('toast')).toContainText('ne peut pas être cachée')
 })
 
-test('Pages : si la page de départ est cachée, le dock ouvre la première page visible', async ({ page, stack }) => {
-  await mockDock(page, {}, { startPage: 'steam', ui: { hidden: ['steam'], last_page: 'steam' } })
+test('Pages : une page cachée n’a pas de bouton sur l’accueil, même si le dock l’avait en dernière page', async ({ page, stack }) => {
+  await mockDock(page, {}, { startPage: 'home', ui: { hidden: ['steam'], last_page: 'steam' } })
   await page.goto(stack.url)
-  await expect(page.getByTestId('page-music')).toBeVisible()
-  await expect(page.getByTestId('tab-music')).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByTestId('tab-steam')).toHaveCount(0)
+  await expect(page.getByTestId('tile-music')).toBeVisible()
+  await expect(page.getByTestId('tile-steam')).toHaveCount(0)
+  await expect(page.locator('main.page')).toHaveCount(0) // le dock repart de l'accueil, jamais d'une page restée en mémoire
 })
 
 // --- Veille de l'écran (étape f) --------------------------------------------------------------------------

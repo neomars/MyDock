@@ -106,9 +106,9 @@
 {#snippet trend(item: MarketItem)}
   {@const tone = toneOfItem(item)}
   <span class="pct {tone}" data-testid="pct-{item.id}">
-    {#if tone === 'up'}<ArrowUpRight size={22} aria-hidden="true" />
-    {:else if tone === 'down'}<ArrowDownRight size={22} aria-hidden="true" />
-    {:else}<Minus size={22} aria-hidden="true" />{/if}
+    {#if tone === 'up'}<ArrowUpRight size={32} aria-hidden="true" />
+    {:else if tone === 'down'}<ArrowDownRight size={32} aria-hidden="true" />
+    {:else}<Minus size={32} aria-hidden="true" />{/if}
     {formatPercent(item.change_pct)}
   </span>
 {/snippet}
@@ -119,7 +119,7 @@
   <section class="detail" data-testid="detail">
     <header class="bar">
       <button class="btn" data-testid="detail-back" onclick={() => marketsUi.close()}>
-        <ChevronLeft size={26} aria-hidden="true" />Liste
+        <ChevronLeft size={36} aria-hidden="true" />Liste
       </button>
       <div class="title">
         <h1 data-testid="detail-name">{nameOf(detail)}</h1>
@@ -152,7 +152,7 @@
       {/if}
     </div>
     <p class="meta dim" class:warn={stale} data-testid="detail-meta">
-      {#if stale}<Clock size={18} aria-hidden="true" />{/if}
+      {#if stale}<Clock size={26} aria-hidden="true" />{/if}
       {metaText}
     </p>
 
@@ -163,7 +163,7 @@
         </div>
       {:else if entry?.state === 'error'}
         <div class="center" data-testid="detail-error">
-          <TriangleAlert size={40} aria-hidden="true" />
+          <TriangleAlert size={56} aria-hidden="true" />
           <p>{entry.message}</p>
           <button class="btn" data-testid="detail-retry" onclick={() => history.load(detail.id, range, true)}>Réessayer</button>
         </div>
@@ -182,16 +182,16 @@
     {#if data?.demo}<span class="chip accent" data-testid="markets-demo">Démonstration</span>{/if}
     <span class="spacer"></span>
     <button class="btn" class:busy={refreshing} data-testid="markets-refresh" disabled={items.length === 0} onclick={refresh}>
-      <RefreshCw size={22} aria-hidden="true" />Actualiser
+      <RefreshCw size={30} aria-hidden="true" />Actualiser
     </button>
     <button class="btn" data-testid="markets-edit" onclick={() => marketsUi.edit()}>
-      <Pencil size={22} aria-hidden="true" />Modifier
+      <Pencil size={30} aria-hidden="true" />Modifier
     </button>
   </div>
 
   {#if problems.length}
     <div class="problem" role="status" data-testid="markets-problem">
-      <TriangleAlert size={26} aria-hidden="true" />
+      <TriangleAlert size={38} aria-hidden="true" />
       <div>
         {#each problems as problem (problem)}<p>{problem}</p>{/each}
         {#if priced.length}<p class="dim">Les cours affichés sont les derniers connus.</p>{/if}
@@ -201,7 +201,7 @@
 
   {#if data && items.length === 0}
     <section class="empty" data-testid="markets-empty">
-      <TrendingUp size={64} aria-hidden="true" />
+      <TrendingUp size={84} aria-hidden="true" />
       <h1>Aucune valeur suivie</h1>
       <p class="muted">Choisis les cryptos et les actions que tu veux surveiller.</p>
       <button class="btn primary big" data-testid="markets-choose" onclick={() => marketsUi.edit()}>Choisir les valeurs</button>
@@ -236,7 +236,7 @@
           {#if (item.price !== null && stale) || lag !== null}
             <span class="foot">
               {#if item.price !== null && stale}
-                <span class="old" data-testid="old-{item.id}"><Clock size={15} aria-hidden="true" />{freshness(item.fetched, now)}</span>
+                <span class="old" data-testid="old-{item.id}"><Clock size={22} aria-hidden="true" />{freshness(item.fetched, now)}</span>
               {/if}
               {#if lag !== null}<span class="lag" data-testid="lag-{item.id}">{lagLabel(lag)}</span>{/if}
             </span>
@@ -250,15 +250,15 @@
 <style>
   .top {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
-    min-height: 56px;
-    margin-bottom: 8px;
+    gap: 10px 14px;
+    margin-bottom: 12px;
   }
   .dot {
     flex: none;
-    width: 12px;
-    height: 12px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--good);
   }
@@ -266,14 +266,16 @@
     background: var(--warn);
   }
   .status {
+    flex: 1 1 0;
     font-size: var(--fs-small);
     color: var(--text-2);
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.2;
   }
   .spacer {
+    display: none;
+  }
+  .top .btn {
     flex: 1 1 0;
   }
   .btn.busy :global(svg) {
@@ -288,8 +290,8 @@
     display: flex;
     gap: 12px;
     align-items: flex-start;
-    margin-bottom: 8px;
-    padding: 10px 14px;
+    margin-bottom: 12px;
+    padding: 12px 16px;
     border-radius: var(--radius-s);
     background: var(--warn-soft);
     border: 1px solid var(--warn);
@@ -309,17 +311,17 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
   }
   .quote {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto 112px;
+    grid-template-columns: minmax(0, 1fr) auto 130px;
     align-items: center;
-    column-gap: 14px;
-    min-height: 84px;
-    padding: 8px 14px;
+    column-gap: 16px;
+    min-height: 120px;
+    padding: 10px 18px;
     border-radius: var(--radius);
     background: var(--surface);
     border: 1px solid var(--line);
@@ -359,7 +361,7 @@
     flex-wrap: wrap;
     gap: 4px 14px;
     padding-top: 2px;
-    font-size: 14px;
+    font-size: calc(12px * var(--ts));
     line-height: 1.2;
     color: var(--warn);
   }
@@ -374,7 +376,7 @@
     flex-direction: column;
     align-items: flex-end;
     line-height: 1.2;
-    max-width: 190px;
+    max-width: 420px;
   }
   .price {
     font-size: var(--fs-large);
@@ -400,7 +402,7 @@
   }
   .err {
     margin-top: 2px;
-    font-size: 14px;
+    font-size: calc(12px * var(--ts));
     line-height: 1.2;
     color: var(--warn);
     display: -webkit-box;
@@ -433,14 +435,12 @@
   .detail {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 0;
   }
   .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 14px;
-    min-height: 56px;
+    gap: 10px 14px;
   }
   .title {
     flex: 1 1 0;
@@ -458,13 +458,14 @@
   }
   .ranges {
     display: flex;
-    gap: 6px;
+    flex: 1 1 100%;
+    gap: 8px;
   }
   .range {
-    min-width: 72px;
-    height: 48px;
-    padding: 0 14px;
-    border-radius: 12px;
+    flex: 1 1 0;
+    height: var(--tap);
+    padding: 0 10px;
+    border-radius: 14px;
     background: var(--surface-2);
     border: 1px solid var(--line);
     font-weight: 600;
@@ -477,12 +478,13 @@
   }
   .figures {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 14px;
-    margin-top: 2px;
+    gap: 4px 16px;
+    margin-top: 6px;
   }
   .big {
-    font-size: 40px;
+    font-size: calc(30px * var(--ts) * 0.95);
     font-weight: 750;
     letter-spacing: -0.01em;
     white-space: nowrap;
@@ -496,7 +498,7 @@
   .meta {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     min-height: 26px;
     font-size: var(--fs-cap);
   }
@@ -504,11 +506,10 @@
     color: var(--warn);
   }
   .plot {
-    flex: 1 1 0;
-    min-height: 140px;
+    height: 280px;
     display: flex;
     flex-direction: column;
-    margin-top: 6px;
+    margin-top: 8px;
   }
   .chart {
     flex: 1 1 0;

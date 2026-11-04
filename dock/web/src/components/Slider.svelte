@@ -29,7 +29,7 @@
     onCommit: (value: number) => void
   } = $props()
 
-  const THUMB = { md: 30, lg: 38 }
+  const THUMB = { md: 44, lg: 52 }
 
   let track = $state<HTMLDivElement>()
   /** Pendant le glissement c'est le doigt qui décide... */
@@ -128,9 +128,9 @@
 
 <style>
   .track {
-    --rail: 12px;
-    --thumb: 30px;
-    --hit: 52px;
+    --rail: 16px;
+    --thumb: 44px;
+    --hit: 72px;
     --pad: calc(var(--thumb) / 2);
     position: relative;
     display: flex;
@@ -141,9 +141,9 @@
     border-radius: 12px;
   }
   .track.lg {
-    --rail: 16px;
-    --thumb: 38px;
-    --hit: 56px;
+    --rail: 20px;
+    --thumb: 52px;
+    --hit: 80px;
   }
   .track:focus-visible {
     outline: 3px solid var(--accent);

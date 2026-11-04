@@ -2,7 +2,7 @@
 // agent de démonstration (un faux serveur de son qui parle comme pactl, voir agent/mydock_agent/demo/audio.py).
 
 import type { Locator, Page } from '@playwright/test'
-import { expect, shot, test } from './fixtures'
+import { expect, openPage, shot, test, THUMB } from './fixtures'
 
 const SPEAKERS = 'alsa_output.pci-0000_00_1f.3.analog-stereo'
 const HEADSET = 'bluez_output.80_C3_BA_12_34_56.1'
@@ -14,11 +14,11 @@ const WEBCAM = 'alsa_input.usb-046d_HD_Pro_Webcam_C920-02.analog-stereo'
 const percent = (value: number) => new RegExp(`^${value}\\s%$`)
 
 async function openSound(dock: Page): Promise<void> {
-  await dock.getByTestId('tab-sound').tap()
+  await openPage(dock, 'sound')
   await expect(dock.getByTestId('sound-page')).toBeVisible()
 }
 
-/** Touche un curseur à `value` % de sa course (la poignée de 38 px ou 30 px ne sort jamais de la piste). */
+/** Touche un curseur à `value` % de sa course (la poignée, de 44 px ou 52 px, ne sort jamais de la piste). */
 async function tapSlider(slider: Locator, value: number, thumb: number): Promise<void> {
   const box = (await slider.boundingBox())!
   await slider.tap({ position: { x: thumb / 2 + (box.width - thumb) * (value / 100), y: box.height / 2 } })
@@ -65,10 +65,10 @@ test('Son : les sorties sont nommées en français, celle sans écran branché e
 
 test('Son : toucher le curseur règle le volume, et le PC le confirme', async ({ dock }) => {
   await openSound(dock)
-  await tapSlider(dock.getByTestId('out-slider'), 25, 38)
+  await tapSlider(dock.getByTestId('out-slider'), 25, THUMB.lg)
   await expect(dock.getByTestId('out-value')).toHaveText(percent(25))
   // Le même réglage se retrouve ailleurs : la page Musique lit le même état, venu de l'agent.
-  await dock.getByTestId('tab-music').tap()
+  await openPage(dock, 'music')
   await expect(dock.getByTestId('music-vol-value')).toHaveText(percent(25))
   await expect(dock.getByTestId('music-vol-slider')).toHaveAttribute('aria-valuenow', '25')
 })
@@ -78,7 +78,7 @@ test('Son : glisser le curseur suit le doigt, la dernière valeur est celle du P
   const slider = dock.getByTestId('out-slider')
   const box = (await slider.boundingBox())!
   const y = box.y + box.height / 2
-  const at = (value: number) => box.x + 19 + (box.width - 38) * (value / 100)
+  const at = (value: number) => box.x + THUMB.lg / 2 + (box.width - THUMB.lg) * (value / 100)
   await dock.mouse.move(at(20), y)
   await dock.mouse.down()
   await dock.mouse.move(at(80), y, { steps: 12 })
@@ -112,7 +112,7 @@ test('Son : bouger le curseur d’un son coupé le rétablit', async ({ dock }) 
   await openSound(dock)
   await dock.getByTestId('out-mute').tap()
   await expect(dock.getByTestId('out-value')).toHaveText('Muet')
-  await tapSlider(dock.getByTestId('out-slider'), 40, 38)
+  await tapSlider(dock.getByTestId('out-slider'), 40, THUMB.lg)
   await expect(dock.getByTestId('out-mute')).toHaveAttribute('aria-pressed', 'false')
   await expect(dock.getByTestId('out-value')).toHaveText(percent(40))
 })
@@ -143,13 +143,13 @@ test('Son : choisir une autre sortie par défaut', async ({ dock }) => {
   await dock.waitForTimeout(2_500)
   await expect(dock.getByTestId(`out-device-${HEADSET}`)).toHaveAttribute('aria-checked', 'true') // confirmé par le PC
   // La page Musique règle maintenant la nouvelle sortie.
-  await dock.getByTestId('tab-music').tap()
+  await openPage(dock, 'music')
   await expect(dock.getByTestId('music-vol-value')).toHaveText(percent(40))
 })
 
 test('Son : le micro se règle, se coupe et se change', async ({ dock }) => {
   await openSound(dock)
-  await tapSlider(dock.getByTestId('mic-slider'), 50, 30)
+  await tapSlider(dock.getByTestId('mic-slider'), 50, THUMB.md)
   await expect(dock.getByTestId('mic-value')).toHaveText(percent(50))
   await dock.getByTestId('mic-mute').tap()
   await expect(dock.getByTestId('mic-value')).toHaveText('Muet')
@@ -165,7 +165,7 @@ test('Son : le micro se règle, se coupe et se change', async ({ dock }) => {
 
 test('Son : régler et couper une application sans toucher aux autres', async ({ dock }) => {
   await openSound(dock)
-  await tapSlider(dock.getByTestId('app-103-slider'), 30, 30)
+  await tapSlider(dock.getByTestId('app-103-slider'), 30, THUMB.md)
   await expect(dock.getByTestId('app-103-value')).toHaveText(percent(30))
   await dock.getByTestId('app-101-mute').tap()
   await expect(dock.getByTestId('app-101-value')).toHaveText('Muet')
@@ -192,18 +192,23 @@ test('Son : chaque bouton et chaque curseur se touche au doigt (au moins 48 px)'
   }
 })
 
-test('Son : tout tient dans l’écran, sans défilement de la page', async ({ dock }) => {
+test('Son : avec le texte doublé la page défile dans son cadre, l’écran lui ne bouge pas', async ({ dock }) => {
   await openSound(dock)
-  const size = await dock.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
-  expect(size).toEqual({ w: 1024, h: 600 })
+  const screenSize = () => dock.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+  expect(await screenSize()).toEqual({ w: 1024, h: 600 })
   const page = dock.getByTestId('page-sound')
-  expect(await page.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true)
+  expect(await page.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true) // jamais de défilement de côté
+  expect(await page.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true) // le bas se atteint en faisant glisser
+  await page.evaluate((el) => el.scrollTo(0, el.scrollHeight))
+  const last = (await dock.getByTestId('app-103-slider').boundingBox())!
+  expect(last.y + last.height).toBeLessThanOrEqual(600) // le dernier curseur est atteignable
+  expect(await screenSize()).toEqual({ w: 1024, h: 600 })
 })
 
 test('Son : le volume de la page Musique règle la sortie, et le bouton muet aussi', async ({ dock }) => {
-  await dock.getByTestId('tab-music').tap()
+  await openPage(dock, 'music')
   await expect(dock.getByTestId('music-volume')).toBeVisible()
-  await tapSlider(dock.getByTestId('music-vol-slider'), 70, 30)
+  await tapSlider(dock.getByTestId('music-vol-slider'), 70, THUMB.md)
   await expect(dock.getByTestId('music-vol-value')).toHaveText(percent(70))
   await dock.getByTestId('music-vol-mute').tap()
   await expect(dock.getByTestId('music-vol-value')).toHaveText('Muet')

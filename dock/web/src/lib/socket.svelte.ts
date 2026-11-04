@@ -67,7 +67,7 @@ class DockSocket {
       this.attempt = 0
       this.status = 'open'
       // Le dock est de retour après une coupure (il redémarre à chaque mise à jour du paquet) : si son
-      // interface a changé pendant ce temps, on recharge celle-ci avant qu'un onglet reste vide.
+      // interface a changé pendant ce temps, on recharge celle-ci avant qu'un bouton ouvre une page vide.
       if (this.everOpened) void refreshIfOutdated()
       this.everOpened = true
       const topics = [...this.wanted.keys()]

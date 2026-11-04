@@ -47,7 +47,7 @@
       disabled={wake.sending}
       onclick={() => void wakePc()}
     >
-      <Power size={30} aria-hidden="true" />
+      <Power size={40} aria-hidden="true" />
       {wake.sending ? 'Envoi…' : 'Envoyer le paquet de réveil'}
     </button>
     {#if sentAgo !== null}
@@ -90,7 +90,7 @@
           data-testid="power-{control.id}"
           onclick={() => void power.run(control.id)}
         >
-          <Icon size={32} aria-hidden="true" />
+          <Icon size={46} aria-hidden="true" />
           <span class="label">{power.busy === control.id ? 'En cours…' : control.label}</span>
           {#if view.why}
             <small class="why" data-testid="power-why-{control.id}">{view.why}</small>
@@ -109,10 +109,14 @@
 </div>
 
 <style>
+  /* Texte doublé : une colonne. Les quatre commandes d'abord (c'est ce qu'on vient faire), le réveil dessous. */
   .grid {
     display: grid;
-    grid-template-columns: 1.1fr 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
+  }
+  section[data-testid='power-card'] {
+    order: -1;
   }
   .state {
     margin-bottom: 14px;
@@ -124,16 +128,17 @@
   }
   dl {
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 6px 16px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
     margin: 16px 0 0;
   }
   dt {
     color: var(--text-3);
-    font-size: var(--fs-small);
+    font-size: var(--fs-cap);
   }
   dd {
-    margin: 0;
+    margin: 0 0 8px;
+    overflow-wrap: anywhere;
   }
   .warn {
     margin-top: 12px;
@@ -150,17 +155,17 @@
   .controls {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 14px;
   }
   .ctl {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    min-height: 104px;
-    padding: 10px 8px;
-    border-radius: 14px;
+    gap: 6px;
+    min-height: 150px;
+    padding: 12px 8px;
+    border-radius: 18px;
     background: var(--surface-3);
     font-weight: 600;
     text-align: center;
@@ -185,6 +190,7 @@
   }
   .label {
     font-size: var(--fs);
+    line-height: 1.1;
   }
   .why {
     color: var(--warn);

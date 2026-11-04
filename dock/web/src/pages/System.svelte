@@ -176,7 +176,7 @@
                 <button class="stopbtn force" aria-label="Forcer l’arrêt de {proc.name}" data-testid="force-{proc.pid}" onclick={() => stop(proc, true)}>Forcer</button>
               {:else if proc.killable}
                 <button class="stopbtn" aria-label="Terminer {proc.name}" data-testid="kill-{proc.pid}" onclick={() => stop(proc)}>
-                  <X size={26} aria-hidden="true" />
+                  <X size={38} aria-hidden="true" />
                 </button>
               {:else}
                 <span class="stopbtn locked" title="Processus du système ou d’une autre session : protégé"></span>
@@ -191,7 +191,7 @@
         {#each sys.disks as disk (disk.mount)}
           <div class="disk" data-testid="disk-{diskLabel(disk)}">
             <span class="dlabel" title="{disk.mount} · {disk.device} · {disk.fs}">{diskLabel(disk)}</span>
-            <Meter percent={disk.percent} label="Occupation de {diskLabel(disk)}" />
+            <div class="dmeter"><Meter percent={disk.percent} label="Occupation de {diskLabel(disk)}" /></div>
             <span class="dtext">{formatUsage(disk.used, disk.total)}</span>
           </div>
         {/each}
@@ -201,7 +201,7 @@
         </p>
         {#if sys.battery}
           <p class="extra battery" data-testid="battery">
-            {#if sys.battery.plugged}<BatteryCharging size={22} aria-hidden="true" />{:else}<BatteryMedium size={22} aria-hidden="true" />{/if}
+            {#if sys.battery.plugged}<BatteryCharging size={34} aria-hidden="true" />{:else}<BatteryMedium size={34} aria-hidden="true" />{/if}
             Batterie {formatPercent(sys.battery.percent)}
             {sys.battery.plugged ? '· sur secteur' : '· sur batterie'}
           </p>
@@ -214,20 +214,19 @@
 {/if}
 
 <style>
+  /* Texte doublé : une seule colonne, la page défile. Les quatre grandes mesures d'abord (ce qu'on vient voir),
+     puis le graphique, les cœurs, le stockage, les processus. */
   .layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
-    gap: 12px;
-    height: 100%;
-    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   }
   .left,
   .right {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-width: 0;
-    min-height: 0;
+    display: contents;
+  }
+  .identity {
+    order: 9;
   }
   .unavailable h2 {
     color: var(--warn);
@@ -236,12 +235,12 @@
   /* --- tuiles --- */
   .tiles {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
   }
   .tile {
     min-width: 0;
-    padding: 10px 12px 9px;
+    padding: 12px 18px 12px;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -251,21 +250,22 @@
     font-weight: 600;
     color: var(--text-3);
     white-space: nowrap;
+    margin-bottom: 0;
   }
   .value {
-    font-size: 30px;
+    font-size: calc(30px * var(--ts) * 0.9);
     font-weight: 700;
     line-height: 1.15;
     white-space: nowrap;
   }
   .value.net {
-    font-size: 20px;
-    line-height: 1.6;
+    font-size: var(--fs-large);
+    line-height: 1.3;
   }
   .value.asleep {
     color: var(--text-2);
-    font-size: 24px;
-    line-height: 1.4;
+    font-size: var(--fs-large);
+    line-height: 1.3;
   }
   .value.good {
     color: var(--text);
@@ -299,20 +299,19 @@
   .chartcard {
     display: flex;
     flex-direction: column;
-    padding: 8px 14px 8px;
-    flex: 1 1 0;
-    min-height: 150px;
+    gap: 6px;
+    padding: 12px 18px;
   }
   .charthead {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
   }
   .legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 14px;
+    gap: 4px 20px;
     font-size: var(--fs-cap);
     color: var(--text-2);
     min-width: 0;
@@ -320,24 +319,24 @@
   .key {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     white-space: nowrap;
   }
   .key i {
-    width: 12px;
-    height: 12px;
-    border-radius: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
   }
   .seg {
     display: flex;
-    flex: none;
     background: var(--surface-2);
-    border-radius: 10px;
+    border-radius: 14px;
   }
   .seg button {
-    min-height: 48px;
+    flex: 1 1 0;
+    min-height: var(--tap);
     padding: 0 14px;
-    border-radius: 8px;
+    border-radius: 12px;
     font-size: var(--fs-cap);
     font-weight: 600;
     color: var(--text-2);
@@ -347,8 +346,7 @@
     color: var(--accent);
   }
   .plot {
-    flex: 1 1 0;
-    min-height: 60px;
+    height: 190px;
   }
   .axis {
     display: flex;
@@ -359,15 +357,22 @@
 
   /* --- cœurs --- */
   .cores {
-    padding: 6px 14px 8px;
+    padding: 12px 18px 14px;
+  }
+  .cores h2,
+  .procshead h2 {
+    font-size: var(--fs-small);
+    font-weight: 600;
+    color: var(--text-2);
+    letter-spacing: 0.02em;
   }
   .cores h2 {
-    margin-bottom: 4px;
+    margin-bottom: 8px;
   }
   .bars {
     display: flex;
-    gap: 3px;
-    height: 34px;
+    gap: 5px;
+    height: 84px;
   }
   .core {
     flex: 1 1 0;
@@ -375,12 +380,12 @@
     display: flex;
     align-items: flex-end;
     background: var(--surface-2);
-    border-radius: 3px;
+    border-radius: 5px;
     overflow: hidden;
   }
   .corefill {
     width: 100%;
-    border-radius: 3px;
+    border-radius: 5px;
   }
   .corefill.good {
     background: var(--accent);
@@ -393,9 +398,8 @@
   }
   .identity {
     font-size: var(--fs-cap);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
   }
   .identity strong {
     color: var(--text-2);
@@ -403,48 +407,31 @@
 
   /* --- processus --- */
   .procs {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 0;
-    min-height: 0;
-    padding: 8px 10px 4px 14px;
+    padding: 12px 10px 6px 18px;
   }
   .procshead {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    padding-right: 70px;
-  }
-  .procshead h2,
-  .cores h2 {
-    font-size: var(--fs-small);
-    font-weight: 600;
-    color: var(--text-2);
-    letter-spacing: 0.02em;
+    padding-right: 88px;
   }
   .procshead h2 {
-    margin-bottom: 2px;
+    margin-bottom: 4px;
   }
   .cols {
     display: grid;
-    grid-template-columns: 58px 74px;
+    grid-template-columns: 110px 150px;
     gap: 6px;
     text-align: right;
     font-size: var(--fs-cap);
     color: var(--text-3);
   }
-  .list {
-    flex: 1 1 0;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
   .proc {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 58px 74px 64px;
+    grid-template-columns: minmax(0, 1fr) 110px 150px 80px;
     align-items: center;
     gap: 6px;
-    height: 48px;
+    height: calc(var(--tap) + 6px);
     border-top: 1px solid var(--line);
   }
   .proc:first-child {
@@ -466,9 +453,9 @@
     display: grid;
     place-items: center;
     justify-self: end;
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
+    width: var(--tap);
+    height: var(--tap);
+    border-radius: 14px;
     color: var(--text-2);
   }
   button.stopbtn:active {
@@ -476,7 +463,7 @@
     color: var(--bad);
   }
   .stopbtn.force {
-    width: 64px;
+    width: 80px;
     background: var(--bad-soft);
     color: var(--bad);
     font-size: var(--fs-cap);
@@ -489,39 +476,47 @@
 
   /* --- stockage --- */
   .disks {
-    padding: 8px 14px 8px;
+    padding: 12px 18px 12px;
   }
   .disks h2 {
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
   .disk {
     display: grid;
-    grid-template-columns: 74px minmax(0, 1fr) 118px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label text'
+      'meter meter';
     align-items: center;
-    gap: 10px;
-    min-height: 30px;
+    gap: 2px 14px;
+    padding: 6px 0 10px;
   }
   .dlabel {
+    grid-area: label;
     font-size: var(--fs-small);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .dmeter {
+    grid-area: meter;
+  }
   .dtext {
+    grid-area: text;
     font-size: var(--fs-cap);
     color: var(--text-2);
     text-align: right;
     white-space: nowrap;
   }
   .extra {
-    margin-top: 3px;
+    margin-top: 4px;
     font-size: var(--fs-cap);
     line-height: 1.25;
   }
   .battery {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     color: var(--text-2);
   }
 </style>

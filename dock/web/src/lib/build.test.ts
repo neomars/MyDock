@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { entryOf, interfaceChanged, mayAutoReload, RELOAD_GUARD_MS, reloadIfAllowed, runningEntry } from './build'
+import { entryOf, interfaceChanged, mayAutoReload, RELOAD_GUARD_MS, reloadIfAllowed, reloadNow, runningEntry, takeReopen } from './build'
 
 const page = (entry: string) =>
   `<!doctype html><html><head><meta charset="UTF-8"><title>MyDock</title>` +
@@ -118,5 +118,52 @@ describe('reloadIfAllowed', () => {
     const readOnly = { getItem: () => null, setItem: () => { throw new Error('plein') } }
     expect(reloadIfAllowed({ now: 1, storage: readOnly, reload })).toBe(false)
     expect(reload).not.toHaveBeenCalled()
+  })
+})
+
+describe('rouvrir la page touchée après un rechargement', () => {
+  const memory = () => {
+    const data = new Map<string, string>()
+    return {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+      removeItem: (key: string) => void data.delete(key),
+      data,
+    }
+  }
+
+  it('reloadIfAllowed note la page, takeReopen la rend une seule fois', () => {
+    const storage = memory()
+    expect(reloadIfAllowed({ now: 1_000, storage, reload: vi.fn(), reopen: 'music' })).toBe(true)
+    expect(takeReopen(storage)).toBe('music')
+    expect(takeReopen(storage)).toBeNull() // lue une fois : un rechargement à la main repart de l'accueil
+  })
+  it("sans page demandée, rien n'est noté", () => {
+    const storage = memory()
+    reloadIfAllowed({ now: 1_000, storage, reload: vi.fn() })
+    expect(takeReopen(storage)).toBeNull()
+  })
+  it('un rechargement refusé par le garde-fou ne note rien', () => {
+    const storage = memory()
+    storage.setItem('mydock.reloaded', '1000')
+    expect(reloadIfAllowed({ now: 2_000, storage, reload: vi.fn(), reopen: 'music' })).toBe(false)
+    expect(takeReopen(storage)).toBeNull()
+  })
+  it('reloadNow recharge toujours (geste de la personne) et note la page', () => {
+    const storage = memory()
+    const reload = vi.fn()
+    reloadNow('sound', { storage, reload })
+    expect(reload).toHaveBeenCalledOnce()
+    expect(takeReopen(storage)).toBe('sound')
+  })
+  it('reloadNow recharge même si la mémoire est bloquée', () => {
+    const reload = vi.fn()
+    const broken = { getItem: () => null, setItem: () => { throw new Error('plein') } }
+    reloadNow('sound', { storage: broken, reload })
+    expect(reload).toHaveBeenCalledOnce()
+  })
+  it("takeReopen ne casse pas si la mémoire de l'onglet est inutilisable", () => {
+    const broken = { getItem: () => { throw new Error('bloqué') }, removeItem: () => { throw new Error('bloqué') } }
+    expect(takeReopen(broken)).toBeNull()
   })
 })

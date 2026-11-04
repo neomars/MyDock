@@ -1,11 +1,16 @@
 <script lang="ts">
+  import House from '@lucide/svelte/icons/house'
   import { clock } from '../lib/clock.svelte'
   import { formatClock } from '../lib/format'
   import { sock } from '../lib/socket.svelte'
   import MiniPlayer from './MiniPlayer.svelte'
   import StatusDot from './StatusDot.svelte'
 
-  let { onOpenMusic }: { onOpenMusic: () => void } = $props()
+  let {
+    onOpenMusic,
+    showHome = false,
+    onHome,
+  }: { onOpenMusic: () => void; showHome?: boolean; onHome?: () => void } = $props()
 
   const state = $derived(sock.link?.state ?? null)
   const label = $derived.by(() => {
@@ -31,6 +36,12 @@
 </script>
 
 <header class="top">
+  {#if showHome}
+    <!-- Dans une page : retour au menu principal (le balayage vers la droite fait la même chose). -->
+    <button class="home" data-testid="home-back" aria-label="Retour à l'accueil" onclick={onHome}>
+      <House size={44} aria-hidden="true" />
+    </button>
+  {/if}
   <div class="who">
     <StatusDot {state} />
     <span class="name" data-testid="pc-label">{label}</span>
@@ -45,34 +56,59 @@
 
 <style>
   .top {
-    display: grid;
-    grid-template-columns: 1fr minmax(0, 2fr) 1fr;
+    display: flex;
     align-items: center;
+    gap: 16px;
+    min-width: 0;
     height: var(--topbar);
     padding: 0 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--line);
   }
+  .home {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: var(--tap);
+    height: var(--tap);
+    margin-left: -8px;
+    border-radius: 16px;
+    background: var(--surface-3);
+    color: var(--text);
+  }
+  .home:active {
+    background: var(--line);
+    transform: scale(0.96);
+  }
   .who {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: 38%;
   }
   .name {
+    font-size: var(--fs-small);
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .who .chip {
+    font-size: calc(12px * var(--ts));
+    padding: 2px 10px;
+  }
   .mini {
+    flex: 1 1 0;
     min-width: 0;
     display: flex;
-    justify-content: center;
+    justify-content: flex-end;
+    overflow: hidden;
   }
   .clock {
-    justify-self: end;
-    font-size: 28px;
+    flex: none;
+    font-size: calc(22px * var(--ts));
     font-weight: 600;
   }
 </style>

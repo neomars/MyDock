@@ -10,7 +10,7 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import type { Component } from 'svelte'
   import { clock } from '../lib/clock.svelte'
-  import { formatClock, formatCountdown, formatDate } from '../lib/format'
+  import { formatCountdown, formatDate } from '../lib/format'
   import { portalReady } from '../lib/pairing'
   import { pairingUi } from '../lib/pairing.svelte'
   import type { LinkState } from '../lib/protocol'
@@ -69,14 +69,12 @@
 </script>
 
 {#snippet diagnostic()}
-  <div class="clockblock">
-    <div class="time">{formatClock(clock.now)}</div>
-    <div class="date muted">{formatDate(clock.now)}</div>
-  </div>
+  <!-- L'heure est déjà dans la barre du haut : ici seulement la date, pour garder la place du diagnostic. -->
+  <div class="date muted" data-testid="offline-date">{formatDate(clock.now)}</div>
 
   <div class="status card {copy.tone}">
     <div class="line">
-      <Icon size={40} aria-hidden="true" />
+      <Icon size={56} aria-hidden="true" />
       <h1 data-testid="offline-title">{copy.title}</h1>
     </div>
     <p class="detail muted" data-testid="offline-detail">{link?.detail}</p>
@@ -102,19 +100,19 @@
         disabled={wake.sending}
         onclick={() => void wakePc()}
       >
-        <Power size={30} aria-hidden="true" />
+        <Power size={40} aria-hidden="true" />
         {wake.sending ? 'Envoi…' : 'Allumer le PC'}
       </button>
     {/if}
     {#if canOfferPairing}
       <button class="btn primary big" data-testid="pair-open" disabled={pairingUi.busy} onclick={() => void pairingUi.open()}>
-        <Link2 size={30} aria-hidden="true" />
+        <Link2 size={40} aria-hidden="true" />
         {link?.state === 'auth_failed' ? 'Associer à nouveau' : 'Associer un PC'}
       </button>
     {/if}
     {#if copy.needsSettings}
       <button class="btn big" data-testid="open-settings" onclick={onSettings}>
-        <Settings size={28} aria-hidden="true" /> Réglages
+        <Settings size={38} aria-hidden="true" /> Réglages
       </button>
     {/if}
   </div>
@@ -144,25 +142,23 @@
   {#if pairingOpen}
     <div class="welcome" data-testid="pairing-screen">
       <div class="line">
-        <Link2 size={40} aria-hidden="true" />
+        <Link2 size={56} aria-hidden="true" />
         <h1 data-testid="pairing-title">Associer un PC</h1>
       </div>
-      <p class="muted" data-testid="pairing-lead">
-        Le dock se configure tout seul : rien à recopier, aucun jeton à saisir.
-      </p>
-      <PairingPanel />
-      <div class="actions">
-        {#if link?.state !== 'not_configured'}
-          <button class="btn" data-testid="pairing-close" disabled={pairingUi.busy} onclick={() => void pairingUi.close()}>
-            Annuler
-          </button>
-        {/if}
-        {#if copy.needsSettings}
-          <button class="btn" data-testid="open-settings" onclick={onSettings}>
-            <Settings size={26} aria-hidden="true" /> Saisie à la main (Réglages)
-          </button>
-        {/if}
-      </div>
+      <PairingPanel>
+        {#snippet extra()}
+          {#if link?.state !== 'not_configured'}
+            <button class="btn" data-testid="pairing-close" disabled={pairingUi.busy} onclick={() => void pairingUi.close()}>
+              Annuler
+            </button>
+          {/if}
+          {#if copy.needsSettings}
+            <button class="btn" data-testid="open-settings" onclick={onSettings}>
+              <Settings size={36} aria-hidden="true" /> Réglages
+            </button>
+          {/if}
+        {/snippet}
+      </PairingPanel>
     </div>
   {:else}
     {@render diagnostic()}
@@ -170,32 +166,26 @@
 </section>
 
 <style>
+  /* Texte doublé : on centre quand tout tient, on défile sinon (jamais de haut coupé). */
   .offline {
-    height: 100%;
+    min-height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 16px;
+    justify-content: safe center;
+    gap: 12px;
     text-align: center;
   }
-  .time {
-    font-size: 104px;
-    font-weight: 300;
-    line-height: 1;
-    letter-spacing: -0.02em;
-  }
   .date {
-    margin-top: 6px;
-    font-size: var(--fs-large);
+    font-size: var(--fs-small);
   }
   .status {
-    width: min(720px, 100%);
+    width: min(900px, 100%);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 6px;
-    padding: 16px 24px;
+    padding: 14px 24px;
   }
   .line {
     display: flex;
@@ -216,7 +206,8 @@
     color: var(--text-2);
   }
   .detail {
-    max-width: 640px;
+    max-width: 860px;
+    font-size: var(--fs-small);
   }
   .waking {
     color: var(--good);
@@ -224,20 +215,22 @@
   }
   .actions {
     display: flex;
-    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 14px;
   }
   .welcome {
     width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
   }
   .welcome .line {
     color: var(--accent);
   }
   .hint {
-    max-width: 700px;
+    max-width: 860px;
     font-size: var(--fs-small);
   }
   .hint.warn {

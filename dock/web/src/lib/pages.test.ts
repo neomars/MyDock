@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PAGES, movePage, pageById, pageRows, pagesSummary, shownPage, toggleHidden, visiblePages } from './pages'
+import { PAGES, movePage, pageById, pageRows, pagesSummary, toggleHidden, visiblePages } from './pages'
 
 describe('pages', () => {
   it('suivent l’ordre du cahier des charges', () => {
@@ -88,23 +88,6 @@ describe('toggleHidden', () => {
   })
 })
 
-describe('shownPage', () => {
-  const visible = visiblePages([], ['steam'])
-
-  it('garde la page demandée quand elle est visible', () => {
-    expect(shownPage('system', visible)).toBe('system')
-  })
-
-  it('retombe sur la première page visible quand la page demandée est cachée', () => {
-    expect(shownPage('steam', visible)).toBe('music')
-    expect(shownPage('steam', visiblePages(['power'], ['steam']))).toBe('power')
-  })
-
-  it('ne casse pas sans aucune page', () => {
-    expect(shownPage('steam', [])).toBe('steam')
-  })
-})
-
 describe('pagesSummary', () => {
   it('compte les pages et nomme les cachées', () => {
     expect(pagesSummary(pageRows([], []))).toBe('9 pages visibles sur 9.')
@@ -113,3 +96,23 @@ describe('pagesSummary', () => {
   })
 })
 
+
+describe('les couleurs des boutons', () => {
+  const channel = (hex: string, at: number): number => {
+    const v = Number.parseInt(hex.slice(at, at + 2), 16) / 255
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+  }
+  const luminance = (hex: string): number => 0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5)
+  const contrastWithWhite = (hex: string): number => 1.05 / (luminance(hex) + 0.05)
+
+  it('le libellé blanc se lit sur le bas de chaque bouton (contraste d’au moins 4,5 : 1)', () => {
+    for (const page of PAGES) expect(contrastWithWhite(page.tone.to), page.id).toBeGreaterThanOrEqual(4.5)
+  })
+  it('l’icône blanche se voit sur le haut de chaque bouton (contraste d’au moins 3 : 1)', () => {
+    for (const page of PAGES) expect(contrastWithWhite(page.tone.from), page.id).toBeGreaterThanOrEqual(3)
+  })
+  it('chaque page a sa teinte : on reconnaît un bouton à sa couleur autant qu’à son dessin', () => {
+    expect(new Set(PAGES.map((p) => p.tone.from)).size).toBe(PAGES.length)
+    for (const page of PAGES) expect(page.tone.from, page.id).toMatch(/^#[0-9a-f]{6}$/)
+  })
+})

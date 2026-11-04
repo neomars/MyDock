@@ -32,7 +32,7 @@
           data-testid="{testid}-device-{device.id}"
           onclick={() => void audio.setDefault(kind, device.id)}
         >
-          <Icon size={22} aria-hidden="true" />
+          <Icon size={34} aria-hidden="true" />
           <span>{device.label}</span>
         </button>
       {/each}
@@ -42,7 +42,7 @@
 
 {#if audio.unavailable}
   <section class="empty" data-testid="sound-unavailable">
-    <AudioLines size={64} aria-hidden="true" />
+    <AudioLines size={84} aria-hidden="true" />
     <h1>Son indisponible</h1>
     <p class="muted">{audio.unavailable}</p>
   </section>
@@ -107,21 +107,17 @@
 {/if}
 
 <style>
+  /* Texte doublé : tout s'empile, la page défile. La sortie d'abord, le micro, puis les applications. */
   .layout {
-    display: grid;
-    grid-template-columns: 468px minmax(0, 1fr);
-    gap: 12px;
-    height: 100%;
-    min-height: 0;
-  }
-  .left {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    min-width: 0;
+    gap: 14px;
+  }
+  .left {
+    display: contents;
   }
   .card {
-    padding: 10px 16px 12px;
+    padding: 12px 18px 14px;
   }
   .head {
     display: flex;
@@ -150,13 +146,13 @@
   .chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 8px;
+    gap: 10px;
+    margin-top: 10px;
   }
   .chip {
-    min-height: 48px;
+    min-height: var(--tap);
     max-width: 100%;
-    padding: 0 14px;
+    padding: 0 20px;
     font-size: var(--fs-small);
   }
   .chip span {
@@ -182,8 +178,8 @@
   }
   .rec i {
     flex: none;
-    width: 12px;
-    height: 12px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--bad);
   }
@@ -196,21 +192,14 @@
   .apps {
     display: flex;
     flex-direction: column;
-    min-height: 0;
     padding-bottom: 6px;
-  }
-  .list {
-    flex: 1 1 0;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
   .app {
     display: grid;
-    grid-template-columns: 36px 112px minmax(0, 1fr);
+    grid-template-columns: 56px 220px minmax(0, 1fr);
     align-items: center;
-    gap: 8px;
-    min-height: 64px;
+    gap: 12px;
+    min-height: 100px;
     border-top: 1px solid var(--line);
   }
   .app:first-child {
@@ -223,9 +212,9 @@
   .avatar {
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
     background: hsl(var(--hue) 50% 28%);
     color: hsl(var(--hue) 85% 86%);
     font-size: var(--fs-small);
@@ -267,6 +256,6 @@
     color: var(--text);
   }
   .empty p {
-    max-width: 600px;
+    max-width: 760px;
   }
 </style>

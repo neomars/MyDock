@@ -43,7 +43,7 @@ TCP_TIMEOUT = 3.0
 
 
 def _check_web_files(report: Report, web_dir: Path, entry: str | None) -> None:
-    """Chaque page de l'interface est un fichier à part : un seul manquant et son onglet reste vide."""
+    """Chaque page de l'interface est un fichier à part : un seul manquant et son bouton ouvre une page vide."""
     if entry is None:
         report.add(
             INFO, "index.html ne désigne pas de script d'entrée : interface non vérifiée plus loin."
@@ -63,7 +63,7 @@ def _check_web_files(report: Report, web_dir: Path, entry: str | None) -> None:
         report.add(
             FAIL,
             f"L'interface réclame {len(missing)} fichier(s) absent(s) ou illisible(s) : {shown}. "
-            "Les onglets concernés resteraient vides (réinstalle le paquet mydock).",
+            "Les pages concernées resteraient vides (réinstalle le paquet mydock).",
         )
     else:
         report.add(

@@ -2,20 +2,21 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import type { Component } from 'svelte'
-  import { interfaceChanged, reloadIfAllowed } from '../lib/build'
+  import { interfaceChanged, reloadIfAllowed, reloadNow } from '../lib/build'
 
-  let { load }: { load: () => Promise<{ default: Component }> } = $props()
+  /** `page` : l'identifiant de la page demandée, pour la rouvrir d'elle-même après un rechargement. */
+  let { load, page }: { load: () => Promise<{ default: Component }>; page?: string } = $props()
 
   /**
    * Charge la page. Si elle est introuvable parce que le dock a changé d'interface depuis l'ouverture de
-   * cet écran (mise à jour du paquet), on recharge tout : l'écran se répare seul. Sinon l'erreur est
-   * affichée : une page vide ne dirait rien à personne.
+   * cet écran (mise à jour du paquet), on recharge tout et la page touchée se rouvre : l'écran se répare seul.
+   * Sinon l'erreur est affichée : une page vide ne dirait rien à personne.
    */
   async function attempt(): Promise<{ default: Component }> {
     try {
       return await load()
     } catch (error) {
-      if ((await interfaceChanged()) && reloadIfAllowed()) return new Promise(() => {}) // la page se recharge
+      if ((await interfaceChanged()) && reloadIfAllowed({ reopen: page })) return new Promise(() => {}) // la page se recharge
       throw error
     }
   }
@@ -48,7 +49,7 @@
     <TriangleAlert size={44} aria-hidden="true" />
     <h1>Cette page n'a pas pu être chargée</h1>
     <p class="muted">L'interface vient peut-être d'être mise à jour : recharge l'écran.</p>
-    <button class="btn primary big" data-testid="page-reload" onclick={() => location.reload()}>
+    <button class="btn primary big" data-testid="page-reload" onclick={() => reloadNow(page)}>
       <RefreshCw size={28} aria-hidden="true" /> Recharger
     </button>
     <p class="dim small mono" data-testid="page-failed-detail">{detail(error)}</p>

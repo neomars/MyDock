@@ -1,7 +1,7 @@
 // Tests de bout en bout : vrai navigateur 1024x600 tactile -> vrai serveur dock -> vrai agent (démo).
 
 import type { Page } from '@playwright/test'
-import { clearKeyboard, expect, shot, test, typeOnKeyboard } from './fixtures'
+import { clearKeyboard, expect, goHome, openPage, shot, test, typeOnKeyboard } from './fixtures'
 
 const TABS: [string, string][] = [
   ['music', 'Musique'],
@@ -18,7 +18,7 @@ const TABS: [string, string][] = [
 /** Éléments cliquables visibles dont le plus petit côté est sous 48 px. */
 async function smallTargets(page: Page): Promise<string[]> {
   return page.evaluate(() =>
-    [...document.querySelectorAll('button, [role=tab]')]
+    [...document.querySelectorAll('button')]
       .map((el) => ({ el, box: el.getBoundingClientRect() }))
       .filter(({ el, box }) => box.width > 0 && box.height > 0 && !(el as HTMLButtonElement).disabled)
       .filter(({ box }) => Math.min(box.width, box.height) < 48)
@@ -26,54 +26,59 @@ async function smallTargets(page: Page): Promise<string[]> {
   )
 }
 
-test('démarre connecté sur la page Système, en 1024×600 sans défilement de la page', async ({ dock }) => {
+const noScroll = (page: Page) =>
+  page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+
+test('démarre connecté sur l’accueil (gros boutons), en 1024×600 sans défilement de la page', async ({ dock }) => {
   expect(dock.viewportSize()).toEqual({ width: 1024, height: 600 })
   await expect(dock.getByTestId('pc-label')).toHaveText('pc-demo')
   await expect(dock.getByTestId('demo-chip')).toBeVisible()
+  await expect(dock.getByTestId('home-grid')).toBeVisible()
+  expect(await noScroll(dock)).toEqual({ w: 1024, h: 600 })
+
+  await openPage(dock, 'system')
   await expect(dock.getByTestId('system-host')).toContainText('pc-demo')
   await expect(dock.getByTestId('system-host')).toHaveAttribute('title', /Ubuntu 26\.04 LTS \(démo\)/)
   await expect(dock.getByTestId('uptime')).toContainText('3 h')
-  const size = await dock.evaluate(() => ({
-    w: document.documentElement.scrollWidth,
-    h: document.documentElement.scrollHeight,
-  }))
-  expect(size).toEqual({ w: 1024, h: 600 })
+  expect(await noScroll(dock)).toEqual({ w: 1024, h: 600 })
 })
 
-test('les neuf onglets s’ouvrent au toucher', async ({ dock }) => {
+test('les neuf boutons de l’accueil ouvrent leur page, et le bouton de la barre du haut y ramène', async ({ dock }) => {
   for (const [id, label] of TABS) {
-    const tab = dock.getByTestId(`tab-${id}`)
-    await expect(tab).toContainText(label)
-    await tab.tap()
-    await expect(tab).toHaveAttribute('aria-selected', 'true')
+    const tile = dock.getByTestId(`tile-${id}`)
+    await expect(tile).toContainText(label)
+    await tile.tap()
     await expect(dock.getByTestId(`page-${id}`)).toBeVisible()
+    await goHome(dock)
   }
 })
 
 test('toutes les cibles tactiles font au moins 48 px, clavier compris', async ({ dock }) => {
+  expect(await smallTargets(dock), 'accueil').toEqual([])
   for (const [id] of TABS) {
-    await dock.getByTestId(`tab-${id}`).tap()
+    await openPage(dock, id)
     await expect(dock.getByTestId(`page-${id}`)).toBeVisible()
     await dock.waitForTimeout(150)
     expect(await smallTargets(dock), `page ${id}`).toEqual([])
   }
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('edit-token').tap()
   await expect(dock.getByTestId('keyboard')).toBeVisible()
   expect(await smallTargets(dock), 'clavier tactile').toEqual([])
 })
 
-test('retrouve la dernière page affichée après un rechargement', async ({ dock }) => {
-  await dock.getByTestId('tab-markets').tap()
+test('après un rechargement, on repart toujours de l’accueil', async ({ dock }) => {
+  await openPage(dock, 'markets')
   await expect(dock.getByTestId('markets-status')).toBeVisible()
   await dock.reload()
-  await expect(dock.getByTestId('page-markets')).toBeVisible()
-  await expect(dock.getByTestId('tab-markets')).toHaveAttribute('aria-selected', 'true')
+  await expect(dock.getByTestId('home')).toBeVisible()
+  await expect(dock.locator('main.page')).toHaveCount(0)
 })
 
 // --- panne et reprise --------------------------------------------------------------------------
 
 test('PC éteint : écran hors ligne, réveil Wake-on-LAN, reconnexion automatique', async ({ dock, stack }) => {
+  await openPage(dock, 'system')
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toHaveText('PC hors ligne', { timeout: 20_000 })
   await expect(dock.getByTestId('offline-detail')).toContainText('éteint, en veille')
@@ -101,6 +106,7 @@ test('PC éteint : écran hors ligne, réveil Wake-on-LAN, reconnexion automatiq
 })
 
 test('agent arrêté seul : message dédié, sans proposer de réveil', async ({ dock, stack }) => {
+  await openPage(dock, 'system')
   stack.agentDown()
   await expect(dock.getByTestId('offline-title')).toHaveText('PC allumé, agent arrêté', { timeout: 20_000 })
   await expect(dock.getByTestId('offline-detail')).toContainText("n'écoute pas")
@@ -115,23 +121,25 @@ test('hors ligne, Bourse et Réglages restent utilisables ; les pages du PC mont
   dock,
   stack,
 }) => {
+  await openPage(dock, 'system')
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toBeVisible({ timeout: 20_000 })
-  await dock.getByTestId('tab-markets').tap()
+  await openPage(dock, 'markets')
   await expect(dock.getByTestId('markets-list')).toBeVisible()
   await expect(dock.getByTestId('price-crypto:BTC')).not.toHaveText('…', { timeout: 10_000 }) // les cotations ne viennent pas du PC
   await expect(dock.getByTestId('offline')).toHaveCount(0)
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('settings-pc')).toBeVisible()
   await expect(dock.getByTestId('pc-resolved')).toContainText('Dernière adresse essayée')
   await expect(dock.getByTestId('pc-resolved')).toContainText(/127\.0\.0\.1:\d+/)
-  await dock.getByTestId('tab-power').tap()
+  await openPage(dock, 'power')
   await expect(dock.getByTestId('wol-card')).toBeVisible()
-  await dock.getByTestId('tab-music').tap()
+  await openPage(dock, 'music')
   await expect(dock.getByTestId('offline')).toBeVisible()
 })
 
 test('l’écran hors ligne ne clignote pas pendant les nouvelles tentatives', async ({ dock, stack }) => {
+  await openPage(dock, 'system')
   stack.pcOff()
   const title = dock.getByTestId('offline-title')
   await expect(title).toHaveText('PC hors ligne', { timeout: 20_000 })
@@ -146,14 +154,14 @@ test('l’écran hors ligne ne clignote pas pendant les nouvelles tentatives', a
 // --- Réglages ---------------------------------------------------------------------------------
 
 test('Réglages : montre l’adresse du PC jointe et celle du Pi', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('pc-resolved')).toContainText('Connecté à')
   await expect(dock.getByTestId('pc-resolved')).toContainText(/127\.0\.0\.1:\d+/)
   await expect(dock.getByTestId('pi-ips')).toHaveText(/^(\d{1,3}\.){3}\d{1,3}( · (\d{1,3}\.){3}\d{1,3})*$|^—$/)
 })
 
 test('Réglages : saisir l’adresse du PC au clavier tactile', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('edit-host').tap()
   await expect(dock.getByTestId('keyboard')).toBeVisible()
   await expect(dock.getByTestId('keyboard-value')).toHaveText('127.0.0.1')
@@ -176,7 +184,7 @@ test('Réglages : saisir l’adresse du PC au clavier tactile', async ({ dock })
 })
 
 test('Réglages : une adresse invalide est refusée avec une explication', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('edit-host').tap()
   await clearKeyboard(dock)
   await typeOnKeyboard(dock, 'pc')
@@ -188,7 +196,7 @@ test('Réglages : une adresse invalide est refusée avec une explication', async
 })
 
 test('Réglages : le jeton se saisit masqué et un jeton trop court est refusé', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('edit-token').tap()
   await typeOnKeyboard(dock, 'court')
   await expect(dock.getByTestId('keyboard-value')).toHaveText('•••••')
@@ -202,7 +210,7 @@ test('Réglages : le jeton se saisit masqué et un jeton trop court est refusé'
 test('Réglages : l’adresse MAC se tape avec ses deux-points automatiques et se revient en automatique', async ({
   dock,
 }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('wol-mac-setting')).toHaveText('02:00:5e:10:00:01')
   await dock.getByTestId('edit-mac').tap()
   await clearKeyboard(dock)
@@ -216,14 +224,14 @@ test('Réglages : l’adresse MAC se tape avec ses deux-points automatiques et s
 })
 
 test('Réglages : « Tester la connexion » confirme que l’agent répond', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('test-connection').tap()
   await expect(dock.getByTestId('test-result')).toContainText('Connexion réussie')
   await shot(dock, '02-reglages')
 })
 
 test('Réglages : la latence appui → PC mesurée est sous 50 ms', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('measure-latency').tap()
   const result = dock.getByTestId('latency-result')
   await expect(result).toContainText('sous 50 ms', { timeout: 30_000 })
@@ -235,7 +243,7 @@ test('Réglages : la latence appui → PC mesurée est sous 50 ms', async ({ doc
 })
 
 test('Confirmation à l’écran : annuler n’exécute rien, confirmer exécute', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('try-confirm').tap()
   await expect(dock.getByTestId('confirm')).toContainText('Tester la confirmation')
   await expect(dock.getByTestId('confirm-timer')).toContainText('Expire dans')
@@ -252,7 +260,7 @@ test('Confirmation à l’écran : annuler n’exécute rien, confirmer exécute
 // --- Alimentation -----------------------------------------------------------------------------
 
 test('Alimentation : le paquet Wake-on-LAN part avec la bonne adresse MAC', async ({ dock, stack }) => {
-  await dock.getByTestId('tab-power').tap()
+  await openPage(dock, 'power')
   await expect(dock.getByTestId('wol-mac')).toHaveText('02:00:5e:10:00:01')
   await expect(dock.getByTestId('wol-card')).toContainText('apprise automatiquement')
   await dock.getByTestId('wake-power').tap()
@@ -276,7 +284,7 @@ test('navigation sans tâche longue sous ralentissement du processeur ×4 (indic
     })
   })
   for (const [id] of [...TABS, ...TABS]) {
-    await dock.getByTestId(`tab-${id}`).tap()
+    await openPage(dock, id)
     await expect(dock.getByTestId(`page-${id}`)).toBeVisible()
   }
   await dock.waitForTimeout(300)

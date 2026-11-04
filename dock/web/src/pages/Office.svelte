@@ -30,7 +30,7 @@
 
 {#if data?.unavailable}
   <section class="empty" data-testid="office-unavailable">
-    <FileText size={64} aria-hidden="true" />
+    <FileText size={84} aria-hidden="true" />
     <h1>LibreOffice indisponible</h1>
     <p class="muted">{data.unavailable}</p>
   </section>
@@ -43,7 +43,7 @@
         {@const Icon = kindIcon(module.kind)}
         {@const busy = launch.isBusy(`new:${module.kind}`)}
         <button class="module {module.kind}" class:busy data-testid="new-{module.kind}" onclick={() => create(module.kind, `LibreOffice ${module.program}`)}>
-          <Icon size={40} aria-hidden="true" />
+          <Icon size={60} aria-hidden="true" />
           <span class="text">
             <strong>{module.title}</strong>
             <small>{busy ? 'Lancement…' : `LibreOffice ${module.program}`}</small>
@@ -59,7 +59,7 @@
           {@const Icon = kindIcon(doc.kind)}
           {@const busy = launch.isBusy(`doc:${doc.id}`)}
           <button class="doc {doc.kind}" class:busy aria-label="Ouvrir {doc.name}" data-testid="recent-{doc.id}" onclick={() => reopen(doc)}>
-            <Icon size={30} aria-hidden="true" />
+            <Icon size={42} aria-hidden="true" />
             <span class="text">
               <strong data-testid="recent-name-{doc.id}">{doc.name}</strong>
               <small>{kindLabel(doc.kind)} · {doc.where}</small>
@@ -76,29 +76,38 @@
 {/if}
 
 <style>
+  /* Texte doublé : les trois « nouveau » sur une rangée, les documents récents dessous. */
   .layout {
-    display: grid;
-    grid-template-columns: 330px minmax(0, 1fr);
-    gap: 12px;
-    height: 100%;
-    min-height: 0;
-  }
-  .modules {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 14px;
+  }
+  .modules {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
   }
   .module {
-    flex: 1 1 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 16px;
-    min-height: 96px;
-    padding: 0 18px;
+    justify-content: center;
+    gap: 8px;
+    min-height: 190px;
+    padding: 14px 8px;
     border-radius: var(--radius);
     background: var(--surface);
     border: 1px solid var(--line);
-    text-align: left;
+    text-align: center;
+  }
+  .module .text {
+    align-items: center;
+  }
+  .module .text strong,
+  .module .text small {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
   .module:active,
   .doc:active {
@@ -149,24 +158,21 @@
   .recent {
     display: flex;
     flex-direction: column;
-    min-height: 0;
     padding: 12px 14px 6px;
   }
   .recent > h2 {
     margin-bottom: 6px;
   }
   .list {
-    flex: 1 1 0;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
   }
   .doc {
     display: flex;
     align-items: center;
     gap: 14px;
     width: 100%;
-    min-height: 64px;
+    min-height: 100px;
     padding: 0 8px;
     border: 1px solid transparent;
     border-top-color: var(--line);

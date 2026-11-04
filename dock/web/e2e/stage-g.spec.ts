@@ -6,7 +6,7 @@
 //     un dock neuf affiche un code, un « PC » le présente au portail, le dock se connecte.
 
 import type { Page, WebSocketRoute } from '@playwright/test'
-import { DEMO_TOKEN, expect, shot, test } from './fixtures'
+import { DEMO_TOKEN, expect, openPage, shot, test } from './fixtures'
 
 type Topics = Record<string, unknown>
 
@@ -87,11 +87,23 @@ async function mockDock(
   initial: { link: unknown; dock: unknown; startPage?: string; topics?: Topics },
   onAct?: (act: Mock['acts'][number], mock: Mock) => void,
 ): Promise<Mock> {
+  // Le dock repart toujours de l'accueil : pour arriver sur une page (Système par défaut), on touche son bouton une
+  // fois la page chargée. `startPage: 'home'` laisse l'accueil.
+  const start = initial.startPage ?? 'system'
+  if (start !== 'home') {
+    const goto = page.goto.bind(page)
+    page.goto = (async (url: string, gotoOptions?: Parameters<Page['goto']>[1]) => {
+      const response = await goto(url, gotoOptions)
+      await openPage(page, start)
+      return response
+    }) as Page['goto']
+  }
+
   const acts: Mock['acts'] = []
   const state: Record<string, unknown> = {
     link: initial.link,
     dock: initial.dock,
-    ui: { last_page: initial.startPage ?? 'system', order: [], hidden: [], pinned_apps: [], screen_sleep: 0 },
+    ui: { last_page: start === 'home' ? 'system' : start, order: [], hidden: [], pinned_apps: [], screen_sleep: 0 },
   }
   const topics: Topics = { host: HOST, ...initial.topics }
   let current: WebSocketRoute | null = null
@@ -153,7 +165,7 @@ test('un dock neuf dit où aller sur le PC et montre le code à y taper', async 
 
   // Un dock neuf ne se « ferme » pas : son code reviendrait aussitôt. La saisie à la main reste possible.
   await expect(page.getByTestId('pairing-close')).toHaveCount(0)
-  await expect(page.getByTestId('open-settings')).toContainText('Saisie à la main')
+  await expect(page.getByTestId('open-settings')).toContainText('Réglages') // la saisie à la main y reste possible
   await shot(page, '01-association-ecran-accueil', 'g')
 })
 
@@ -398,6 +410,10 @@ test.describe('dock neuf (vraie pile)', () => {
 
   test('un code s’affiche, le PC le présente au portail et le dock se connecte tout seul', async ({ page, stack }) => {
     await page.goto(stack.url)
+    // L'accueil montre déjà l'adresse et le code ; une page du PC en donne le détail (adresses, essais restants).
+    await expect(page.getByTestId('banner-code')).toHaveText(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
+    await expect(page.getByTestId('banner-url')).toContainText('http://')
+    await openPage(page, 'system')
     await expect(page.getByTestId('pairing-code')).toHaveText(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
     await expect(page.getByTestId('pairing-urls')).toContainText('http://')
     const code = (await page.getByTestId('pairing-code').innerText()).trim()
@@ -423,13 +439,14 @@ test.describe('dock neuf (vraie pile)', () => {
     expect(again.status).toBeGreaterThanOrEqual(400)
 
     // Et la configuration est retenue : Réglages montre le PC associé.
-    await page.getByTestId('tab-settings').tap()
+    await openPage(page, 'settings')
     await expect(page.getByTestId('pairing-current')).toContainText('pc-demo')
     await expect(page.getByTestId('pc-host')).toHaveText('127.0.0.1')
   })
 
   test('cinq codes faux annulent le code, et un nouveau est affiché sans rien faire', async ({ page, stack }) => {
     await page.goto(stack.url)
+    await openPage(page, 'system') // le détail du code est sur une page du PC (l'accueil n'en montre que l'essentiel)
     await expect(page.getByTestId('pairing-code')).toBeVisible()
     const first = (await page.getByTestId('pairing-code').innerText()).trim()
     const wrongCode = first === 'AAAA-AAAA' ? 'BBBB-BBBB' : 'AAAA-AAAA'
@@ -448,6 +465,7 @@ test.describe('dock neuf (vraie pile)', () => {
 
   test('le code ne figure ni sur la page du portail ni dans son état public', async ({ page, stack }) => {
     await page.goto(stack.url)
+    await openPage(page, 'system') // le détail du code est sur une page du PC (l'accueil n'en montre que l'essentiel)
     await expect(page.getByTestId('pairing-code')).toBeVisible()
     const code = (await page.getByTestId('pairing-code').innerText()).trim()
     const compact = code.replace('-', '')
@@ -470,7 +488,7 @@ test.describe('dock neuf (vraie pile)', () => {
 })
 
 test('Réglages (vraie pile) : associer un autre PC ouvre un code, le présenter l’associe', async ({ dock, stack }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('pairing-current')).toContainText('pc-demo')
   await dock.getByTestId('pair-open').tap()
   const card = dock.getByTestId('settings-pairing')

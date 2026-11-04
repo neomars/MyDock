@@ -11,7 +11,7 @@
 
 <style>
   .meter {
-    height: 10px;
+    height: calc(8px * var(--ts));
     border-radius: 999px;
     background: var(--surface-3);
     overflow: hidden;

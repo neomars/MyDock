@@ -18,8 +18,8 @@
 
 <style>
   .dot {
-    width: 14px;
-    height: 14px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     flex: none;
     background: var(--text-3);

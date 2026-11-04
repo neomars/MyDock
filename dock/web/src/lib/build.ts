@@ -3,13 +3,14 @@
 // Les pages (Musique, Son…) se chargent à la demande, depuis des fichiers dont le nom change à chaque
 // compilation. Quand le paquet du dock est mis à jour pendant que l'écran est ouvert, l'ancienne
 // interface, restée en mémoire, demande des fichiers qui n'existent plus : sans ce qui suit, on touche un
-// onglet et la page reste vide. On compare donc le script d'entrée de la page qui tourne à celui que le
+// bouton de l'accueil et la page reste vide. On compare donc le script d'entrée de la page qui tourne à celui que le
 // dock sert maintenant ; s'ils diffèrent, on recharge (une fois : jamais de boucle).
 
 /** Entre deux rechargements automatiques : si le problème persiste, on l'affiche au lieu de recharger sans fin. */
 export const RELOAD_GUARD_MS = 30_000
 
 const GUARD_KEY = 'mydock.reloaded'
+const REOPEN_KEY = 'mydock.reopen'
 
 /** Le script d'entrée d'une page index.html (« /assets/index-Cx3.js »), ou null s'il n'y en a pas. */
 export function entryOf(html: string): string | null {
@@ -62,6 +63,8 @@ export interface ReloadDeps {
   now?: number
   storage?: Pick<Storage, 'getItem' | 'setItem'>
   reload?: () => void
+  /** La page que la personne vient de toucher : on la rouvre après le rechargement (l'écran repart sinon de l'accueil). */
+  reopen?: string
 }
 
 /**
@@ -76,11 +79,37 @@ export function reloadIfAllowed(deps: ReloadDeps = {}): boolean {
     const last = Number(storage.getItem(GUARD_KEY)) || null
     if (!mayAutoReload(now, last)) return false
     storage.setItem(GUARD_KEY, String(now))
+    if (deps.reopen) storage.setItem(REOPEN_KEY, deps.reopen)
   } catch {
     return false
   }
   reload()
   return true
+}
+
+/**
+ * Recharge à la demande de la personne (bouton « Recharger ») : pas de garde-fou, c'est son geste. La page
+ * affichée se rouvre ensuite d'elle-même.
+ */
+export function reloadNow(reopen?: string, deps: Pick<ReloadDeps, 'storage' | 'reload'> = {}): void {
+  const reload = deps.reload ?? (() => location.reload())
+  try {
+    if (reopen) (deps.storage ?? sessionStorage).setItem(REOPEN_KEY, reopen)
+  } catch {
+    // mémoire de l'onglet inutilisable : on recharge quand même, l'accueil s'affichera
+  }
+  reload()
+}
+
+/** La page à rouvrir après un rechargement (lue une seule fois), ou null : l'écran repart de l'accueil. */
+export function takeReopen(storage: Pick<Storage, 'getItem' | 'removeItem'> = sessionStorage): string | null {
+  try {
+    const page = storage.getItem(REOPEN_KEY)
+    storage.removeItem(REOPEN_KEY)
+    return page || null
+  } catch {
+    return null
+  }
 }
 
 /** À appeler quand la liaison avec le dock revient : si le dock a changé d'interface, on la recharge. */

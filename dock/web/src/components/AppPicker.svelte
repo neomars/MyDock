@@ -16,6 +16,11 @@
   import { whenVisible } from '../lib/visible'
 
   let query = $state('')
+  /** Deux volets, pas deux colonnes : avec le texte doublé, les deux ne tiennent pas côte à côte dans 1024 px. */
+  let tab = $state<'all' | 'chosen'>('all')
+  $effect(() => {
+    if (picker.open) tab = 'all'
+  })
 
   // La fenêtre suit la liste des applications installées tant qu'elle est ouverte.
   $effect(() => {
@@ -58,22 +63,29 @@
 {#if picker.open}
   <div class="overlay" role="dialog" aria-modal="true" aria-label="Choisir les applications du lanceur" data-testid="picker">
     <header>
-      <h1>Applications du lanceur</h1>
+      <div class="tabs" role="group" aria-label="Affichage">
+        <button class="tab" class:on={tab === 'all'} aria-pressed={tab === 'all'} data-testid="picker-tab-all" onclick={() => (tab = 'all')}>
+          Applications
+        </button>
+        <button class="tab" class:on={tab === 'chosen'} aria-pressed={tab === 'chosen'} data-testid="picker-tab-chosen" onclick={() => (tab = 'chosen')}>
+          Lanceur ({pinned.length}/{MAX_PINNED})
+        </button>
+      </div>
       <button class="btn primary" data-testid="picker-done" onclick={() => picker.hide()}>
-        <Check size={26} aria-hidden="true" />Terminé
+        <Check size={34} aria-hidden="true" />Terminé
       </button>
     </header>
 
-    <div class="cols">
+    {#if tab === 'all'}
       <section class="card" data-testid="picker-all">
         <div class="search">
           <button class="btn field" data-testid="picker-search" onclick={search}>
-            <Search size={24} aria-hidden="true" />
+            <Search size={32} aria-hidden="true" />
             <span class:dim={!query}>{query || 'Rechercher une application…'}</span>
           </button>
           {#if query}
             <button class="btn" aria-label="Effacer la recherche" data-testid="picker-clear" onclick={() => (query = '')}>
-              <X size={24} aria-hidden="true" />
+              <X size={32} aria-hidden="true" />
             </button>
           {/if}
         </div>
@@ -100,81 +112,95 @@
                 disabled={!on && full}
                 onclick={() => toggle(app.id)}
               >
-                {#if on}<Check size={26} aria-hidden="true" />{:else}<Plus size={26} aria-hidden="true" />{/if}
+                {#if on}<Check size={34} aria-hidden="true" />{:else}<Plus size={34} aria-hidden="true" />{/if}
               </button>
             </div>
           {/each}
         </div>
       </section>
-
+    {:else}
       <section class="card" data-testid="picker-chosen">
-        <h2>Dans le lanceur ({pinned.length}/{MAX_PINNED})</h2>
         <div class="list">
           {#if pinned.length === 0}
-            <p class="muted" data-testid="chosen-none">Rien pour l’instant : touche « + » à gauche pour ajouter une application.</p>
+            <p class="muted" data-testid="chosen-none">Rien pour l’instant : ajoute une application depuis l’onglet « Applications ».</p>
           {/if}
           {#each tiles as tile, index (tile.id)}
             <div class="row" class:gone={!tile.app} data-testid="chosen-{tile.id}" use:whenVisible={() => appIcons.want(tile.app?.icon)}>
               {@render icon(tile.name, tile.app?.icon)}
               <span class="who"><strong>{tile.name}</strong>{#if !tile.app}<small>introuvable sur ce PC</small>{/if}</span>
               <button class="step" aria-label="Monter {tile.name}" data-testid="up-{tile.id}" disabled={index === 0} onclick={() => save(moved(pinned, index, -1))}>
-                <ArrowUp size={24} aria-hidden="true" />
+                <ArrowUp size={34} aria-hidden="true" />
               </button>
               <button class="step" aria-label="Descendre {tile.name}" data-testid="down-{tile.id}" disabled={index === tiles.length - 1} onclick={() => save(moved(pinned, index, 1))}>
-                <ArrowDown size={24} aria-hidden="true" />
+                <ArrowDown size={34} aria-hidden="true" />
               </button>
               <button class="step remove" aria-label="Retirer {tile.name}" data-testid="remove-{tile.id}" onclick={() => save(pinned.filter((p) => p !== tile.id))}>
-                <X size={24} aria-hidden="true" />
+                <X size={34} aria-hidden="true" />
               </button>
             </div>
           {/each}
         </div>
       </section>
-    </div>
+    {/if}
   </div>
 {/if}
 
 <style>
+  /* Plein écran sous la barre du haut, un volet à la fois (texte doublé). */
   .overlay {
     position: fixed;
     inset: var(--topbar) 0 0 0;
     z-index: 30;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 10px 20px 14px;
+    gap: 8px;
+    padding: 8px 16px 10px;
     background: var(--bg);
   }
   header {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-  }
-  h1 {
-    font-size: var(--fs-title);
-    font-weight: 700;
-  }
-  .cols {
-    flex: 1 1 0;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: 1.2fr 1fr;
     gap: 12px;
   }
-  .card {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    padding: 12px 14px 8px;
-  }
-  .card > h2 {
-    margin-bottom: 6px;
-  }
-  .search {
+  .tabs {
+    flex: 1;
+    min-width: 0;
     display: flex;
     gap: 8px;
-    margin-bottom: 6px;
+  }
+  .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: var(--tap);
+    padding: 0 16px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tab.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .card {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+    padding: 8px 12px;
+  }
+  .search {
+    flex: none;
+    display: flex;
+    gap: 8px;
   }
   .field {
     flex: 1 1 0;
@@ -195,8 +221,8 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 60px;
+    gap: 12px;
+    min-height: 80px;
     border-top: 1px solid var(--line);
   }
   .row:first-child {
@@ -209,10 +235,10 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 40px;
-    height: 40px;
+    width: 56px;
+    height: 56px;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: 12px;
     background: hsl(var(--hue) 50% 28%);
     color: hsl(var(--hue) 85% 86%);
     font-size: var(--fs-small);
@@ -229,7 +255,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    line-height: 1.2;
+    line-height: 1.15;
   }
   .who strong {
     font-size: var(--fs-small);
@@ -239,7 +265,7 @@
     text-overflow: ellipsis;
   }
   .who small {
-    font-size: var(--fs-cap);
+    font-size: calc(13px * var(--ts));
     color: var(--text-3);
     white-space: nowrap;
     overflow: hidden;
@@ -249,8 +275,8 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
+    width: var(--tap);
+    height: 64px;
     border-radius: 12px;
     background: var(--surface-3);
   }

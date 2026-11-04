@@ -1,4 +1,4 @@
-"""Le diagnostic de l'interface compilée : un fichier manquant laisserait un onglet vide, il faut le voir."""
+"""Le diagnostic de l'interface compilée : un fichier manquant laisserait une page vide, il faut le voir."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def test_a_missing_page_is_named_and_says_what_it_costs(site):
     assert report.failed
     text = report.render()
     assert music.name in text
-    assert "onglets" in text
+    assert "pages concernées" in text
     assert "vides" in text
     assert "réinstalle le paquet mydock" in text
 
