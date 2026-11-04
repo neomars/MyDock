@@ -351,7 +351,7 @@ class AgentLink:
             if not settings.configured:
                 self._set_status(
                     LinkState.NOT_CONFIGURED,
-                    "Aucun PC n'est configuré : ouvre Réglages pour saisir son adresse et le jeton.",
+                    "Aucun PC n'est associé : installe l'agent depuis la page du dock, ou saisis son adresse et son jeton dans Réglages.",
                 )
                 await self._wait(None)
                 attempt = 0

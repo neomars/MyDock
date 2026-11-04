@@ -85,6 +85,7 @@ async def running_agent(
     clock: Callable[[], float] | None = None,
     port: int = 0,
     registry: ActionRegistry | None = None,
+    token: str = TOKEN,
 ) -> AsyncIterator[RunningAgent]:
     hub = Hub(providers if providers is not None else [ScriptedProvider("host", lazy=False)])
     if registry is None:
@@ -93,7 +94,7 @@ async def running_agent(
     gate_kwargs: dict[str, Any] = {"max_failures": max_failures, "block": block}
     if clock is not None:
         gate_kwargs["clock"] = clock
-    gate = AccessGate(TOKEN, (), lan_networks=list, **gate_kwargs)
+    gate = AccessGate(token, (), lan_networks=list, **gate_kwargs)
     app = create_app(hub=hub, registry=registry, gate=gate, demo=demo)
     server = uvicorn.Server(
         uvicorn.Config(
@@ -113,7 +114,7 @@ async def running_agent(
             while not server.started:
                 await asyncio.sleep(0.01)
         actual_port = server.servers[0].sockets[0].getsockname()[1]
-        yield RunningAgent(actual_port, hub, registry, gate)
+        yield RunningAgent(actual_port, hub, registry, gate, token)
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 5)

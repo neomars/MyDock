@@ -4,7 +4,7 @@ VENV    ?= .venv
 BIN     := $(VENV)/bin
 PIP_DEV := pytest pytest-asyncio httpx ruff
 
-.PHONY: help venv test test-fast test-ubuntu lint web web-check e2e shots demo deb clean
+.PHONY: help venv test test-fast test-ubuntu lint web web-check e2e shots demo deb deb-pi deb-agent clean
 
 help:
 	@echo "make venv       crée $(VENV) (Python $$($(PY) --version)) avec les trois paquets en mode éditable"
@@ -15,9 +15,12 @@ help:
 	@echo "make web        compile l'interface dans dock/web/dist"
 	@echo "make web-check  vérifie que dock/web/dist correspond aux sources"
 	@echo "make e2e        tests Playwright 1024x600 (pile démo)"
-	@echo "make shots      comme e2e, et régénère les captures de l'étape en cours (docs/etapes/f)"
+	@echo "make shots      comme e2e, et régénère les captures de l'étape en cours (docs/etapes/g)"
 	@echo "make demo       agent en mode démo + serveur dock sur http://127.0.0.1:8080"
-	@echo "make deb        construit le paquet de l'agent : build/mydock-agent_<version>_all.deb"
+	@echo "make deb        construit les deux paquets : build/mydock_<version>_all.deb (le Pi, à installer à la main)"
+	@echo "                et build/mydock-agent_<version>_all.deb (le PC, que le Pi sert tout seul)"
+	@echo "make deb-pi     seulement le paquet du Pi (il embarque celui du PC)"
+	@echo "make deb-agent  seulement le paquet du PC"
 
 venv:
 	$(PY) -m venv $(VENV)
@@ -32,7 +35,7 @@ test-fast:
 
 test-ubuntu:
 	./scripts/ubuntu-venv.sh
-	.venv-ubuntu/bin/python -m pytest common agent dock/server scripts/tests/test_deb.py
+	.venv-ubuntu/bin/python -m pytest common agent dock/server scripts/tests/test_deb.py scripts/tests/test_deb_pi.py
 
 lint:
 	$(BIN)/ruff check .
@@ -57,6 +60,12 @@ demo:
 
 deb:
 	$(PY) packaging/build_deb.py
+
+deb-pi:
+	$(PY) packaging/build_deb.py --target pi
+
+deb-agent:
+	$(PY) packaging/build_deb.py --target agent
 
 clean:
 	rm -rf $(VENV) .venv-ubuntu .pytest_cache .ruff_cache build dock/web/node_modules

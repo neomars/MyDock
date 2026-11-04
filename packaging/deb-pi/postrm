@@ -1,0 +1,17 @@
+#!/bin/sh
+# Après désinstallation de mydock. « apt remove » garde la configuration (jeton compris) ;
+# « apt purge » efface tout, comme on l'attend d'un paquet.
+set -e
+
+case "$1" in
+    purge)
+        rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock /var/lib/mydock-kiosk
+        for user in mydock mydock-kiosk; do
+            if getent passwd "$user" >/dev/null 2>&1; then
+                userdel "$user" >/dev/null 2>&1 || true
+            fi
+        done
+        ;;
+esac
+
+exit 0

@@ -4,6 +4,11 @@
     ./scripts/dev-stack.py                      # http://127.0.0.1:8080
     ./scripts/dev-stack.py --dock-port 8099 --agent-port 18765
 
+    ./scripts/dev-stack.py --unpaired           # un dock neuf : il affiche un code d'association
+
+Le portail du dock (la page d'installation du PC) écoute sur un port libre de 127.0.0.1 et propose
+le paquet de l'agent construit à la volée (si dpkg-deb est là). La pile affiche son adresse.
+
 Tout vit dans un dossier temporaire (aucune écriture dans /etc ni dans ~/.config). Les tests
 de bout en bout pilotent la pile par signaux, pour simuler les pannes réelles :
     SIGUSR1  « PC éteint » : l'agent s'arrête et plus rien ne répond sur son port (le dock
@@ -31,6 +36,22 @@ from pathlib import Path
 from mydock_agent.demo import DEMO_TOKEN
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def build_client_package(directory: Path) -> bool:
+    """Construit le paquet de l'agent dans `directory` : ce que le portail propose au PC."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "packaging" / "build_deb.py"), "--target", "agent",
+         "--output", str(directory)],
+        capture_output=True, check=False,
+    )  # fmt: skip
+    return result.returncode == 0
 
 
 def wait_http(url: str, timeout: float = 20.0) -> bool:
@@ -84,6 +105,8 @@ class Stack:
         self.dock: subprocess.Popen[bytes] | None = None
         self.blackhole: Blackhole | None = None
         self.pending: set[str] = set()
+        self.portal_port = args.portal_port or free_port()
+        self.clients = Path(args.clients_dir) if args.clients_dir else self.tmp / "clients"
 
     def start_agent(self) -> None:
         if self.agent and self.agent.poll() is None:
@@ -126,15 +149,24 @@ class Stack:
     def start_dock(self) -> None:
         env = {**os.environ, "MYDOCK_DEMO_TOKEN": DEMO_TOKEN}
         config = self.tmp / "dock.toml"
-        subprocess.run(
-            [
-                sys.executable, "-m", "mydock_dock", "init", "--config", str(config),
+        if not self.args.clients_dir:
+            self.clients.mkdir(parents=True, exist_ok=True)
+            build_client_package(self.clients)
+        command = [
+            sys.executable, "-m", "mydock_dock", "init", "--config", str(config),
+            "--state-dir", str(self.tmp / "state"), "--web-dir", str(self.args.web_dir),
+            "--clients-dir", str(self.clients), "--portal-port", str(self.portal_port),
+        ]  # fmt: skip
+        if not self.args.unpaired:  # un dock neuf n'a ni PC ni jeton : il montre un code
+            command += [
                 "--pc", "127.0.0.1", "--pc-port", str(self.args.agent_port),
                 "--token-env", "MYDOCK_DEMO_TOKEN",
-                "--state-dir", str(self.tmp / "state"), "--web-dir", str(self.args.web_dir),
-            ],
-            check=True, env=env, stdout=subprocess.DEVNULL,
-        )  # fmt: skip
+            ]  # fmt: skip
+        subprocess.run(command, check=True, env=env, stdout=subprocess.DEVNULL)
+        # Le portail écoute le réseau local sur un vrai Pi ; ici, jamais plus loin que cette machine.
+        config.write_text(
+            config.read_text().replace('listen_host = "0.0.0.0"', 'listen_host = "127.0.0.1"')
+        )
         env["MYDOCK_WOL_TARGETS"] = self.args.wol_target
         self.dock = subprocess.Popen(
             [
@@ -176,6 +208,19 @@ def main() -> int:
         "--wol-target", default="127.0.0.1:9", help="où partent les paquets de réveil (hôte:port)"
     )
     parser.add_argument("--web-dir", type=Path, default=ROOT / "dock" / "web" / "dist")
+    parser.add_argument(
+        "--portal-port", type=int, default=0, help="port du portail (défaut : un port libre)"
+    )
+    parser.add_argument(
+        "--clients-dir",
+        type=Path,
+        help="paquets proposés au PC (défaut : celui de l'agent, construit)",
+    )
+    parser.add_argument(
+        "--unpaired",
+        action="store_true",
+        help="dock neuf : aucun PC, un code d'association s'affiche",
+    )
     args = parser.parse_args()
 
     stack = Stack(args)
@@ -204,6 +249,9 @@ def main() -> int:
         if not wait_http(f"{url}/api/health"):
             print("Le serveur dock n'a pas démarré.", file=sys.stderr)
             return 1
+        portal = f"http://127.0.0.1:{stack.portal_port}"
+        if wait_http(f"{portal}/api/portal", timeout=5.0):
+            print(f"MYDOCK_PORTAL_READY {portal}", flush=True)
         print(f"MYDOCK_STACK_READY {url}", flush=True)
         while running:
             while stack.pending:

@@ -1,5 +1,6 @@
 """`mydock-dock doctor` : chaque adresse du PC est testée, et le résultat est expliqué."""
 
+import asyncio
 import stat
 
 import pytest
@@ -8,9 +9,9 @@ from mydock_agent.testing import TOKEN, running_agent
 from mydock_common.report import Report
 from mydock_dock import doctor
 from mydock_dock.config import DockConfig
-from mydock_dock.doctor import TcpResult, _check_pc, check_screen, ping, tcp_probe
+from mydock_dock.doctor import TcpResult, _check_pc, check_portal, check_screen, ping, tcp_probe
 from mydock_dock.store import StateStore
-from mydock_dock.testing import free_port
+from mydock_dock.testing import free_port, running_dock
 
 
 def config_for(tmp_path, host: str, port: int, token: str = TOKEN) -> DockConfig:
@@ -221,3 +222,43 @@ def test_a_script_that_is_not_running_says_how_it_starts(tmp_path):
     out = screen_report(tmp_path, seconds=60, tools=("swayidle", "wlopm"), running=False)
     assert "⚠ Le script de veille ne tourne pas" in out
     assert "journalctl -u mydock-kiosk -e" in out
+
+
+# --- le portail ------------------------------------------------------------------------------------------
+
+
+def portal_report(config, *, port=None) -> str:
+    report = Report()
+    check_portal(report, config, port=port)
+    return report.render()
+
+
+async def test_a_running_portal_is_green_and_tells_the_pc_where_to_go(tmp_path):
+    clients = tmp_path / "clients"
+    clients.mkdir()
+    (clients / "mydock-agent_0.7.0_all.deb").write_bytes(b"x" * 5000)
+    async with running_dock(tmp_path, portal=True, clients_dir=clients) as dock:
+        config = DockConfig.from_dict(
+            {"portal": {"clients_dir": str(clients)}, "paths": {"state_dir": str(tmp_path)}},
+            tmp_path / "d.toml",
+        )
+        out = await asyncio.to_thread(portal_report, config, port=dock.server.portal.port)
+    assert f"✔ Le portail répond sur le port {dock.server.portal.port}" in out
+    assert "mydock-agent_0.7.0_all.deb (4 Ko)" in out
+    assert "Aucun PC associé" in out
+    assert "⚠" not in out
+
+
+async def test_a_portal_that_does_not_answer_says_where_to_look(tmp_path):
+    config = DockConfig.from_dict({"portal": {"clients_dir": str(tmp_path)}}, tmp_path / "d.toml")
+    out = await asyncio.to_thread(portal_report, config, port=free_port())
+    assert "⚠ Le portail ne répond pas" in out
+    assert "journalctl -u mydock-dock -e" in out
+    assert "⚠ Aucun paquet du PC" in out
+
+
+def test_a_disabled_portal_is_only_informational(tmp_path):
+    config = DockConfig.from_dict({"portal": {"enabled": False, "port": 8080}}, tmp_path / "d.toml")
+    out = portal_report(config)
+    assert "Portail désactivé" in out
+    assert "⚠" not in out

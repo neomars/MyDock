@@ -2,8 +2,10 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import CircleCheck from '@lucide/svelte/icons/circle-check'
   import Gauge from '@lucide/svelte/icons/gauge'
+  import Link2 from '@lucide/svelte/icons/link-2'
   import PlugZap from '@lucide/svelte/icons/plug-zap'
   import PageHeader from '../components/PageHeader.svelte'
+  import PairingPanel from '../components/PairingPanel.svelte'
   import { editText } from '../lib/keyboard.svelte'
   import { formatMs, ifaceKindLabel, type LatencyStats } from '../lib/format'
   import { MAX_PINNED } from '../lib/launcher'
@@ -11,6 +13,8 @@
   import { marketsUi } from '../lib/markets.svelte'
   import { pageRows, pagesSummary } from '../lib/pages'
   import { pagesUi } from '../lib/pagesEditor.svelte'
+  import { isPaired, lastNotice, portalReady, shownUrls } from '../lib/pairing'
+  import { pairingUi } from '../lib/pairing.svelte'
   import { picker } from '../lib/picker.svelte'
   import { SLEEP_OPTIONS, sleepPhrase } from '../lib/screen'
   import { screenSleep } from '../lib/screen.svelte'
@@ -21,6 +25,9 @@
   const dock = $derived(sock.dock)
   const link = $derived(sock.link)
   const pagesLine = $derived(pagesSummary(pageRows(sock.ui?.order ?? [], sock.ui?.hidden ?? [])))
+  const portal = $derived(dock?.portal)
+  const pairing = $derived(dock?.pairing)
+  const notice = $derived(lastNotice(pairing && !pairing.open ? pairing.last : null))
 
   /** Affiche le résultat d'une modification : succès en vert, sinon le message d'erreur du dock. */
   function report(ack: Ack, done: string): boolean {
@@ -132,8 +139,47 @@
 
 <div class="grid">
   <div class="col">
+    <section class="card" data-testid="settings-pairing">
+      <h2>Associer un PC</h2>
+      <p data-testid="pairing-current">
+        {#if isPaired(dock)}
+          PC associé : <span class="strong">{dock?.pc.name || dock?.pc.host}</span>
+          <span class="dim mono">({dock?.pc.host}:{dock?.pc.port})</span>
+        {:else}
+          Aucun PC n'est associé.
+        {/if}
+      </p>
+      {#if pairing?.open}
+        <PairingPanel compact onClose={() => void pairingUi.close()} />
+      {:else}
+        {#if notice}
+          <p class="notice {notice.tone}" data-testid="pairing-notice">{notice.text}</p>
+        {/if}
+        <button
+          class="btn primary"
+          data-testid="pair-open"
+          disabled={pairingUi.busy || !portalReady(portal)}
+          onclick={() => void pairingUi.open()}
+        >
+          <Link2 size={26} aria-hidden="true" />
+          {isPaired(dock) ? 'Associer un autre PC…' : 'Associer un PC…'}
+        </button>
+        {#if portal && !portalReady(portal)}
+          <p class="warn small" data-testid="portal-problem">
+            La page d'installation du PC n'est pas disponible{portal.error ? ` : ${portal.error.replace(/\.$/, '')}` : ' (portail désactivé)'}.
+          </p>
+        {:else}
+          <p class="dim small" data-testid="pairing-help">
+            Affiche un code sur cet écran. Sur le PC, ouvre
+            <span class="mono">{shownUrls(portal?.urls ?? [], 1)[0] ?? "l'adresse du Pi"}</span>,
+            installe le paquet puis tape le code : le dock se règle seul.
+          </p>
+        {/if}
+      {/if}
+    </section>
+
     <section class="card" data-testid="settings-pc">
-      <h2>PC piloté</h2>
+      <h2>PC piloté (saisie à la main)</h2>
       <div class="setting">
         <span class="label">Adresse</span>
         <span class="value mono" data-testid="pc-host">{dock?.pc.host || 'non définie'}</span>
@@ -312,6 +358,14 @@
         <dd class="mono">{dock?.hostname ?? '—'}</dd>
         <dt>Adresse du Pi</dt>
         <dd class="mono" data-testid="pi-ips">{dock?.ips?.length ? dock.ips.join(' · ') : '—'}</dd>
+        <dt>Page d'installation</dt>
+        <dd class="mono" data-testid="portal-urls">
+          {#if portalReady(portal)}{shownUrls(portal?.urls ?? [], 3).join(' · ')}{:else}indisponible{/if}
+        </dd>
+        <dt>Paquet du PC</dt>
+        <dd data-testid="portal-client">
+          {#if portal?.client}mydock-agent {portal.client.version}{:else}aucun{/if}
+        </dd>
         <dt>Agent</dt>
         <dd>{link?.agent ? `version ${link.agent.version}` : 'non connecté'}</dd>
         <dt>Liaison</dt>
@@ -449,5 +503,24 @@
     color: var(--accent);
     font-weight: 600;
     padding: 12px 0;
+  }
+  .strong {
+    font-weight: 700;
+  }
+  .notice {
+    margin: 8px 0;
+    font-size: var(--fs-small);
+  }
+  .notice.good {
+    color: var(--good);
+  }
+  .notice.warn {
+    color: var(--warn);
+  }
+  .notice.bad {
+    color: var(--bad);
+  }
+  [data-testid='settings-pairing'] .btn {
+    margin-top: 12px;
   }
 </style>

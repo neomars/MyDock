@@ -1,0 +1,35 @@
+mydock pour Raspberry Pi OS (Debian 13 « Trixie » ou plus récent)
+==================================================================
+
+Ce paquet installe tout le dock : le serveur, l'interface tactile en plein écran (Chromium dans
+labwc), la veille de l'écran et le paquet du PC (mydock-agent). Il met lui-même en place les
+services, la configuration (/etc/mydock/dock.toml, droits 600) et le kiosque.
+
+Installer un PC
+---------------
+Depuis le PC, ouvrir  http://ADRESSE_DU_PI/  (ou http://NOM_DU_PI.local/) : la page propose le
+paquet du PC, la commande d'installation et la commande d'association. Le code à saisir est
+affiché sur l'écran du dock.
+
+Fichiers
+--------
+  /usr/bin/mydock-dock                                   programme
+  /usr/lib/python3/dist-packages/mydock_dock, mydock_common
+  /usr/lib/systemd/system/mydock-dock.service            service du dock
+  /usr/lib/mydock/                                       kiosque, veille de l'écran, mise en place
+  /usr/share/mydock/web/                                 interface compilée
+  /usr/share/mydock/clients/mydock-agent_*_all.deb       paquet du PC, servi par le portail
+  /etc/mydock/dock.toml                                  configuration et jeton (droits 600)
+  /var/lib/mydock/                                       état du dock (pages, bourse, PC connu)
+
+Commandes utiles
+----------------
+  sudo -u mydock mydock-dock doctor          diagnostic complet
+  journalctl -u mydock-dock -f               journal du serveur
+  sudo /usr/lib/mydock/setup --kiosk systemd   changer le mode du kiosque (desktop, systemd, none)
+  sudo /usr/lib/mydock/setup --force-mode 1024x600@60
+
+Désinstallation
+---------------
+  sudo apt remove mydock     retire le kiosque et les services ; garde la configuration
+  sudo apt purge mydock      efface aussi la configuration (jeton), l'état et les utilisateurs

@@ -10,8 +10,13 @@ Première configuration (dans un terminal de ta session, sans sudo) :
     mydock-agent setup --pi ADRESSE_IP_DU_PI --open-firewall
 
 La commande crée ~/.config/mydock/agent.toml (droits 600) avec un jeton, démarre le service,
-autorise le Pi dans ufw si le pare-feu est actif, puis affiche l'adresse et le jeton à saisir
-sur le Pi. Elle peut être relancée sans changer le jeton.
+autorise le Pi dans ufw si le pare-feu est actif, puis demande le code affiché sur l'écran du dock
+et associe ce PC à lui : le dock reçoit l'adresse du PC et son jeton, rien n'est à recopier.
+Elle peut être relancée sans changer le jeton. « mydock-agent pair --pi ADRESSE_IP_DU_PI » refait
+seulement l'association (changement de dock, code manqué).
+
+Ce paquet se télécharge depuis le dock lui-même : http://ADRESSE_IP_DU_PI/ propose la commande
+d'installation et celle d'association.
 
 Fichiers
 --------

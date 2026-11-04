@@ -40,6 +40,12 @@ class RunningDock:
     def ws_url(self) -> str:
         return f"ws://127.0.0.1:{self.port}/ws"
 
+    @property
+    def portal_origin(self) -> str:
+        """L'adresse du portail (le serveur du réseau local), quand il tourne."""
+        assert self.server.portal.port is not None, "le portail n'est pas démarré"
+        return f"http://127.0.0.1:{self.server.portal.port}"
+
     def connect(self, *, origin: str | None = "same") -> Any:
         """Navigateur simulé. `origin=None` : sans en-tête Origin ; sinon l'origine à annoncer."""
         headers = {} if origin is None else {"Origin": self.origin if origin == "same" else origin}
@@ -64,6 +70,8 @@ async def running_dock(
     wol_mac: str | None = None,
     fast_retry: bool = True,
     demo_markets: bool = False,
+    portal: bool = False,
+    clients_dir: Path | None = None,
     **server_options: Any,
 ) -> AsyncIterator[RunningDock]:
     config_path = tmp_path / "dock.toml"
@@ -78,11 +86,16 @@ async def running_dock(
     if wol_mac:
         config.set_wol_mac(wol_mac)
     config.demo_markets = demo_markets
+    # Le portail écoute le réseau : en test il est éteint, sauf demande, et alors sur un port libre
+    # de la boucle locale (jamais le port 80 de la machine).
+    config.portal_enabled = portal
+    config.clients_dir = clients_dir if clients_dir is not None else tmp_path / "clients"
     server = DockServer(
         config,
         link_backoff=(lambda _attempt: 0.05) if fast_retry else backoff_delay,
         **server_options,
     )
+    server.portal.bind_host, server.portal.bind_port = "127.0.0.1", 0
     uvicorn_server = uvicorn.Server(
         uvicorn.Config(
             create_app(server),

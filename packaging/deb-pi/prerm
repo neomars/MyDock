@@ -1,0 +1,16 @@
+#!/bin/sh
+# Avant désinstallation ou mise à jour de mydock.
+set -e
+
+case "$1" in
+    remove | deconfigure)
+        # Désinstallation : le kiosque et les services s'arrêtent (leurs fichiers vont disparaître).
+        /usr/lib/mydock/setup --remove || true
+        ;;
+esac
+
+if command -v py3clean >/dev/null 2>&1; then
+    py3clean -p mydock || true
+fi
+
+exit 0

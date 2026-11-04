@@ -1,0 +1,8 @@
+#!/usr/bin/python3
+# MyDock - serveur du dock (paquet mydock). Aide : mydock-dock --help
+import sys
+
+from mydock_dock.__main__ import main
+
+if __name__ == "__main__":
+    sys.exit(main())

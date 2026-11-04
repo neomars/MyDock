@@ -2,6 +2,7 @@
   import CircleX from '@lucide/svelte/icons/circle-x'
   import Hourglass from '@lucide/svelte/icons/hourglass'
   import KeyRound from '@lucide/svelte/icons/key-round'
+  import Link2 from '@lucide/svelte/icons/link-2'
   import MonitorOff from '@lucide/svelte/icons/monitor-off'
   import Power from '@lucide/svelte/icons/power'
   import ServerOff from '@lucide/svelte/icons/server-off'
@@ -10,9 +11,12 @@
   import type { Component } from 'svelte'
   import { clock } from '../lib/clock.svelte'
   import { formatClock, formatCountdown, formatDate } from '../lib/format'
+  import { portalReady } from '../lib/pairing'
+  import { pairingUi } from '../lib/pairing.svelte'
   import type { LinkState } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { wake, wakePc } from '../lib/wake.svelte'
+  import PairingPanel from './PairingPanel.svelte'
 
   let { onSettings }: { onSettings: () => void } = $props()
 
@@ -25,16 +29,18 @@
     canWake: boolean
     /** Une correction passe par les Réglages. */
     needsSettings: boolean
+    /** Associer (de nouveau) un PC règle le problème : le jeton manque ou a changé. */
+    canPair: boolean
   }
 
   const COPY: Record<LinkState, Copy> = {
-    unreachable: { title: 'PC hors ligne', icon: MonitorOff, tone: 'bad', canWake: true, needsSettings: false },
-    connecting: { title: 'Connexion au PC…', icon: Hourglass, tone: 'warn', canWake: true, needsSettings: false },
-    host_up_agent_down: { title: 'PC allumé, agent arrêté', icon: ServerOff, tone: 'warn', canWake: false, needsSettings: false },
-    auth_failed: { title: 'Connexion refusée', icon: KeyRound, tone: 'bad', canWake: false, needsSettings: true },
-    protocol_mismatch: { title: 'Versions incompatibles', icon: TriangleAlert, tone: 'bad', canWake: false, needsSettings: false },
-    not_configured: { title: 'Aucun PC configuré', icon: CircleX, tone: 'dim', canWake: false, needsSettings: true },
-    connected: { title: 'Connecté', icon: Power, tone: 'dim', canWake: false, needsSettings: false },
+    unreachable: { title: 'PC hors ligne', icon: MonitorOff, tone: 'bad', canWake: true, needsSettings: false, canPair: false },
+    connecting: { title: 'Connexion au PC…', icon: Hourglass, tone: 'warn', canWake: true, needsSettings: false, canPair: false },
+    host_up_agent_down: { title: 'PC allumé, agent arrêté', icon: ServerOff, tone: 'warn', canWake: false, needsSettings: false, canPair: false },
+    auth_failed: { title: 'Connexion refusée', icon: KeyRound, tone: 'bad', canWake: false, needsSettings: true, canPair: true },
+    protocol_mismatch: { title: 'Versions incompatibles', icon: TriangleAlert, tone: 'bad', canWake: false, needsSettings: false, canPair: false },
+    not_configured: { title: 'Aucun PC associé', icon: CircleX, tone: 'dim', canWake: false, needsSettings: true, canPair: true },
+    connected: { title: 'Connecté', icon: Power, tone: 'dim', canWake: false, needsSettings: false, canPair: false },
   }
 
   // Compte à rebours de la prochaine tentative : un réveil toutes les 500 ms, seulement tant que cet écran est affiché.
@@ -54,9 +60,15 @@
   const wol = $derived(sock.dock?.wol)
   const sentAgo = $derived(wake.sentAt ? now - wake.sentAt : null)
   const waking = $derived(sentAgo !== null && sentAgo < 120_000)
+
+  // Un code est affiché : il remplace le diagnostic, le temps d'associer le PC.
+  const pairingOpen = $derived(sock.dock?.pairing?.open === true)
+  const portal = $derived(sock.dock?.portal)
+  const canOfferPairing = $derived(copy.canPair && portalReady(portal) && !pairingOpen)
+  const portalProblem = $derived(copy.canPair && portal && !portalReady(portal))
 </script>
 
-<section class="offline" data-testid="offline">
+{#snippet diagnostic()}
   <div class="clockblock">
     <div class="time">{formatClock(clock.now)}</div>
     <div class="date muted">{formatDate(clock.now)}</div>
@@ -94,12 +106,25 @@
         {wake.sending ? 'Envoi…' : 'Allumer le PC'}
       </button>
     {/if}
+    {#if canOfferPairing}
+      <button class="btn primary big" data-testid="pair-open" disabled={pairingUi.busy} onclick={() => void pairingUi.open()}>
+        <Link2 size={30} aria-hidden="true" />
+        {link?.state === 'auth_failed' ? 'Associer à nouveau' : 'Associer un PC'}
+      </button>
+    {/if}
     {#if copy.needsSettings}
       <button class="btn big" data-testid="open-settings" onclick={onSettings}>
         <Settings size={28} aria-hidden="true" /> Réglages
       </button>
     {/if}
   </div>
+
+  {#if portalProblem}
+    <p class="hint warn" data-testid="portal-problem">
+      La page d'installation du PC n'est pas disponible{portal?.error ? ` : ${portal.error.replace(/\.$/, '')}` : ''}.
+      Saisis l'adresse et le jeton du PC dans les Réglages.
+    </p>
+  {/if}
 
   {#if copy.canWake && wol}
     {#if !wol.mac}
@@ -112,6 +137,35 @@
         Branche-le en Ethernet.
       </p>
     {/if}
+  {/if}
+{/snippet}
+
+<section class="offline" data-testid="offline">
+  {#if pairingOpen}
+    <div class="welcome" data-testid="pairing-screen">
+      <div class="line">
+        <Link2 size={40} aria-hidden="true" />
+        <h1 data-testid="pairing-title">Associer un PC</h1>
+      </div>
+      <p class="muted" data-testid="pairing-lead">
+        Le dock se configure tout seul : rien à recopier, aucun jeton à saisir.
+      </p>
+      <PairingPanel />
+      <div class="actions">
+        {#if link?.state !== 'not_configured'}
+          <button class="btn" data-testid="pairing-close" disabled={pairingUi.busy} onclick={() => void pairingUi.close()}>
+            Annuler
+          </button>
+        {/if}
+        {#if copy.needsSettings}
+          <button class="btn" data-testid="open-settings" onclick={onSettings}>
+            <Settings size={26} aria-hidden="true" /> Saisie à la main (Réglages)
+          </button>
+        {/if}
+      </div>
+    </div>
+  {:else}
+    {@render diagnostic()}
   {/if}
 </section>
 
@@ -171,6 +225,16 @@
   .actions {
     display: flex;
     gap: 16px;
+  }
+  .welcome {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .welcome .line {
+    color: var(--accent);
   }
   .hint {
     max-width: 700px;

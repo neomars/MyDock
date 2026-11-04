@@ -1,0 +1,20 @@
+Package: mydock
+Version: @VERSION@
+Architecture: all
+Maintainer: neomars <neomars@users.noreply.github.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: @DEPENDS@
+Recommends: wlopm, fonts-dejavu-core
+Section: utils
+Priority: optional
+Homepage: https://github.com/neomars/MyDock
+Description: dock tactile MyDock : l'écran du Raspberry Pi qui pilote un PC
+ Un seul paquet pour le Raspberry Pi : l'interface tactile en plein écran
+ (Chromium dans labwc), son serveur local, la bourse, le réveil du PC par le
+ réseau, et le paquet du PC.
+ .
+ Le Pi sert aussi, sur le réseau local, une page web d'où le PC télécharge son
+ paquet (mydock-agent) et s'associe au dock avec un code affiché sur l'écran :
+ rien d'autre à installer, aucun jeton à recopier.
+ .
+ Après l'installation, ouvrir http://ADRESSE_DU_PI/ depuis le PC.

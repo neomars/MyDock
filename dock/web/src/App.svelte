@@ -13,8 +13,10 @@
   import Toast from './components/Toast.svelte'
   import TopBar from './components/TopBar.svelte'
   import { pageById, shownPage, visiblePages } from './lib/pages'
+  import { justPaired } from './lib/pairing'
   import type { PageId } from './lib/protocol'
   import { sock } from './lib/socket.svelte'
+  import { notify } from './lib/toast.svelte'
   import { wakeDone } from './lib/wake.svelte'
 
   const debug = new URLSearchParams(location.search).has('debug')
@@ -52,6 +54,15 @@
   // Quand le PC répond enfin, le « réveil en cours » est terminé.
   $effect(() => {
     if (sock.connected) wakeDone()
+  })
+
+  // Un PC vient de s'associer (code tapé sur le PC) : on le dit une fois, quelle que soit la page affichée.
+  let pairedSeen = 0
+  $effect(() => {
+    const last = sock.dock?.pairing?.last
+    const text = justPaired(last, Date.now(), pairedSeen)
+    if (last?.result === 'paired') pairedSeen = last.at
+    if (text) notify(text, 'good', 6_000)
   })
 
   // Liaison navigateur -> dock perdue (le dock redémarre ?) : on l'affiche après un court délai.

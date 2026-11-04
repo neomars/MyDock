@@ -23,8 +23,17 @@ async function freePort(): Promise<number> {
   })
 }
 
+/** Le jeton de démonstration de l'agent (public, écrit dans le dépôt : agent/mydock_agent/demo). */
+export const DEMO_TOKEN = /DEMO_TOKEN = "([^"]+)"/.exec(
+  fs.readFileSync(path.join(ROOT, 'agent/mydock_agent/demo/__init__.py'), 'utf8'),
+)![1]
+
 export interface Stack {
   url: string
+  /** Le portail du dock : la page d'installation du PC et l'API d'association. */
+  portal: string
+  /** Port de l'agent de démonstration (celui qu'un PC annonce en s'associant). */
+  agentPort: number
   /** « PC éteint » : plus rien ne répond sur le port de l'agent. */
   pcOff(): void
   /** « Agent arrêté seul » : le PC répond mais l'agent est absent (connexion refusée). */
@@ -35,8 +44,11 @@ export interface Stack {
   wolPackets: Buffer[]
 }
 
-export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: string[] }>({
-  stack: async ({}, use) => {
+export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: string[]; unpaired: boolean }>({
+  /** Vrai : un dock neuf, sans PC, qui affiche un code d'association (test.use({ unpaired: true })). */
+  unpaired: [false, { option: true }],
+
+  stack: async ({ unpaired }, use) => {
     const [dockPort, agentPort, wolPort] = [await freePort(), await freePort(), await freePort()]
     const wolPackets: Buffer[] = []
     const udp = dgram.createSocket('udp4')
@@ -50,16 +62,19 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
         '--dock-port', String(dockPort),
         '--agent-port', String(agentPort),
         '--wol-target', `127.0.0.1:${wolPort}`,
+        ...(unpaired ? ['--unpaired'] : []),
       ],
       { stdio: ['ignore', 'pipe', 'inherit'], cwd: ROOT },
     ) // prettier-ignore
-    const url = await new Promise<string>((resolve, reject) => {
+    const { url, portal } = await new Promise<{ url: string; portal: string }>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('La pile de test ne démarre pas.')), 30_000)
+      let output = ''
       child.stdout!.on('data', (chunk: Buffer) => {
-        const match = /MYDOCK_STACK_READY (\S+)/.exec(chunk.toString())
-        if (match) {
+        output += chunk.toString()
+        const ready = /MYDOCK_STACK_READY (\S+)/.exec(output)
+        if (ready) {
           clearTimeout(timer)
-          resolve(match[1])
+          resolve({ url: ready[1], portal: /MYDOCK_PORTAL_READY (\S+)/.exec(output)?.[1] ?? '' })
         }
       })
       child.on('exit', (code) => reject(new Error(`La pile de test s'est arrêtée (code ${code}).`)))
@@ -67,6 +82,8 @@ export const test = base.extend<{ stack: Stack; dock: Page; consoleProblems: str
 
     await use({
       url,
+      portal,
+      agentPort,
       pcOff: () => child.kill('SIGUSR1'),
       agentDown: () => child.kill('SIGHUP'),
       pcOn: () => child.kill('SIGUSR2'),
@@ -109,10 +126,10 @@ export { expect }
 
 /**
  * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
- * MYDOCK_SHOTS=f ne refait que les captures de l'étape f, MYDOCK_SHOTS=a, b, c, d ou e celles des étapes
+ * MYDOCK_SHOTS=g ne refait que les captures de l'étape g, MYDOCK_SHOTS=a, b, c, d, e ou f celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)

@@ -32,13 +32,23 @@ from mydock_common.actions import ActionContext, ActionError, ActionRegistry, No
 from mydock_common.config import ConfigError
 from mydock_common.outbox import Outbox
 from mydock_dock import __version__
-from mydock_dock.agent_link import AgentLink, LinkSettings, LinkStatus, backoff_delay, probe
+from mydock_dock.agent_link import (
+    AgentLink,
+    LinkSettings,
+    LinkState,
+    LinkStatus,
+    backoff_delay,
+    probe,
+)
+from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig
 from mydock_dock.markets.errors import NotFound, ProviderError
 from mydock_dock.markets.factory import build_providers
 from mydock_dock.markets.http import Fetcher
 from mydock_dock.markets.service import MarketsService, Timing
-from mydock_dock.netinfo import local_ipv4_addresses
+from mydock_dock.netinfo import local_address_towards, local_ipv4_addresses
+from mydock_dock.pairing import Pairing, PairingRefused
+from mydock_dock.portal import Portal
 from mydock_dock.store import StateStore
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
 from mydock_dock.wol import send_magic_packet
@@ -185,9 +195,14 @@ class DockServer:
             backoff=link_backoff,
         )
         self.actions = ActionRegistry()
+        self.pairing = Pairing(on_change=lambda: self.push_local("dock"))
+        self.clients = ClientRegistry(config.clients_dir)
+        self.portal = Portal(self)
+        self._pairing_lock = asyncio.Lock()
         self._revs = {topic: 0 for topic in (*proto.DOCK_TOPICS, *ON_DEMAND_TOPICS)}
         self._link_task: asyncio.Task[None] | None = None
         self._markets_task: asyncio.Task[None] | None = None
+        self._pairing_task: asyncio.Task[None] | None = None
         self._register_actions()
 
     # --- cycle de vie --------------------------------------------------------------------
@@ -196,6 +211,8 @@ class DockServer:
         self.link.set_subscriptions(set(BASELINE_TOPICS))
         self._link_task = asyncio.create_task(self._run_link(), name="agent-link")
         self._markets_task = asyncio.create_task(self.markets.run(), name="markets")
+        self.portal.start()
+        self._pairing_task = asyncio.create_task(self._run_pairing(), name="pairing")
 
     async def _run_link(self) -> None:
         while True:  # la liaison ne doit jamais rester morte à cause d'une erreur inattendue
@@ -208,10 +225,13 @@ class DockServer:
                 await asyncio.sleep(5)
 
     async def stop(self) -> None:
-        tasks = [t for t in (self._link_task, self._markets_task) if t is not None]
+        tasks = [
+            t for t in (self._link_task, self._markets_task, self._pairing_task) if t is not None
+        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await self.portal.stop()
         self.markets.save()
         await self.link.close()
         for conn in tuple(self.browsers):
@@ -220,6 +240,26 @@ class DockServer:
     def _link_settings(self) -> LinkSettings:
         cfg = self.config
         return LinkSettings(cfg.agent_host, cfg.agent_port, cfg.token)
+
+    @property
+    def is_paired(self) -> bool:
+        """Un PC est configuré (par association ou à la main dans Réglages)."""
+        return bool(self.config.agent_host and self.config.token)
+
+    async def _run_pairing(self) -> None:
+        """Constate l'expiration d'une association ; tant qu'aucun PC n'est associé, il y a un code.
+
+        Un dock neuf montre donc d'emblée un code à taper sur le PC. Une fois un PC associé, un
+        code n'existe que si on l'a demandé (Réglages → Associer un PC).
+        """
+        while True:
+            try:
+                self.pairing.tick()
+                if not self.is_paired and not self.pairing.is_open() and self.portal.running:
+                    self.pairing.start()
+            except Exception:
+                log.exception("Erreur dans la boucle d'association")
+            await asyncio.sleep(1.0)
 
     # --- thèmes locaux -------------------------------------------------------------------
 
@@ -239,6 +279,23 @@ class DockServer:
         if learned:
             return {**learned, "source": "auto", "interfaces": interfaces}
         return {"mac": None, "source": None, "iface": None, "kind": None, "interfaces": interfaces}
+
+    def portal_info(self) -> dict[str, Any]:
+        """Où le PC ouvre le portail, et le paquet qu'il y télécharge (rien de secret)."""
+        port = self.portal.port
+        urls: list[str] = []
+        if port is not None:
+            suffix = "" if port == 80 else f":{port}"
+            urls = [f"http://{ip}{suffix}" for ip in local_ipv4_addresses()]
+            urls.append(f"http://{socket.gethostname()}.local{suffix}")
+        client = self.clients.latest()
+        return {
+            "enabled": self.config.portal_enabled,
+            "port": port,
+            "urls": urls,
+            "error": self.portal.error,
+            "client": {"file": client.file, "version": client.version} if client else None,
+        }
 
     def markets_info(self) -> dict[str, Any]:
         """Le résumé de la bourse pour les Réglages (sans abonnement aux cotations, donc sans trafic)."""
@@ -267,6 +324,8 @@ class DockServer:
                 },
                 "wol": self.wol_info(),
                 "markets": self.markets_info(),
+                "portal": self.portal_info(),
+                "pairing": self.pairing.info(),
             }
         if topic == "ui":
             return self.store.ui
@@ -319,6 +378,50 @@ class DockServer:
         )
         if changed:
             self.push_local("dock")
+
+    # --- association d'un PC ---------------------------------------------------------------
+
+    def pi_addresses_towards(self, peer: str) -> list[str]:
+        """Les adresses sous lesquelles ce Pi se présentera au PC : ce que l'agent doit autoriser."""
+        toward = local_address_towards(peer)
+        found = [toward] if toward else local_ipv4_addresses()[:3]
+        return [ip for ip in found if ip]
+
+    async def complete_pairing(self, peer: str, port: int, token: str, name: str) -> dict[str, Any]:
+        """Le code est bon : vérifie que l'agent répond avec ce jeton, puis l'enregistre comme PC piloté."""
+        async with self._pairing_lock:
+            pi_ips = self.pi_addresses_towards(peer)
+            state, detail, _agent = await probe(LinkSettings(peer, port, token))
+            if state != LinkState.CONNECTED:
+                raise PairingRefused(
+                    "unreachable" if state != LinkState.AUTH_FAILED else "refused",
+                    f"Le dock n'arrive pas à joindre l'agent de ce PC ({peer}:{port}) : {detail}",
+                    status=502,
+                    extra={"pi_ips": pi_ips, "state": str(state)},
+                )
+            previous = self.config.agent_host
+            try:
+                self.config.set_pairing(peer, port, token)
+                if previous and previous != peer:
+                    self.config.set_wol_mac("")  # l'adresse MAC d'un autre PC ne vaut plus rien
+                    self.store.update_pc(interfaces=[], wol=None, seen_at=None)
+                self.store.update_pc(hostname=name)
+            except (ValidationFailure, OSError, ConfigError):
+                log.exception("Impossible d'enregistrer le PC associé")
+                raise PairingRefused(
+                    "save_failed",
+                    f"Le dock n'a pas pu enregistrer sa configuration ({self.config.path}).",
+                    status=500,
+                ) from None
+            self.link.reload()
+            self.pairing.finish(name, peer)
+            log.warning("PC associé : %s (%s:%d)", name, peer, port)
+            return {
+                "ok": True,
+                "dock": {"version": __version__, "hostname": socket.gethostname()},
+                "pc": {"host": peer, "port": port},
+                "pi_ips": pi_ips,
+            }
 
     # --- abonnements des navigateurs -----------------------------------------------------
 
@@ -379,6 +482,8 @@ class DockServer:
         reg.register("dock.wol.send", self._act_wol_send, timeout=8.0)
         reg.register("dock.wol.set_mac", self._act_wol_set_mac, params=WolMacParams)
         reg.register("dock.ui.set", self._act_ui_set, params=UiSetParams)
+        reg.register("dock.pairing.open", self._act_pairing_open)
+        reg.register("dock.pairing.close", self._act_pairing_close)
         reg.register("dock.markets.set", self._act_markets_set, params=MarketsSetParams)
         reg.register(
             "dock.markets.check", self._act_markets_check, params=MarketsCheckParams, timeout=45.0
@@ -466,6 +571,20 @@ class DockServer:
         self._persist(lambda: self.config.set_wol_mac(params.mac))
         self.push_local("dock")
         return {"mac": self.config.wol_mac or None}
+
+    async def _act_pairing_open(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        """Affiche un nouveau code d'association (l'ancien cesse de valoir)."""
+        if not self.portal.running:
+            raise ActionError(
+                "portal_down",
+                self.portal.error or "Le portail est désactivé ([portal] enabled dans dock.toml).",
+            )
+        self.pairing.start()
+        return {"open": True}
+
+    async def _act_pairing_close(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        self.pairing.stop("closed")
+        return {"open": False}
 
     async def _act_ui_set(self, _ctx: ActionContext, params: UiSetParams) -> dict[str, Any]:
         patch = params.model_dump(exclude_none=True)

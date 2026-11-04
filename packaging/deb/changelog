@@ -1,3 +1,15 @@
+mydock-agent (1.1.0) unstable; urgency=medium
+
+  * Le paquet se télécharge désormais depuis le Raspberry Pi : le dock sert, sur le réseau local, une
+    page d'installation (http://ADRESSE-DU-PI/) où ce paquet est proposé. Plus rien à copier à la main.
+  * « mydock-agent setup --pi ADRESSE » associe le PC au dock avec le code affiché sur l'écran du Pi
+    (« --code » pour le fournir sans question) : le jeton de ce PC lui est transmis par le dock, il n'est
+    plus à recopier. L'adresse du Pi est ajoutée aux clients autorisés quand la liste en contient une.
+  * « mydock-agent doctor » : nouvelle section « Dock » (le portail du Pi répond-il, avec quelle version).
+  * Les versions du dock et du paquet restent alignées (1.1.0).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 04 Nov 2026 10:00:00 +0000
+
 mydock-agent (0.6.0) unstable; urgency=medium
 
   * Étape f : thème « power » et actions « power.lock », « power.suspend », « power.reboot » et

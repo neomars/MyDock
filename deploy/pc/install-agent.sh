@@ -168,7 +168,6 @@ else
 fi
 
 # --- Fin ---------------------------------------------------------------------------------------
-HOST_NAME=$(hostname)
 step "Terminé"
 if [ "$DRY_RUN" = 1 ]; then
   say "Simulation terminée : relance sans --dry-run pour installer."
@@ -176,21 +175,22 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 ok "Agent installé."
 say ""
-if [ "$TOKEN_NEW" = 1 ]; then
-  say "Jeton à saisir sur le Pi (il n'est affiché que maintenant ; ne le publie jamais) :"
-  say ""
-  say "    $("$VENV/bin/mydock-agent" show-token)"
-else
-  say "Jeton existant conservé. Pour l'afficher à nouveau : $VENV/bin/mydock-agent show-token"
-fi
-say ""
+# L'adresse du Pi donnée à --pi (une adresse, pas un réseau) sert d'exemple dans la commande.
+PI_ADDR=ADRESSE_IP_DU_PI
+for client in "${RESOLVED[@]}"; do
+  case "$client" in */*) ;; *) PI_ADDR=$client; break ;; esac
+done
 PC_IP=$(lan_ip)
-say "Sur le Pi (dans ce dépôt), avec l'adresse IP de ce PC :"
-say "    sudo ./deploy/pi/install-dock.sh --pc ${PC_IP:-${HOST_NAME}.local}"
-say "Préfère l'adresse IP au nom ${HOST_NAME}.local : la résolution des noms .local échoue souvent depuis un Pi."
-say "Réserve cette adresse dans ta box (bail DHCP) pour qu'elle ne change pas."
-say "Vérifier depuis le Pi (404 = l'agent est joint) :"
-say "    curl -sS -m 5 -o /dev/null -w '%{http_code}\\n' http://${PC_IP:-ADRESSE_DU_PC}:${PORT_NOW:-${PORT:-8765}}/"
+say "Associe maintenant ce PC au dock : le code est affiché sur l'écran du dock"
+say "(sur un dock neuf, tout seul ; sinon Réglages → Associer un PC)."
+say "    $VENV/bin/mydock-agent pair --pi $PI_ADDR"
+if [ "$TOKEN_NEW" = 1 ]; then
+  say "Le jeton de ce PC vient d'être généré : le dock le reçoit pendant l'association, rien à recopier."
+fi
+say "Réserve l'adresse de ce PC${PC_IP:+ ($PC_IP)} dans ta box (bail DHCP) pour qu'elle ne change pas."
+say ""
+say "À la main, sans code : Réglages du dock → PC piloté (adresse ${PC_IP:-ADRESSE_DU_PC}, port ${PORT_NOW:-${PORT:-8765}}),"
+say "puis le jeton, affiché par : $VENV/bin/mydock-agent show-token"
 say ""
 say "Diagnostic : $VENV/bin/mydock-agent doctor"
 say "Pour pouvoir allumer ce PC depuis le dock : ./deploy/pc/enable-wol.sh"

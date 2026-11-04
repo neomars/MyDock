@@ -1,6 +1,7 @@
 """Ligne de commande de l'agent.
 
-mydock-agent setup --pi IP_DU_PI   première configuration : jeton, service, pare-feu, consignes
+mydock-agent setup --pi IP_DU_PI   première configuration : jeton, service, pare-feu, association au dock
+mydock-agent pair --pi IP_DU_PI    associe ce PC (déjà configuré) à un dock, avec le code de son écran
 mydock-agent run [--demo]          démarre l'agent (commande par défaut ; le service s'en charge)
 mydock-agent init --allow IP_DU_PI crée ou met à jour la configuration seule (jeton généré)
 mydock-agent show-token            affiche le jeton, pour l'appairage avec le Pi
@@ -31,10 +32,11 @@ from mydock_agent.config import (
 from mydock_agent.demo import DEMO_TOKEN
 from mydock_agent.doctor import run_doctor
 from mydock_agent.hub import Hub
+from mydock_agent.pairing import PORTAL_PORT
 from mydock_agent.runtime import build_runtime
 from mydock_agent.server import create_app
 from mydock_agent.session import detect_session
-from mydock_agent.setup import run_setup
+from mydock_agent.setup import run_pair, run_setup
 from mydock_common.config import ConfigError
 from mydock_common.protocol import MAX_MESSAGE_BYTES
 
@@ -102,6 +104,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="si ufw est actif, autorise le Pi (sudo ufw allow ; demande ton mot de passe)",
     )
     setup.add_argument("--no-service", action="store_true", help="ne touche pas au service systemd")
+    setup.add_argument(
+        "--code",
+        metavar="CODE",
+        help="code d'association affiché sur l'écran du dock (sinon il est demandé)",
+    )
+    setup.add_argument(
+        "--portal-port",
+        type=int,
+        default=PORTAL_PORT,
+        metavar="PORT",
+        help=f"port du portail du dock (défaut : {PORTAL_PORT})",
+    )
+    setup.add_argument(
+        "--no-pair",
+        action="store_true",
+        help="n'associe pas ce PC au dock (saisie à la main dans les Réglages du dock)",
+    )
+
+    pair = sub.add_parser(
+        "pair",
+        help="associe ce PC, déjà configuré, à un dock avec le code affiché sur son écran",
+        description=(
+            "Présente au portail du dock le code lu sur son écran : le dock reçoit alors l'adresse "
+            "de ce PC et son jeton, rien n'est à recopier. Ne touche ni au service ni au pare-feu."
+        ),
+    )
+    pair.add_argument("--config", type=Path)
+    pair.add_argument("--pi", required=True, metavar="ADRESSE", help="l'adresse IP du Pi")
+    pair.add_argument(
+        "--code", metavar="CODE", help="code affiché sur l'écran du dock (sinon il est demandé)"
+    )
+    pair.add_argument(
+        "--portal-port",
+        type=int,
+        default=PORTAL_PORT,
+        metavar="PORT",
+        help=f"port du portail du dock (défaut : {PORTAL_PORT})",
+    )
 
     # Les options de enable-wol (--wifi, --dry-run, --help) sont celles du script : voir main().
     sub.add_parser(
@@ -206,6 +246,15 @@ def cmd_setup(args: argparse.Namespace) -> int:
         rotate_token=args.rotate_token,
         open_firewall=args.open_firewall,
         start_service=not args.no_service,
+        code=args.code,
+        portal_port=args.portal_port,
+        pair=not args.no_pair,
+    )
+
+
+def cmd_pair(args: argparse.Namespace) -> int:
+    return run_pair(
+        config_path=args.config, pi=args.pi, code=args.code, portal_port=args.portal_port
     )
 
 
@@ -250,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if command == "setup":
         return cmd_setup(args)
+    if command == "pair":
+        return cmd_pair(args)
     if command == "init":
         return cmd_init(args)
     if command == "show-token":

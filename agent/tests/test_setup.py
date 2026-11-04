@@ -51,6 +51,8 @@ def run(home: Path, **kw):
     kw.setdefault("systemd", FakeSystemd())
     kw.setdefault("wait", lambda _config: True)
     kw.setdefault("pi", ["192.168.1.60"])
+    kw.setdefault("fetch", lambda *_a, **_k: None)  # aucun vrai portail : jamais de réseau en test
+    kw.setdefault("interactive", False)
     code = run_setup(
         config_path=home / ".config" / "mydock" / "agent.toml",
         out=lines.append,
@@ -78,8 +80,14 @@ def test_first_setup_creates_a_private_config_starts_the_service_and_says_what_t
     assert "nouveau jeton généré" in text
     assert ("restart", "mydock-agent.service") in systemd.calls
     assert "Service démarré" in text
-    # Le Pi reçoit l'adresse IP (route par défaut) et non un nom .local qui échoue souvent.
-    assert "sudo ./deploy/pi/install-dock.sh --pc 192.168.1.3" in text
+    # Sans portail joignable, on dit quoi saisir à la main : l'adresse IP (route par défaut) et non
+    # un nom .local qui échoue souvent.
+    assert "Le portail du dock ne répond pas" in text
+    assert "À saisir à la main sur le dock" in text
+    assert "Adresse : 192.168.1.3" in text
+    assert (
+        "install-dock.sh" not in text
+    )  # ce script n'existe plus : le Pi s'installe par son paquet
     assert "http://192.168.1.3:8765/" in text
     assert "autre adresse de ce PC : 10.0.0.4" in text
     assert "adresse IP au nom" in text
