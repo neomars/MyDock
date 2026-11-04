@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--pc", metavar="HOTE", help="nom (.local) ou adresse IPv4 du PC")
     init.add_argument("--pc-port", type=int)
     init.add_argument("--port", type=int, help="port du dock")
+    init.add_argument("--portal-port", type=int, help="port du portail (page d'installation du PC)")
+    init.add_argument("--no-portal", action="store_true", help="désactive le portail")
+    init.add_argument("--clients-dir", type=Path, help="dossier des paquets proposés au PC")
     init.add_argument("--state-dir", type=Path)
     init.add_argument("--web-dir", type=Path)
     secret = init.add_mutually_exclusive_group()
@@ -132,6 +135,9 @@ def cmd_init(args: argparse.Namespace) -> int:
             pc_port=args.pc_port,
             token=_read_token(args),
             port=args.port,
+            portal_port=args.portal_port,
+            portal_enabled=False if args.no_portal else None,
+            clients_dir=args.clients_dir,
             state_dir=args.state_dir,
             web_dir=args.web_dir,
         )

@@ -28,6 +28,7 @@ from mydock_dock.agent_link import (
     probe,
     resolve_ipv4_all,
 )
+from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig, default_config_path
 from mydock_dock.markets.errors import ProviderError
 from mydock_dock.markets.factory import build_providers
@@ -290,6 +291,48 @@ def check_screen(
             )
 
 
+def check_portal(report: Report, config: DockConfig, *, port: int | None = None) -> None:
+    """Le portail (page d'installation du PC) : ouvert ? joignable ? un paquet à proposer ?"""
+    report.section("Portail (installation du PC)")
+    if not config.portal_enabled:
+        report.add(
+            INFO, "Portail désactivé ([portal] enabled = false) : aucun PC ne peut s'associer"
+        )
+        return
+    port = port or config.portal_port
+    packages = ClientRegistry(config.clients_dir).scan()
+    if packages:
+        shown = ", ".join(f"{p.file} ({p.size // 1024} Ko)" for p in packages)
+        report.add(OK, f"Paquet proposé au PC : {shown}")
+    else:
+        report.add(
+            WARN,
+            f"Aucun paquet du PC dans {config.clients_dir} : le portail n'a rien à télécharger. "
+            "Réinstalle le paquet mydock du Pi (il embarque celui du PC).",
+        )
+    url = f"http://127.0.0.1:{port}/api/portal"
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=2) as response:
+            state = json.load(response)
+    except (OSError, urllib.error.URLError, ValueError):
+        report.add(
+            WARN,
+            f"Le portail ne répond pas sur le port {port} : journalctl -u mydock-dock -e "
+            "(port déjà pris, ou droit d'ouvrir un port inférieur à 1024 manquant).",
+        )
+        return
+    report.add(OK, f"Le portail répond sur le port {port} (dock {state.get('version', '?')})")
+    suffix = "" if port == 80 else f":{port}"
+    for ip in local_ipv4_addresses():
+        report.add(INFO, f"    Depuis le PC : http://{ip}{suffix}")
+    if state.get("paired"):
+        link = "connecté" if state.get("connected") else "hors ligne pour l'instant"
+        report.add(OK, f"Un PC est associé ({link})")
+    else:
+        report.add(INFO, "Aucun PC associé : l'écran du dock montre le code à taper sur le PC")
+
+
 MARKETS_PROBES = {
     "binance": Instrument("crypto", "BTC"),
     "yahoo": Instrument("stock", "AAPL"),
@@ -415,6 +458,7 @@ def run_doctor(
         asyncio.run(_check_pc(report, config))
         check_wol(report, config)
         check_screen(report, config)
+        check_portal(report, config)
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)
     print(report.render())

@@ -2,7 +2,9 @@
 
 Le paquet .deb installe le programme et le service, mais il ne peut pas deviner pour quel
 utilisateur ni pour quel Pi : cette commande crée la configuration (jeton en droits 600), démarre
-le service, dit quoi faire pour le pare-feu et ce qu'il faut saisir sur le Pi.
+le service, s'occupe du pare-feu, puis **associe ce PC au dock** avec le code affiché sur l'écran du
+Pi : le dock se configure tout seul, il n'y a rien à recopier (voir pairing.py). Si l'association
+n'est pas possible, elle dit quoi saisir sur le Pi à la main.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,6 +25,13 @@ from mydock_agent import firewall
 from mydock_agent.collectors.host import list_interfaces
 from mydock_agent.config import AgentConfig, default_config_path, init_config
 from mydock_agent.doctor import _handshake, curl_check
+from mydock_agent.pairing import (
+    PORTAL_PORT,
+    PairingError,
+    fetch_state,
+    pair_with_dock,
+    portal_url,
+)
 from mydock_common.config import ConfigError
 
 UNIT = "mydock-agent.service"
@@ -139,10 +149,17 @@ def run_setup(
     rotate_token: bool = False,
     open_firewall: bool = False,
     start_service: bool = True,
+    code: str | None = None,
+    portal_port: int = PORTAL_PORT,
+    pair: bool = True,
     systemd: Systemd | None = None,
     out: Callable[[str], None] = print,
     is_root: bool | None = None,
     wait: Callable[[AgentConfig], bool] = wait_for_agent,
+    fetch: Callable[..., dict | None] = fetch_state,
+    pair_with: Callable[..., object] = pair_with_dock,
+    ask: Callable[[str], str] = input,
+    interactive: bool | None = None,
 ) -> int:
     systemd = systemd or Systemd()
     path = config_path or default_config_path()
@@ -178,7 +195,35 @@ def run_setup(
         failed = not _start_service(systemd, config, path.parent.parent, wait, out)
 
     _firewall_step(config, open_firewall, out)
-    _pi_instructions(config, created, out)
+    paired = False
+    pi_host = next((value for value in allow if "/" not in value), None)
+    if pair and pi_host is not None:
+        if failed or not start_service:
+            out("")
+            out(
+                "· Association au dock ignorée : l'agent ne tourne pas encore. Relance cette commande."
+            )
+        else:
+            use_ask = (sys.stdin.isatty() if interactive is None else interactive) and code is None
+            paired = _pair_step(
+                config,
+                path,
+                pi_host,
+                code=code,
+                portal_port=portal_port,
+                systemd=systemd,
+                wait=wait,
+                out=out,
+                fetch=fetch,
+                pair_with=pair_with,
+                ask=ask if use_ask else None,
+            )
+    elif pair and allow:
+        out("")
+        out(
+            "· Un réseau est autorisé, pas une adresse : donne l'adresse du Pi pour associer le dock."
+        )
+    _pi_instructions(config, created, paired, out)
     return 1 if failed else 0
 
 
@@ -247,14 +292,151 @@ def _firewall_step(config: AgentConfig, open_firewall: bool, out: Callable[[str]
         out(f"{mark} ufw : {source} → port {config.port}")
 
 
-def _pi_instructions(config: AgentConfig, created: bool, out: Callable[[str], None]) -> None:
+def _authorize_pi(config: AgentConfig, path: Path, addresses: list[str]) -> AgentConfig | None:
+    """Ajoute à allowed_clients les adresses sous lesquelles le Pi se présentera ; None si rien à changer.
+
+    Le dock les annonce (il sait quelle interface il utilise pour joindre ce PC) : c'est ce qui
+    rattrape un Pi branché en Ethernet et en Wi-Fi quand on a donné l'autre adresse. Seules des
+    adresses privées sont retenues, trois au plus.
+    """
+    if not config.allowed_clients:
+        return None  # « réseaux locaux de ce PC » : toute adresse locale passe déjà
+    valid: list[ipaddress.IPv4Address] = []
+    for value in addresses:
+        try:
+            address = ipaddress.IPv4Address(value)
+        except ValueError:
+            continue
+        if address.is_private and not address.is_unspecified and address not in valid:
+            valid.append(address)
+    missing = [
+        str(address)
+        for address in valid[:3]
+        if not any(address in network for network in config.allowed_clients)
+    ]
+    if not missing:
+        return None
+    allow = [str(network) for network in config.allowed_clients] + missing
+    updated, _created = init_config(path, allow=allow)
+    return updated
+
+
+def _restart(
+    systemd: Systemd, config: AgentConfig, wait: Callable[[AgentConfig], bool], out
+) -> None:
+    result = systemd.run("restart", UNIT)
+    if result is None or result.returncode != 0 or not wait(config):
+        out("⚠ L'agent n'a pas redémarré comme prévu : journalctl --user -u mydock-agent -e")
+
+
+def _pair_step(
+    config: AgentConfig,
+    path: Path,
+    pi_host: str,
+    *,
+    code: str | None,
+    portal_port: int,
+    systemd: Systemd,
+    wait: Callable[[AgentConfig], bool],
+    out: Callable[[str], None],
+    fetch: Callable[..., dict | None],
+    pair_with: Callable[..., object],
+    ask: Callable[[str], str] | None,
+) -> bool:
+    """Présente le code au dock. Vrai si ce PC est maintenant associé."""
+    out("")
+    state = fetch(pi_host, portal_port)
+    if state is None:
+        out(
+            f"⚠ Le portail du dock ne répond pas ({portal_url(pi_host, portal_port)}) : "
+            "association impossible pour l'instant. Vérifie l'adresse du Pi (et --portal-port si "
+            "le dock n'utilise pas le port 80), puis relance cette commande."
+        )
+        return False
+    out(f"✔ Dock trouvé : {state.get('hostname', pi_host)} (version {state.get('version', '?')})")
+    if not state.get("pairing"):
+        out(
+            "· Aucun code n'est affiché sur le dock. S'il a déjà un PC : Réglages → « Associer un "
+            "PC » sur son écran."
+        )
+    wrong = 0
+    corrected = False
+    current = code
+    while True:
+        if current is None:
+            if ask is None:
+                out(
+                    "· Pour associer ce PC : relance avec le code de l'écran du dock : "
+                    f"mydock-agent setup --pi {pi_host} --code CODE"
+                )
+                return False
+            current = ask("Code affiché sur l'écran du dock (vide pour passer) : ").strip()
+            if not current:
+                out("· Association ignorée (relance avec --code quand tu as le code).")
+                return False
+        try:
+            result = pair_with(
+                pi_host,
+                portal_port,
+                code=current,
+                token=config.token,
+                agent_port=config.port,
+                name=socket.gethostname(),
+            )
+        except PairingError as exc:
+            if exc.code == "bad_code":
+                wrong += 1
+                out("✘ Code incorrect.")
+                if ask is None or wrong >= 3:
+                    return False
+                current = None
+                continue
+            if exc.code in ("unreachable", "refused") and not corrected:
+                updated = _authorize_pi(config, path, exc.pi_ips)
+                if updated is not None:
+                    corrected = True
+                    config = updated
+                    out(
+                        "· Le dock se présente sous l'adresse " + ", ".join(exc.pi_ips) + " : "
+                        "elle est ajoutée aux clients autorisés."
+                    )
+                    _restart(systemd, config, wait, out)
+                    continue
+            out(f"✘ {exc.message}")
+            if exc.code in ("unreachable", "refused"):
+                source = ", ".join(exc.pi_ips) or "ADRESSE_DU_PI"
+                out(
+                    "  Le dock doit pouvoir joindre ce PC sur le port "
+                    f"{config.port} : sudo ufw allow from {source} to any port {config.port} proto tcp "
+                    "(ou : mydock-agent setup --pi … --open-firewall)."
+                )
+            return False
+        updated = _authorize_pi(config, path, list(getattr(result, "pi_ips", [])))
+        if updated is not None:
+            config = updated
+            _restart(systemd, config, wait, out)
+        hostname = getattr(result, "dock_hostname", "") or pi_host
+        out(
+            f"✔ PC associé au dock « {hostname} » : il se connecte à ce PC tout seul, "
+            "rien à saisir sur le Pi."
+        )
+        return True
+
+
+def _pi_instructions(
+    config: AgentConfig, created: bool, paired: bool, out: Callable[[str], None]
+) -> None:
+    if paired:
+        out("")
+        out("Vérifier : mydock-agent doctor")
+        return
     addresses = pc_addresses()
     out("")
     if not addresses:
         out("⚠ Ce PC n'a aucune adresse IPv4 sur un réseau actif : branche-le puis relance.")
         return
     main = addresses[0].address
-    out("À saisir sur le Pi :")
+    out("À saisir à la main sur le dock (Réglages → PC piloté) :")
     out(f"    Adresse : {main}        (l'adresse IP, pas un nom .local : voir ci-dessous)")
     out(f"    Port    : {config.port}")
     if created:
@@ -264,8 +446,6 @@ def _pi_instructions(config: AgentConfig, created: bool, out: Callable[[str], No
     for other in addresses[1:]:
         out(f"    (autre adresse de ce PC : {other.address}, {other.interface})")
     out("")
-    out("Dans le dépôt MyDock, sur le Pi :")
-    out(f"    sudo ./deploy/pi/install-dock.sh --pc {main}")
     out("Vérifier la liaison depuis le Pi (404 = l'agent est joint) :")
     out(f"    {curl_check(main, config.port)}")
     out("")

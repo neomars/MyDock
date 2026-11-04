@@ -4,7 +4,14 @@ from pathlib import Path
 import pytest
 
 from mydock_common.config import ConfigError, load_toml, write_toml_private
-from mydock_dock.config import DEFAULT_AGENT_PORT, DEFAULT_PORT, DockConfig, init_config
+from mydock_dock.config import (
+    DEFAULT_AGENT_PORT,
+    DEFAULT_CLIENTS_DIR,
+    DEFAULT_PORT,
+    DEFAULT_PORTAL_PORT,
+    DockConfig,
+    init_config,
+)
 from mydock_dock.validation import ValidationFailure
 
 TOKEN = "t" * 40
@@ -120,3 +127,99 @@ def test_a_world_readable_config_is_refused(tmp_path):
     path.chmod(0o644)
     with pytest.raises(ConfigError, match="chmod 600"):
         DockConfig.load(path)
+
+
+# --- le portail -------------------------------------------------------------------------------------
+
+
+def test_the_portal_is_on_by_default_on_the_network_while_the_interface_stays_local():
+    config = DockConfig.from_dict({}, Path("/x/dock.toml"))
+    assert config.portal_enabled is True
+    assert config.portal_host == "0.0.0.0"
+    assert config.portal_port == DEFAULT_PORTAL_PORT == 80
+    assert config.clients_dir == DEFAULT_CLIENTS_DIR
+    assert config.loopback_only  # l'interface de pilotage, elle, n'écoute toujours que en local
+
+
+def test_the_portal_section_is_read():
+    raw = {
+        "portal": {
+            "enabled": False,
+            "listen_host": "192.168.1.9",
+            "port": 8081,
+            "clients_dir": "/srv/pkg",
+        }
+    }
+    config = DockConfig.from_dict(raw, Path("/x"))
+    assert (config.portal_enabled, config.portal_host, config.portal_port) == (
+        False,
+        "192.168.1.9",
+        8081,
+    )
+    assert config.clients_dir == Path("/srv/pkg")
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ({"portal": {"port": 0}}, "portal.port"),
+        ({"portal": {"port": 70000}}, "portal.port"),
+        ({"portal": {"port": "80"}}, "portal.port"),
+        ({"portal": {"listen_host": "pas-une-ip"}}, "IPv4"),
+        ({"portal": "texte"}, "section"),
+        ({"portal": {"port": 8080}}, "deux ports différents"),
+        ({"server": {"port": 9000}, "portal": {"port": 9000}}, "deux ports différents"),
+    ],
+)
+def test_an_invalid_portal_is_explained(raw, message):
+    with pytest.raises(ConfigError, match=message):
+        DockConfig.from_dict(raw, Path("/x"))
+
+
+def test_a_disabled_portal_may_share_the_port_number_since_it_never_opens():
+    raw = {"portal": {"enabled": False, "port": 8080}}
+    assert DockConfig.from_dict(raw, Path("/x")).portal_enabled is False
+
+
+def test_the_portal_settings_are_written_and_read_back(tmp_path):
+    path = tmp_path / "dock.toml"
+    init_config(path, portal_port=8081, clients_dir=tmp_path / "paquets")
+    config = DockConfig.load(path)
+    assert config.portal_port == 8081
+    assert config.clients_dir == tmp_path / "paquets"
+    assert "[portal]" in path.read_text()
+    init_config(path, portal_enabled=False)
+    assert DockConfig.load(path).portal_enabled is False
+    assert DockConfig.load(path).portal_port == 8081  # le reste n'a pas bougé
+
+
+def test_init_refuses_a_portal_on_the_port_of_the_interface(tmp_path):
+    with pytest.raises(ConfigError, match="doit différer"):
+        init_config(tmp_path / "dock.toml", portal_port=DEFAULT_PORT)
+
+
+def test_pairing_writes_address_port_and_token_in_one_go(tmp_path):
+    path = tmp_path / "dock.toml"
+    config = init_config(path)
+    config.set_pairing("192.168.1.3", 8765, TOKEN)
+    saved = DockConfig.load(path)
+    assert (saved.agent_host, saved.agent_port, saved.token) == ("192.168.1.3", 8765, TOKEN)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("host", "port", "token"),
+    [
+        ("http://pc", 8765, TOKEN),
+        ("192.168.1.3", 0, TOKEN),
+        ("192.168.1.3", "8765", TOKEN),
+        ("192.168.1.3", 8765, "court"),
+    ],
+)
+def test_pairing_validates_everything_before_changing_anything(tmp_path, host, port, token):
+    path = tmp_path / "dock.toml"
+    config = init_config(path, pc_host="192.168.1.50", token=TOKEN)
+    with pytest.raises(ValidationFailure):
+        config.set_pairing(host, port, token)
+    assert (config.agent_host, config.agent_port, config.token) == ("192.168.1.50", 8765, TOKEN)
+    assert DockConfig.load(path).agent_host == "192.168.1.50"

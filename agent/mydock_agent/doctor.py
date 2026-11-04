@@ -28,6 +28,7 @@ from mydock_agent.collectors.power import SystemPower
 from mydock_agent.collectors.steam import SteamProvider
 from mydock_agent.collectors.system import Sensors, cpu_temperature, disk_temperature
 from mydock_agent.config import AgentConfig, default_config_path, load_config
+from mydock_agent.pairing import PORTAL_PORT, fetch_state, portal_url
 from mydock_agent.session import GRAPHICAL_VARS, detect_session, user_manager_environment
 from mydock_common.auth import bearer_headers
 from mydock_common.config import ConfigError
@@ -123,6 +124,47 @@ def check_network(report: Report) -> None:
             "Aucun câble Ethernet actif : le réveil d'un PC éteint (Wake-on-LAN) ne fonctionne "
             "en général qu'en Ethernet. En Wi-Fi, au mieux depuis la veille et selon la machine.",
         )
+
+
+def check_dock(
+    report: Report,
+    config: AgentConfig,
+    *,
+    fetch: Callable[..., dict | None] = fetch_state,
+) -> None:
+    """Le portail du dock (Pi) : joignable depuis ce PC ? Un PC y est-il associé ?"""
+    report.section("Dock (portail du Pi)")
+    pis = [n.network_address for n in config.allowed_clients if n.prefixlen == 32]
+    if not pis:
+        report.add(
+            INFO,
+            "Aucune adresse de Pi dans allowed_clients : lance « mydock-agent setup --pi "
+            "ADRESSE_IP_DU_PI » pour associer ce PC au dock.",
+        )
+        return
+    for pi in pis:
+        address = str(pi)
+        state = fetch(address, PORTAL_PORT)
+        if state is None:
+            report.add(
+                WARN,
+                f"Le portail du dock ne répond pas sur {portal_url(address, PORTAL_PORT)} "
+                "(dock éteint ? autre port : mydock-agent setup --portal-port N).",
+            )
+            continue
+        report.add(
+            OK,
+            f"Le dock répond sur {portal_url(address, PORTAL_PORT)} (version {state.get('version', '?')})",
+        )
+        if state.get("paired"):
+            link = "connecté" if state.get("connected") else "hors ligne pour l'instant"
+            report.add(INFO, f"    Un PC est associé à ce dock ({link})")
+        else:
+            report.add(
+                WARN,
+                "    Aucun PC n'est associé à ce dock : mydock-agent setup --pi "
+                f"{address} (le code est sur l'écran du dock)",
+            )
 
 
 def check_firewall(
@@ -708,6 +750,7 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     check_network(report)
     if config is not None:
         check_firewall(report, config)
+        check_dock(report, config)
     check_service(report)
     check_tools(report)
     check_sensors(report)

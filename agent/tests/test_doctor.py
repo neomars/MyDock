@@ -16,6 +16,7 @@ from mydock_agent.doctor import (
     check_apps,
     check_audio,
     check_config,
+    check_dock,
     check_firewall,
     check_from_pi,
     check_gpus,
@@ -690,3 +691,45 @@ async def test_the_running_agents_own_power_state_can_be_fetched():
         assert await doctor._agent_topic("127.0.0.1", agent.port, "x" * 40, "power") is None
         port = agent.port
     assert await doctor._agent_topic("127.0.0.1", port, TOKEN, "power") is None
+
+
+# --- le dock (portail du Pi) -------------------------------------------------------------------------------
+
+
+def dock_text(config, state) -> str:
+    report = Report()
+    check_dock(report, config, fetch=lambda *_a, **_k: state)
+    return report.render()
+
+
+def test_without_a_pi_address_the_doctor_points_at_setup():
+    out = dock_text(make_config(), None)
+    assert "mydock-agent setup --pi" in out
+    assert "⚠" not in out
+
+
+def test_a_silent_portal_is_a_warning_with_its_address():
+    out = dock_text(make_config("192.168.1.60"), None)
+    assert "⚠ Le portail du dock ne répond pas sur http://192.168.1.60/" in out
+    assert "--portal-port" in out
+
+
+def test_a_dock_with_a_paired_pc_is_green():
+    state = {"app": "mydock", "version": "0.7.0", "paired": True, "connected": True}
+    out = dock_text(make_config("192.168.1.60"), state)
+    assert "✔ Le dock répond sur http://192.168.1.60/ (version 0.7.0)" in out
+    assert "Un PC est associé à ce dock (connecté)" in out
+
+
+def test_a_dock_without_a_paired_pc_says_how_to_pair():
+    state = {"app": "mydock", "version": "0.7.0", "paired": False}
+    out = dock_text(make_config("192.168.1.60"), state)
+    assert "⚠     Aucun PC n'est associé" in out
+    assert "mydock-agent setup --pi 192.168.1.60" in out
+
+
+def test_networks_are_not_probed_only_single_addresses():
+    calls = []
+    report = Report()
+    check_dock(report, make_config("192.168.1.0/24"), fetch=lambda *a, **k: calls.append(a))
+    assert calls == []

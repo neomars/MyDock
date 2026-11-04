@@ -1,6 +1,6 @@
 """Ligne de commande de l'agent.
 
-mydock-agent setup --pi IP_DU_PI   première configuration : jeton, service, pare-feu, consignes
+mydock-agent setup --pi IP_DU_PI   première configuration : jeton, service, pare-feu, association au dock
 mydock-agent run [--demo]          démarre l'agent (commande par défaut ; le service s'en charge)
 mydock-agent init --allow IP_DU_PI crée ou met à jour la configuration seule (jeton généré)
 mydock-agent show-token            affiche le jeton, pour l'appairage avec le Pi
@@ -31,6 +31,7 @@ from mydock_agent.config import (
 from mydock_agent.demo import DEMO_TOKEN
 from mydock_agent.doctor import run_doctor
 from mydock_agent.hub import Hub
+from mydock_agent.pairing import PORTAL_PORT
 from mydock_agent.runtime import build_runtime
 from mydock_agent.server import create_app
 from mydock_agent.session import detect_session
@@ -102,6 +103,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="si ufw est actif, autorise le Pi (sudo ufw allow ; demande ton mot de passe)",
     )
     setup.add_argument("--no-service", action="store_true", help="ne touche pas au service systemd")
+    setup.add_argument(
+        "--code",
+        metavar="CODE",
+        help="code d'association affiché sur l'écran du dock (sinon il est demandé)",
+    )
+    setup.add_argument(
+        "--portal-port",
+        type=int,
+        default=PORTAL_PORT,
+        metavar="PORT",
+        help=f"port du portail du dock (défaut : {PORTAL_PORT})",
+    )
+    setup.add_argument(
+        "--no-pair",
+        action="store_true",
+        help="n'associe pas ce PC au dock (saisie à la main dans les Réglages du dock)",
+    )
 
     # Les options de enable-wol (--wifi, --dry-run, --help) sont celles du script : voir main().
     sub.add_parser(
@@ -206,6 +224,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
         rotate_token=args.rotate_token,
         open_firewall=args.open_firewall,
         start_service=not args.no_service,
+        code=args.code,
+        portal_port=args.portal_port,
+        pair=not args.no_pair,
     )
 
 
