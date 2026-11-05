@@ -21,7 +21,7 @@
   <div class="mini" data-testid="mini-player">
     <button class="info" aria-label="Ouvrir le lecteur : {player.title ?? player.name}" data-testid="mini-open" onclick={onOpen}>
       <span class="cover">
-        {#if cover}<img src={cover} alt="" />{:else}<MusicIcon size={22} aria-hidden="true" />{/if}
+        {#if cover}<img src={cover} alt="" />{:else}<MusicIcon size={32} aria-hidden="true" />{/if}
       </span>
       <span class="text">
         <strong data-testid="mini-title">{player.title ?? 'Sans titre'}</strong>
@@ -29,13 +29,13 @@
       </span>
     </button>
     <button class="ctl" aria-label="Morceau précédent" data-testid="mini-prev" disabled={!player.can.previous} onclick={music.previous}>
-      <SkipBack size={24} aria-hidden="true" />
+      <SkipBack size={34} aria-hidden="true" />
     </button>
     <button class="ctl main" aria-label={playing ? 'Pause' : 'Lecture'} data-testid="mini-play" onclick={music.playPause}>
-      {#if playing}<Pause size={26} aria-hidden="true" />{:else}<Play size={26} aria-hidden="true" />{/if}
+      {#if playing}<Pause size={36} aria-hidden="true" />{:else}<Play size={36} aria-hidden="true" />{/if}
     </button>
     <button class="ctl" aria-label="Morceau suivant" data-testid="mini-next" disabled={!player.can.next} onclick={music.next}>
-      <SkipForward size={24} aria-hidden="true" />
+      <SkipForward size={34} aria-hidden="true" />
     </button>
   </div>
 {/if}
@@ -44,11 +44,11 @@
   .mini {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
-    justify-self: center;
+    justify-self: flex-end;
     width: 100%;
-    max-width: 520px;
+    max-width: 640px;
   }
   .info {
     display: flex;
@@ -56,9 +56,9 @@
     gap: 10px;
     flex: 1 1 0;
     min-width: 0;
-    height: 48px;
+    height: var(--tap);
     padding: 0 6px 0 0;
-    border-radius: 10px;
+    border-radius: 12px;
   }
   .info:active {
     background: var(--surface-2);
@@ -66,10 +66,10 @@
   .cover {
     display: grid;
     place-items: center;
-    width: 44px;
-    height: 44px;
+    width: 64px;
+    height: 64px;
     flex: none;
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--surface-3);
     color: var(--text-3);
     overflow: hidden;
@@ -93,19 +93,15 @@
     text-overflow: ellipsis;
   }
   .text small {
-    font-size: var(--fs-cap);
-    color: var(--text-2);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    display: none; /* l'artiste se lit sur la page Musique : la barre du haut n'a de place que pour le titre */
   }
   .ctl {
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
+    width: var(--tap);
+    height: var(--tap);
     flex: none;
-    border-radius: 12px;
+    border-radius: 14px;
     color: var(--text);
   }
   .ctl:active:not(:disabled) {

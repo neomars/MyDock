@@ -4,27 +4,31 @@ Un dock tactile pour piloter un PC Ubuntu : un Raspberry Pi 4 avec un écran 7" 
 
 **Une seule chose à installer : le paquet `mydock` sur le Pi.** Le Pi sert alors, sur le réseau local, une **page web** d'où le PC (Ubuntu ou autre) télécharge son propre paquet et s'associe au dock avec un code affiché sur l'écran : rien à copier, aucun jeton à recopier.
 
-| Système | Musique | Son |
+| Accueil | PC éteint | Dock neuf : associer un PC |
 |---|---|---|
-| ![Page Système](docs/etapes/b/01-systeme.png) | ![Page Musique](docs/etapes/c/04-musique-volume.png) | ![Page Son](docs/etapes/c/01-son.png) |
+| ![Accueil : un gros bouton par page](docs/etapes/h/01-accueil.png) | ![Accueil, PC éteint : bandeau et boutons grisés](docs/etapes/h/02-accueil-pc-eteint.png) | ![Accueil d'un dock neuf : le code à saisir sur le PC](docs/etapes/h/03-accueil-association.png) |
+
+| Musique | Son | Système |
+|---|---|---|
+| ![Page Musique](docs/etapes/h/04-musique.png) | ![Page Son](docs/etapes/h/05-son.png) | ![Page Système](docs/etapes/h/10-systeme.png) |
 
 | Applis | Steam | Office |
 |---|---|---|
-| ![Page Applis](docs/etapes/d/03-applis.png) | ![Page Steam](docs/etapes/d/05-steam.png) | ![Page Office](docs/etapes/d/07-office.png) |
+| ![Page Applis](docs/etapes/h/06-applis.png) | ![Page Steam](docs/etapes/h/07-steam.png) | ![Page Office](docs/etapes/h/08-office.png) |
 
-| Bourse | Détail d'une valeur | Choix des valeurs |
+| Bourse | Alimentation | Réglages |
 |---|---|---|
-| ![Page Bourse](docs/etapes/e/02-bourse-liste.png) | ![Détail d'une valeur](docs/etapes/e/03-detail.png) | ![Choix des valeurs](docs/etapes/e/05-editeur.png) |
+| ![Page Bourse](docs/etapes/h/09-bourse.png) | ![Page Alimentation](docs/etapes/h/11-alimentation.png) | ![Page Réglages](docs/etapes/h/12-reglages.png) |
 
-| Alimentation | Pages et ordre | Veille de l'écran |
+| Clavier tactile | Confirmation | Pages et ordre |
 |---|---|---|
-| ![Page Alimentation](docs/etapes/f/01-alimentation.png) | ![Pages et ordre](docs/etapes/f/08-pages-et-ordre.png) | ![Réglage de l'écran](docs/etapes/f/11-reglage-ecran.png) |
+| ![Clavier tactile](docs/etapes/h/20-clavier.png) | ![Confirmation d'une action sensible](docs/etapes/h/21-confirmation.png) | ![Pages du dock et leur ordre](docs/etapes/h/22-pages-et-ordre.png) |
 
-| Dock neuf : associer un PC | Page d'installation, vue du PC | Réglages → Associer un PC |
+| Page d'installation, vue du PC | Choix des applications | Choix des valeurs de la Bourse |
 |---|---|---|
-| ![Écran d'accueil d'un dock neuf](docs/etapes/g/01-association-ecran-accueil.png) | ![Page d'installation servie par le Pi](docs/etapes/g/06-portail-sur-le-pc.png) | ![Associer un autre PC dans les Réglages](docs/etapes/g/05-reglages-association.png) |
+| ![Page d'installation servie par le Pi](docs/etapes/g/06-portail-sur-le-pc.png) | ![Applications du lanceur](docs/etapes/h/23-applications.png) | ![Valeurs de la Bourse](docs/etapes/h/24-bourse-ajouter.png) |
 
-*Captures prises en mode démo (fausses données), en 1024×600 tactile. PC éteint : [écran « PC hors ligne »](docs/etapes/a/06-hors-ligne.png).*
+*Captures prises en mode démo (fausses données), en 1024×600 tactile, texte doublé. PC éteint, une page du PC explique pourquoi : [écran « PC hors ligne »](docs/etapes/h/14-ecran-hors-ligne.png).*
 
 ## Où en est le projet
 
@@ -39,6 +43,7 @@ La livraison se fait par étapes, chacune utilisable.
 | **e** | Bourse : cryptos et actions lues par le Pi (Yahoo Finance et Binance, sans clé), liste au choix, graphique sur 1 j à 1 an, utilisable PC éteint | **livrée** ([rapport](docs/etapes/e/RAPPORT.md)) |
 | **f** | Alimentation (verrouiller, veille, redémarrer, éteindre, chacun avec ses garde-fous), Réglages complets (pages visibles et ordre, veille de l'écran du dock), finitions | **livrée** ([rapport](docs/etapes/f/RAPPORT.md)) |
 | **g** | **Installation simplifiée** : un seul paquet (`mydock`) sur le Pi, qui sert une page web où le PC prend son paquet puis s'associe par un code affiché sur l'écran du dock | **livrée** ([rapport](docs/etapes/g/RAPPORT.md)) |
+| **h** | **Accueil en gros boutons** (comme les touches d'un Stream Deck), retour par un **balayage de gauche à droite**, **texte doublé** pour l'écran de 7" | **livrée** ([rapport](docs/etapes/h/RAPPORT.md)) |
 
 Le cahier des charges est entièrement livré. Ce qui reste est de **vérifier sur le vrai matériel** ce qu'un conteneur de développement ne peut pas essayer : la liste est à la fin du [rapport de l'étape g](docs/etapes/g/RAPPORT.md).
 
@@ -158,7 +163,9 @@ Sur le PC, télécharger le nouveau paquet depuis la page du Pi et `sudo apt ins
 
 ## Utilisation
 
-Neuf onglets en bas ; en haut, le nom du PC et son état, le **mini-lecteur** (pochette, titre, précédent, lecture/pause, suivant : présent sur toutes les pages) et l'horloge. Textes d'au moins 16 px (courant 20 px), cibles tactiles d'au moins 48 px, thème sombre.
+**Un écran d'accueil de gros boutons**, comme les touches d'un Stream Deck : un bouton coloré par page (neuf, dans l'ordre choisi dans Réglages). On touche un bouton pour ouvrir sa page ; on **revient à l'accueil d'un balayage de gauche à droite**, n'importe où sur l'écran (sauf sur un curseur de volume ou une barre de progression, qui gardent leur geste), ou avec le bouton **⌂** en haut à gauche. L'écran repart toujours de l'accueil. En haut, toujours : le nom du PC et son état, le **mini-lecteur** (pochette, titre, précédent, lecture/pause, suivant : présent sur toutes les pages) et l'horloge. **Texte doublé** pour un écran de 7" lu à bout de bras (courant 40 px, légendes 32 px), cibles tactiles d'au moins 48 px (72 px pour la plupart), thème sombre ; la taille se règle d'un seul nombre, `--ts` dans `dock/web/src/app.css`.
+
+- **Accueil** : un bandeau n'apparaît que s'il y a quelque chose à savoir ou à faire (*PC hors ligne* avec le bouton **Allumer le PC**, *PC allumé, agent arrêté*, *Connexion refusée* avec **Associer à nouveau**, le **code d'association** et l'adresse à ouvrir sur le PC). Les boutons des pages qui ont besoin du PC sont **grisés** quand il est éteint (ils restent touchables : la page explique pourquoi) ; la Bourse et les Réglages, eux, ne dépendent pas du PC. Le bouton **Musique** montre le morceau en cours, sur sa pochette.
 
 - **Musique** : pochette, titre, artiste · album, progression que l'on **fait glisser** (appliquée au relâchement), précédent / lecture-pause / suivant. Tous les lecteurs MPRIS (Spotify, VLC, Firefox, Brave…) ; avec plusieurs, des pastilles choisissent celui qu'on pilote (par défaut celui qui joue, Spotify d'abord).
 - **Son** : la **sortie** (volume au doigt, bouton muet, pastilles pour changer de sortie : haut-parleurs, casque, Bluetooth, HDMI…), le **micro** (volume, muet, choix du micro, et « Micro utilisé par Discord » quand une application l'écoute), et la liste des **applications** qui jouent du son, chacune avec son volume et son bouton muet (Spotify toujours en tête). Le volume de la sortie est aussi sur la page **Musique**. Le dock ne dépasse jamais 100 % ; bouger le curseur d'un son coupé le rétablit.
@@ -168,10 +175,10 @@ Neuf onglets en bas ; en haut, le nom du PC et son état, le **mini-lecteur** (p
 - **Bourse** : tes cryptos et tes valeurs (actions, indices, ETF, devises) avec prix, variation **toujours écrite avec son signe** (+1,41 %, −0,32 %), mini-graphique et, pour une action, l'état du marché (ouvert, fermé) et **le dernier échange quand il est ancien** (cours différés ou valeur peu échangée). Un toucher ouvre le graphique de la valeur sur **1 jour, 5 jours, 1 mois ou 1 an**. **Modifier** : on **cherche par nom ou par symbole** au clavier tactile (`apple`, `bitcoin`, `MSTR`, `^FCHI`, `CW8.PA`…) ; le dock interroge Yahoo Finance (il connaît d'avance les cryptos courantes, même sans réseau) et un résultat s'ajoute d'un toucher après vérification de son prix ; on ordonne et on retire ; la devise des cryptos (euro ou dollar) se règle au même endroit, et **la fréquence des mises à jour** (15 s, 30 s, 1 min, 5 min) dans Réglages. C'est **le Pi** qui lit les cotations : la page marche PC éteint, et elle ne demande rien à Internet tant qu'elle n'est pas ouverte. Si un fournisseur ne répond plus, un bandeau dit lequel et pourquoi, et les derniers cours connus restent affichés **avec leur âge**.
 - **Système** : processeur (charge, fréquence, température), mémoire, **carte graphique**, réseau ↓↑, graphique des 60 dernières secondes (charge ou réseau), une barre par cœur, disques, batterie, et les 8 processus les plus gourmands avec un bouton ✕ qui demande **confirmation** avant d'arrêter un processus (« Forcer » s'il résiste). Sur un portable hybride, la carte NVIDIA endormie s'affiche « En veille » : le dock ne la réveille jamais.
 - **Alimentation** : à gauche le **réveil** (Wake-on-LAN), à droite quatre commandes pour **le PC** : **Verrouiller** (un toucher : l'écran de verrouillage de la session s'affiche), **Mettre en veille**, **Redémarrer** et **Éteindre** (chacune demande d'abord **confirmation à l'écran**, avec le nom du PC et ce qui va arriver). Un bouton grisé dit pourquoi : PC hors ligne, indisponible sur ce PC, « Bloqué par « Mises à jour logicielles » » (le programme qui s'oppose est nommé), mot de passe exigé par le système. Voir [Alimentation](#alimentation-verrouiller-veille-redémarrer-éteindre).
-- **Réglages** : **Associer un PC** (affiche un code et l'adresse du portail ; voir [Installation](#2-sur-le-pc--la-page-du-pi)), adresse, port et jeton du PC à la main (clavier tactile AZERTY intégré), test de connexion, adresse MAC du réveil, **écran du dock** (extinction après 1, 5, 10 ou 30 minutes sans toucher), **pages du dock** (lesquelles s'affichent dans la barre d'onglets, et dans quel ordre ; les Réglages restent toujours visibles), mesure de latence, lanceur d'applications, valeurs de la bourse, adresse(s) du Pi, adresse de la page d'installation et paquet du PC qu'elle propose.
+- **Réglages** : **Associer un PC** (affiche un code et l'adresse du portail ; voir [Installation](#2-sur-le-pc--la-page-du-pi)), adresse, port et jeton du PC à la main (clavier tactile AZERTY intégré), test de connexion, adresse MAC du réveil, **écran du dock** (extinction après 1, 5, 10 ou 30 minutes sans toucher), **pages du dock** (lesquelles ont un bouton sur l'accueil, et dans quel ordre ; les Réglages restent toujours visibles), mesure de latence, lanceur d'applications, valeurs de la bourse, adresse(s) du Pi, adresse de la page d'installation et paquet du PC qu'elle propose.
 - **Écran qui s'éteint** : après le délai choisi (par défaut : jamais), l'écran passe au noir ; **le premier toucher le rallume sans rien déclencher** (le doigt ne tape jamais sur ce qui se trouve dessous). Voir [Veille de l'écran](#veille-de-lécran-du-dock).
-- **Dock neuf, ou jeton refusé** : l'écran **« Associer un PC »** donne l'adresse du portail à ouvrir sur le PC, les trois gestes à faire et **le code**, avec le temps qu'il lui reste ; « Nouveau code » en demande un autre. Un dock sans PC garde toujours un code affiché ; un dock déjà associé n'en montre un que sur demande (**Réglages → Associer un PC…**, ou **Associer à nouveau** sur l'écran « Connexion refusée »). Quand le PC s'associe, un message le dit et les pages arrivent.
-- **PC éteint ou injoignable** : l'écran dit pourquoi, **en nommant l'adresse essayée** — *PC hors ligne* (éteint, en veille, pare-feu), *PC allumé, agent arrêté* (session fermée ?), *Connexion refusée* (jeton ou adresse du Pi non autorisée) — compte à rebours de la prochaine tentative, bouton **Allumer le PC**. Bourse et Réglages restent utilisables.
+- **Dock neuf, ou jeton refusé** : l'accueil porte déjà l'adresse du portail et **le code** ; en ouvrant une page du PC, l'écran **« Associer un PC »** donne l'adresse à ouvrir sur le PC, les trois gestes à faire et le code, avec le temps qu'il lui reste ; « Nouveau code » en demande un autre. Un dock sans PC garde toujours un code affiché ; un dock déjà associé n'en montre un que sur demande (**Réglages → Associer un PC…**, ou **Associer à nouveau** sur l'écran « Connexion refusée »). Quand le PC s'associe, un message le dit et les pages arrivent.
+- **PC éteint ou injoignable** : l'accueil le dit dans son bandeau ; en ouvrant une page du PC, l'écran dit pourquoi, **en nommant l'adresse essayée** — *PC hors ligne* (éteint, en veille, pare-feu), *PC allumé, agent arrêté* (session fermée ?), *Connexion refusée* (jeton ou adresse du Pi non autorisée) — compte à rebours de la prochaine tentative, bouton **Allumer le PC**. Bourse et Réglages restent utilisables.
 - **`?debug=1`** ajouté à l'adresse (ou `chromium.flags`) affiche les images par seconde et l'état des liaisons.
 
 ## Sécurité
@@ -253,7 +260,7 @@ L'agent demande à **logind** (le service de session de systemd) ce qu'il autori
 | Association : « Le dock ne joint pas ce PC » | Le pare-feu du PC bloque le port de l'agent (8765), ou le PC est sur un autre réseau que le Pi | `mydock-agent setup --pi IP_DU_PI --open-firewall` ; la commande affiche l'adresse que le dock utilise et la règle `ufw` exacte |
 | Écran noir au démarrage du Pi | Compositeur ou Chromium ne démarre pas | `journalctl -u mydock-kiosk -e` (Lite) ; vérifier `chromium` et `labwc` installés ; essayer `--force-mode 1024x600@60` |
 | Écran à la mauvaise résolution | Mode non détecté | `sudo /usr/lib/mydock/setup --force-mode 1024x600@60` ; ou `video=HDMI-A-1:1024x600@60` dans `/boot/firmware/cmdline.txt` |
-| Les onglets du dock n'affichent rien (page vide) juste après une mise à jour | L'écran était ouvert pendant la mise à jour : il garde l'ancienne interface en mémoire et demande des pages qui n'existent plus. **Depuis la 1.1.1 il se recharge tout seul** ; la première fois (de la 1.1.0 à la 1.1.1) il faut relancer son navigateur | Sur le Pi : `pkill -x chromium` (le kiosque repart en 2 s) ou `sudo reboot` ; puis `sudo -u mydock mydock-dock doctor` (section « Interface web » : tous les fichiers sont-ils là, le dock les sert-il ?) |
+| Les boutons du dock ouvrent une page vide juste après une mise à jour | L'écran était ouvert pendant la mise à jour : il garde l'ancienne interface en mémoire et demande des pages qui n'existent plus. **Depuis la 1.1.1 il se recharge tout seul** (et, depuis la 1.2.0, la page touchée se rouvre) ; la première fois (de la 1.1.0 à la 1.1.1) il faut relancer son navigateur | Sur le Pi : `pkill -x chromium` (le kiosque repart en 2 s) ou `sudo reboot` ; puis `sudo -u mydock mydock-dock doctor` (section « Interface web » : tous les fichiers sont-ils là, le dock les sert-il ?) |
 | Interface saccadée | Accélération GPU absente | `?debug=1` pour voir les i/s ; ajouter des options dans `/etc/mydock-kiosk/chromium.flags` (ex. `--use-gl=angle`) |
 | Le jeton a fuité | — | Sur le PC : `mydock-agent setup --pi IP_DU_PI --rotate-token` ; le dock doit afficher un code (**Réglages → Associer un PC…**) : le nouveau jeton lui est transmis avec |
 

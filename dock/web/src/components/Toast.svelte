@@ -9,7 +9,7 @@
 
 {#if toast.visible}
   <div class="toast {toast.kind}" role="status" data-testid="toast">
-    <Icon size={26} aria-hidden="true" />
+    <Icon size={40} aria-hidden="true" />
     <span>{toast.text}</span>
   </div>
 {/if}
@@ -23,10 +23,13 @@
     z-index: 50;
     display: flex;
     align-items: center;
-    gap: 12px;
-    max-width: 880px;
-    padding: 14px 24px;
-    border-radius: 999px;
+    gap: 14px;
+    width: max-content;
+    max-width: calc(100vw - 32px);
+    padding: 12px 28px;
+    border-radius: 36px;
+    font-size: var(--fs-small);
+    line-height: 1.2;
     background: var(--surface-3);
     border: 1px solid var(--line);
     font-weight: 600;

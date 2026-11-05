@@ -1,3 +1,13 @@
+mydock-agent (1.2.0) unstable; urgency=medium
+
+  * Son : après un changement de sortie (ou de micro) par défaut demandé depuis le dock, l'état est relu un
+    instant plus tard. PipeWire annonce parfois ce changement avant de le refléter, et l'écran gardait alors
+    l'ancienne sortie jusqu'au prochain événement.
+  * La version suit celle du dock (1.2.0), qui refait l'écran du Pi (accueil en gros boutons, texte doublé ;
+    voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 04 Nov 2026 20:00:00 +0000
+
 mydock-agent (1.1.1) unstable; urgency=medium
 
   * Aucun changement fonctionnel : la version suit celle du dock (1.1.1), qui corrige l'écran du Pi

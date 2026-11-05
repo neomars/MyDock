@@ -3,7 +3,7 @@
 // (dossier temporaire, voir agent/mydock_agent/demo/apps.py), lus par les vrais fournisseurs.
 
 import type { Page } from '@playwright/test'
-import { expect, shot, test, typeOnKeyboard } from './fixtures'
+import { expect, openPage, shot, test, typeOnKeyboard } from './fixtures'
 
 const FIREFOX = 'org.mozilla.firefox.desktop'
 const SPOTIFY = 'spotify.desktop'
@@ -12,16 +12,18 @@ const CALC = 'libreoffice-calc.desktop'
 const CALCULATOR = 'org.gnome.Calculator.desktop'
 
 async function openPicker(dock: Page): Promise<void> {
-  await dock.getByTestId('tab-apps').tap()
+  await openPage(dock, 'apps')
   await dock.getByTestId('apps-choose').tap()
   await expect(dock.getByTestId('picker')).toBeVisible()
   await expect(dock.getByTestId(`pick-${FIREFOX}`)).toBeVisible() // la liste du PC est arrivée
 }
 
+/** Épingle des applications depuis le volet « Applications » (la coche passe sur la ligne touchée). */
 async function pin(dock: Page, ...ids: string[]): Promise<void> {
+  await dock.getByTestId('picker-tab-all').tap()
   for (const id of ids) {
     await dock.getByTestId(`pick-${id}`).tap()
-    await expect(dock.getByTestId(`chosen-${id}`)).toBeVisible()
+    await expect(dock.getByTestId(`pick-${id}`)).toHaveAttribute('aria-pressed', 'true')
   }
 }
 
@@ -31,7 +33,7 @@ const tileNames = (dock: Page) => dock.locator('[data-testid="apps-grid"] .name'
 // --- lanceur d'applications ---------------------------------------------------------------------
 
 test('Applis : sans choix, la page propose de choisir les applications', async ({ dock }) => {
-  await dock.getByTestId('tab-apps').tap()
+  await openPage(dock, 'apps')
   await expect(dock.getByTestId('apps-empty')).toContainText('Aucune application choisie')
   await shot(dock, '01-applis-vide', 'd')
   await dock.getByTestId('apps-choose').tap()
@@ -46,8 +48,10 @@ test('Sélecteur : toutes les applications visibles du PC, et seulement elles', 
   await expect(list).toContainText('LibreOffice Writer')
   await expect(list).not.toContainText('Configuration initiale')
   await expect(list).not.toContainText('Réservé à KDE')
-  await expect(dock.getByTestId('picker-chosen')).toContainText('0/24')
+  await expect(dock.getByTestId('picker-tab-chosen')).toContainText('0/24')
+  await dock.getByTestId('picker-tab-chosen').tap() // le volet du lanceur est vide
   await expect(dock.getByTestId('chosen-none')).toBeVisible()
+  await expect(dock.getByTestId('picker-all')).toHaveCount(0) // un volet à la fois
 })
 
 test('Sélecteur : la recherche passe par le clavier tactile, sans tenir compte des accents', async ({ dock }) => {
@@ -69,15 +73,18 @@ test('Sélecteur : la recherche passe par le clavier tactile, sans tenir compte 
 test('Sélecteur : ajouter, ordonner et retirer, avec mémorisation par le dock', async ({ dock }) => {
   await openPicker(dock)
   await pin(dock, FIREFOX, SPOTIFY, STEAM, CALC)
-  await expect(dock.getByTestId('picker-chosen')).toContainText('4/24')
+  await expect(dock.getByTestId('picker-tab-chosen')).toContainText('4/24')
   await expect(dock.getByTestId(`pick-${FIREFOX}`)).toHaveAttribute('aria-pressed', 'true')
-  await dock.getByTestId('picker-all').evaluate((list) => list.scrollTo(0, 0)) // les appuis ont fait défiler la liste
+  await dock.getByTestId('picker-all').locator('.list').evaluate((list) => list.scrollTo(0, 0)) // les appuis ont fait défiler la liste
   await shot(dock, '02-selecteur', 'd')
 
+  await dock.getByTestId('picker-tab-chosen').tap()
+  await expect(dock.getByTestId(`chosen-${STEAM}`)).toBeVisible()
   await dock.getByTestId(`up-${CALC}`).tap()
   await dock.getByTestId(`down-${FIREFOX}`).tap()
   await dock.getByTestId(`remove-${STEAM}`).tap()
   await expect(dock.getByTestId(`chosen-${STEAM}`)).toHaveCount(0)
+  await dock.getByTestId('picker-tab-all').tap()
   await expect(dock.getByTestId(`pick-${STEAM}`)).toHaveAttribute('aria-pressed', 'false')
   await dock.getByTestId('picker-done').tap()
   await expect(dock.getByTestId('picker')).toHaveCount(0)
@@ -85,7 +92,7 @@ test('Sélecteur : ajouter, ordonner et retirer, avec mémorisation par le dock'
   expect(await tileNames(dock)).toEqual(['Spotify', 'Firefox', 'LibreOffice Calc']) // l'ordre choisi
   // Le Pi s'en souvient : même après un rechargement de la page.
   await dock.reload()
-  await dock.getByTestId('tab-apps').tap()
+  await openPage(dock, 'apps')
   await expect(dock.getByTestId('apps-grid')).toBeVisible()
   expect(await tileNames(dock)).toEqual(['Spotify', 'Firefox', 'LibreOffice Calc'])
   await expect(dock.getByTestId('apps-count')).toHaveText('3 applications')
@@ -131,7 +138,7 @@ test('Sélecteur : toutes les cibles se touchent au doigt (au moins 48 px)', asy
 })
 
 test('Réglages : le lanceur a sa carte, qui ouvre le même sélecteur', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('launcher-count')).toContainText('Aucune application choisie')
   await dock.getByTestId('choose-apps').tap()
   await expect(dock.getByTestId('picker')).toBeVisible()
@@ -143,7 +150,7 @@ test('Réglages : le lanceur a sa carte, qui ouvre le même sélecteur', async (
 // --- Steam --------------------------------------------------------------------------------------
 
 test('Steam : la bibliothèque (deux disques), sans les outils ni le jeu en cours de téléchargement', async ({ dock }) => {
-  await dock.getByTestId('tab-steam').tap()
+  await openPage(dock, 'steam')
   await expect(dock.getByTestId('steam-grid')).toBeVisible()
   await expect(dock.getByTestId('steam-count')).toHaveText('11 jeux')
   // Proton, Steam Linux Runtime, Steamworks et un jeu à moitié téléchargé sont écartés.
@@ -154,7 +161,7 @@ test('Steam : la bibliothèque (deux disques), sans les outils ni le jeu en cour
 })
 
 test('Steam : les jeux joués récemment viennent d’abord, les jaquettes arrivent au fil du défilement', async ({ dock }) => {
-  await dock.getByTestId('tab-steam').tap()
+  await openPage(dock, 'steam')
   await expect(dock.getByTestId('steam-grid')).toBeVisible()
   const order = await dock.locator('[data-testid="steam-grid"] .game').evaluateAll((els) => els.map((el) => el.getAttribute('title')))
   expect(order.slice(0, 3)).toEqual(['Hades', 'ELDEN RING', 'Factorio']) // joués il y a 1, 2 et 3 jours
@@ -164,7 +171,7 @@ test('Steam : les jeux joués récemment viennent d’abord, les jaquettes arriv
 })
 
 test('Steam : lancer un jeu, puis le voir « en cours » dès que l’agent le détecte', async ({ dock }) => {
-  await dock.getByTestId('tab-steam').tap()
+  await openPage(dock, 'steam')
   await dock.getByTestId('game-1145360').tap()
   await expect(dock.getByTestId('badge-1145360')).toHaveText('Lancement…')
   await expect(dock.getByTestId('toast')).toContainText('« Hades » se lance…')
@@ -178,7 +185,7 @@ test('Steam : lancer un jeu, puis le voir « en cours » dès que l’agent le d
 // --- LibreOffice --------------------------------------------------------------------------------
 
 test('Office : documents récents dans l’ordre de LibreOffice, avec leur famille et leur ancienneté', async ({ dock }) => {
-  await dock.getByTestId('tab-office').tap()
+  await openPage(dock, 'office')
   await expect(dock.getByTestId('office-recent')).toContainText('Documents récents (6)')
   const names = await dock.locator('[data-testid^="recent-name-"]').allInnerTexts()
   expect(names).toEqual([
@@ -198,7 +205,7 @@ test('Office : documents récents dans l’ordre de LibreOffice, avec leur famil
 })
 
 test('Office : un nouveau document, ou rouvrir un récent', async ({ dock }) => {
-  await dock.getByTestId('tab-office').tap()
+  await openPage(dock, 'office')
   await dock.getByTestId('new-calc').tap()
   await expect(dock.getByTestId('toast')).toContainText('« LibreOffice Calc » se lance…')
   await expect(dock.getByTestId('new-calc')).toContainText('Lancement…')
@@ -213,7 +220,7 @@ test('Applis, Steam et Office : cibles tactiles d’au moins 48 px et aucun déf
   await pin(dock, FIREFOX, SPOTIFY, STEAM, CALC, CALCULATOR)
   await dock.getByTestId('picker-done').tap()
   for (const id of ['apps', 'steam', 'office']) {
-    await dock.getByTestId(`tab-${id}`).tap()
+    await openPage(dock, id)
     await expect(dock.getByTestId(`page-${id}`)).toBeVisible()
     await dock.waitForTimeout(400)
     const small = await dock.evaluate(() =>
@@ -229,7 +236,7 @@ test('Applis, Steam et Office : cibles tactiles d’au moins 48 px et aucun déf
 })
 
 test('Applis, Steam et Office : elles disparaissent avec le PC et reviennent avec lui', async ({ dock, stack }) => {
-  await dock.getByTestId('tab-steam').tap()
+  await openPage(dock, 'steam')
   await expect(dock.getByTestId('steam-grid')).toBeVisible()
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toBeVisible({ timeout: 20_000 })

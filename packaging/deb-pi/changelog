@@ -1,3 +1,23 @@
+mydock (1.2.0) unstable; urgency=medium
+
+  * Nouvel écran d'accueil en gros boutons, comme les touches d'un Stream Deck : un bouton coloré par
+    page (neuf, dans l'ordre choisi dans Réglages) ; la barre d'onglets du bas disparaît. On touche un
+    bouton pour ouvrir sa page ; on revient à l'accueil d'un balayage de gauche à droite, n'importe où
+    sur l'écran (sauf sur un curseur, qui garde son geste), ou avec le bouton de la barre du haut.
+    L'écran repart toujours de l'accueil.
+  * L'accueil porte aussi l'état du PC : un bandeau quand il y a quelque chose à savoir ou à faire
+    (PC hors ligne et « Allumer le PC », PC allumé mais agent arrêté, code d'association, « Associer à
+    nouveau »), les pages qui ont besoin du PC grisées quand il est éteint, et le bouton Musique qui
+    montre le morceau en cours.
+  * Texte doublé pour l'écran de 7" (courant 40 px au lieu de 20) : chaque page, le clavier tactile, les
+    confirmations et les fenêtres de choix sont refaits pour que tout tienne dans 1024×600. Les fenêtres
+    « Applications du lanceur » et « Valeurs de la Bourse » passent à deux volets. La taille se règle d'un
+    seul nombre (--ts, dans app.css).
+  * Après le rechargement qui répare l'écran d'une mise à jour, la page que la personne venait de toucher
+    se rouvre d'elle-même (le bouton « Recharger » aussi).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 04 Nov 2026 20:00:00 +0000
+
 mydock (1.1.1) unstable; urgency=medium
 
   * Correction : après une mise à jour du paquet, un écran resté ouvert gardait l'ancienne interface en

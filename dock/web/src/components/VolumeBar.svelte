@@ -49,9 +49,9 @@
     onclick={() => void audio.setMuted(kind, id, !isMuted)}
   >
     {#if icon === 'mic'}
-      {#if isMuted}<MicOff size={size === 'lg' ? 34 : 28} aria-hidden="true" />{:else}<Mic size={size === 'lg' ? 34 : 28} aria-hidden="true" />{/if}
+      {#if isMuted}<MicOff size={size === 'lg' ? 46 : 40} aria-hidden="true" />{:else}<Mic size={size === 'lg' ? 46 : 40} aria-hidden="true" />{/if}
     {:else}
-      <Speaker size={size === 'lg' ? 34 : 28} aria-hidden="true" />
+      <Speaker size={size === 'lg' ? 46 : 40} aria-hidden="true" />
     {/if}
   </button>
   <Slider
@@ -78,23 +78,23 @@
   .mute {
     display: grid;
     place-items: center;
-    width: 52px;
-    height: 52px;
-    border-radius: 14px;
+    width: var(--tap);
+    height: var(--tap);
+    border-radius: 16px;
     background: var(--surface-3);
     color: var(--text);
   }
   .lg .mute {
-    width: 56px;
-    height: 56px;
+    width: calc(var(--tap) + 8px);
+    height: calc(var(--tap) + 8px);
   }
   .compact {
     grid-template-columns: minmax(0, 1fr) 3.4em auto;
   }
   .compact .mute {
     order: 3;
-    width: 48px;
-    height: 48px;
+    width: var(--tap);
+    height: var(--tap);
   }
   .compact .value {
     font-size: var(--fs-small);

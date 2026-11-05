@@ -52,13 +52,13 @@
 
 {#if music.unavailable}
   <section class="empty" data-testid="music-unavailable">
-    <MusicIcon size={64} aria-hidden="true" />
+    <MusicIcon size={84} aria-hidden="true" />
     <h1>Musique indisponible</h1>
     <p class="muted">{music.unavailable}</p>
   </section>
 {:else if !player}
   <section class="empty" data-testid="music-empty">
-    <MusicIcon size={64} aria-hidden="true" />
+    <MusicIcon size={84} aria-hidden="true" />
     <h1>Aucun lecteur ouvert</h1>
     <p class="muted">Lance Spotify, VLC ou une vidéo dans ton navigateur : le dock le détecte tout seul.</p>
   </section>
@@ -68,7 +68,7 @@
       {#if cover}
         <img src={cover} alt="Pochette de {player.title ?? 'ce morceau'}" data-testid="music-cover-img" />
       {:else}
-        <MusicIcon size={96} aria-hidden="true" />
+        <MusicIcon size={84} aria-hidden="true" />
       {/if}
     </div>
 
@@ -79,22 +79,25 @@
         <p class="source dim">{player.name}{playing ? ' · lecture' : player.status === 'paused' ? ' · pause' : ''}</p>
       </div>
 
-      <Progress
-        {position}
-        length={player.length_ms}
-        seekable={player.can.seek}
-        onSeek={(ms) => void music.seek(ms)}
-      />
+      <div class="prog">
+        <Progress
+          {position}
+          length={player.length_ms}
+          seekable={player.can.seek}
+          onSeek={(ms) => void music.seek(ms)}
+        />
+      </div>
 
+      <div class="controls">
       <div class="transport">
         <button class="round" aria-label="Morceau précédent" data-testid="music-prev" disabled={!player.can.previous} onclick={music.previous}>
-          <SkipBack size={34} aria-hidden="true" />
+          <SkipBack size={44} aria-hidden="true" />
         </button>
         <button class="round main" aria-label={playing ? 'Pause' : 'Lecture'} data-testid="music-play" onclick={music.playPause}>
-          {#if playing}<Pause size={44} aria-hidden="true" />{:else}<Play size={44} aria-hidden="true" />{/if}
+          {#if playing}<Pause size={54} aria-hidden="true" />{:else}<Play size={54} aria-hidden="true" />{/if}
         </button>
         <button class="round" aria-label="Morceau suivant" data-testid="music-next" disabled={!player.can.next} onclick={music.next}>
-          <SkipForward size={34} aria-hidden="true" />
+          <SkipForward size={44} aria-hidden="true" />
         </button>
       </div>
 
@@ -103,6 +106,7 @@
           <VolumeBar kind="sink" id={output.id} name={output.label} volume={output.volume} muted={output.muted} testid="music-vol" />
         </div>
       {/if}
+      </div>
 
       {#if players.length > 1}
         <div class="chips" role="tablist" aria-label="Lecteurs" data-testid="music-players">
@@ -114,7 +118,7 @@
               data-testid="music-select-{p.id}"
               onclick={() => void music.select(p.id)}
             >
-              {#if p.status === 'playing'}<Play size={18} aria-hidden="true" />{/if}
+              {#if p.status === 'playing'}<Play size={28} aria-hidden="true" />{/if}
               {chipLabel(p)}
             </button>
           {/each}
@@ -125,18 +129,28 @@
 {/if}
 
 <style>
+  /* Texte doublé : la pochette et le titre en haut, la progression, puis les commandes et le volume sur une seule
+     rangée : tout tient dans l'écran sans défiler. */
   .player {
     display: grid;
-    grid-template-columns: 300px minmax(0, 1fr);
-    gap: 28px;
-    height: 100%;
+    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-areas:
+      'cover meta'
+      'prog prog'
+      'controls controls'
+      'chips chips';
+    gap: 8px 24px;
     align-items: center;
   }
+  .side {
+    display: contents;
+  }
   .cover {
+    grid-area: cover;
     display: grid;
     place-items: center;
-    width: 300px;
-    height: 300px;
+    width: 200px;
+    height: 200px;
     border-radius: 22px;
     background: linear-gradient(135deg, var(--surface-3), var(--surface));
     color: var(--text-3);
@@ -148,19 +162,14 @@
     height: 100%;
     object-fit: cover;
   }
-  .side {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+  .meta {
+    grid-area: meta;
     min-width: 0;
   }
-  .meta {
-    min-height: 108px;
-  }
   .title {
-    font-size: 34px;
+    font-size: var(--fs-title);
     font-weight: 700;
-    line-height: 1.12;
+    line-height: 1.1;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
@@ -168,29 +177,37 @@
     overflow: hidden;
   }
   .artist {
-    margin-top: 6px;
-    font-size: var(--fs-large);
+    margin-top: 4px;
+    font-size: var(--fs);
     color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .source {
-    margin-top: 2px;
+    margin-top: 0;
     font-size: var(--fs-cap);
   }
-  .transport {
+  .prog {
+    grid-area: prog;
+  }
+  .controls {
+    grid-area: controls;
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 34px;
-    margin-top: 2px;
+    gap: 24px;
+  }
+  .transport {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
   }
   .round {
     display: grid;
     place-items: center;
-    width: 76px;
-    height: 76px;
+    width: 84px;
+    height: 84px;
     border-radius: 50%;
     background: var(--surface-3);
   }
@@ -202,8 +219,8 @@
     opacity: 0.3;
   }
   .round.main {
-    width: 96px;
-    height: 96px;
+    width: 104px;
+    height: 104px;
     background: var(--accent);
     color: var(--accent-ink);
   }
@@ -211,17 +228,18 @@
     background: #8ccbff;
   }
   .volume {
-    margin-top: 2px;
+    flex: 1 1 0;
+    min-width: 0;
   }
   .chips {
+    grid-area: chips;
     display: flex;
     gap: 10px;
     justify-content: center;
-    margin-top: 2px;
   }
   .chip-btn {
-    min-height: 52px;
-    padding: 0 20px;
+    min-height: var(--tap);
+    padding: 0 24px;
     font-size: var(--fs-small);
   }
   .chip-btn[aria-selected='true'] {
@@ -244,6 +262,6 @@
     color: var(--text);
   }
   .empty p {
-    max-width: 560px;
+    max-width: 760px;
   }
 </style>

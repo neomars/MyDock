@@ -30,6 +30,13 @@
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
+  /** Deux volets, pas deux colonnes : avec le texte doublé, les deux ne tiennent pas côte à côte dans 1024 px. */
+  let tab = $state<'add' | 'list'>('add')
+  $effect(() => {
+    if (marketsUi.editor) tab = 'add'
+  })
+  const SEGMENT_LABELS: Record<MarketKind, string> = { crypto: 'Crypto', stock: 'Action' }
+
   let kind = $state<MarketKind>('crypto')
   let query = $state('')
   let busy = $state<'search' | 'check' | null>(null)
@@ -171,45 +178,36 @@
 {#if marketsUi.editor}
   <div class="overlay" role="dialog" aria-modal="true" aria-label="Choisir les valeurs de la Bourse" data-testid="mk-editor">
     <header>
-      <h1>Valeurs suivies</h1>
-      <div class="money" role="group" aria-label="Devise des cryptos">
-        <span class="dim">Cryptos en</span>
-        {#each [{ id: 'EUR', label: 'Euro' }, { id: 'USD', label: 'Dollar' }] as option (option.id)}
-          <button
-            class="seg"
-            class:on={currency === option.id}
-            aria-pressed={currency === option.id}
-            data-testid="mk-currency-{option.id}"
-            onclick={() => setCurrency(option.id as 'EUR' | 'USD')}
-          >
-            {option.label}
-          </button>
-        {/each}
+      <div class="tabs" role="group" aria-label="Affichage">
+        <button class="tab" class:on={tab === 'add'} aria-pressed={tab === 'add'} data-testid="mk-tab-add" onclick={() => (tab = 'add')}>
+          Ajouter
+        </button>
+        <button class="tab" class:on={tab === 'list'} aria-pressed={tab === 'list'} data-testid="mk-tab-list" onclick={() => (tab = 'list')}>
+          Liste ({list.length}/{MAX_WATCHED})
+        </button>
       </div>
       <button class="btn primary" data-testid="mk-done" onclick={() => marketsUi.done()}>
-        <Check size={26} aria-hidden="true" />Terminé
+        <Check size={34} aria-hidden="true" />Terminé
       </button>
     </header>
 
-    <div class="cols">
+    {#if tab === 'add'}
       <section class="card" data-testid="mk-add">
-        <h2>Ajouter une valeur</h2>
-        <div class="kinds" role="group" aria-label="Type de valeur">
-          {#each ['crypto', 'stock'] as const as option (option)}
-            <button class="seg wide" class:on={kind === option} aria-pressed={kind === option} data-testid="mk-kind-{option}" onclick={() => setKind(option)}>
-              {KIND_LABELS[option]}
-            </button>
-          {/each}
-        </div>
-
         <div class="entry">
+          <div class="kinds" role="group" aria-label="Type de valeur">
+            {#each ['crypto', 'stock'] as const as option (option)}
+              <button class="seg" class:on={kind === option} aria-pressed={kind === option} data-testid="mk-kind-{option}" onclick={() => setKind(option)}>
+                {SEGMENT_LABELS[option]}
+              </button>
+            {/each}
+          </div>
           <button class="btn field" data-testid="mk-search" onclick={typeQuery}>
-            <Search size={24} aria-hidden="true" />
-            <span class:dim={!query}>{query || 'Rechercher un nom ou un symbole…'}</span>
+            <Search size={32} aria-hidden="true" />
+            <span class:dim={!query}>{query || 'Nom ou symbole…'}</span>
           </button>
           {#if query}
             <button class="btn" aria-label="Effacer la recherche" data-testid="mk-clear" onclick={reset}>
-              <X size={24} aria-hidden="true" />
+              <X size={32} aria-hidden="true" />
             </button>
           {/if}
         </div>
@@ -226,12 +224,12 @@
                 <small>{found.symbol} · {formatPrice(found.price, found.currency)} · {SOURCE_LABELS[found.source] ?? found.source}</small>
               </span>
               <button class="btn primary" data-testid="mk-confirm" disabled={inList(found.id) || full} onclick={add}>
-                {#if inList(found.id)}Déjà suivie{:else}<Plus size={24} aria-hidden="true" />Ajouter{/if}
+                {#if inList(found.id)}Déjà suivie{:else}<Plus size={32} aria-hidden="true" />Ajouter{/if}
               </button>
             </div>
           {:else}
             {#if problem}
-              <p class="problem" data-testid="mk-error"><TriangleAlert size={22} aria-hidden="true" />{problem}</p>
+              <p class="problem" data-testid="mk-error"><TriangleAlert size={32} aria-hidden="true" />{problem}</p>
             {/if}
             {#if results !== null}
               <div class="hits" data-testid="mk-results">
@@ -242,7 +240,7 @@
                       <small>{detail(hit)}</small>
                     </span>
                     <button class="btn" data-testid="mk-result-{hit.symbol}" disabled={inList(`${hit.kind}:${hit.symbol}`) || full} onclick={() => pick(hit)}>
-                      {#if inList(`${hit.kind}:${hit.symbol}`)}Suivie{:else}<Plus size={22} aria-hidden="true" />Ajouter{/if}
+                      {#if inList(`${hit.kind}:${hit.symbol}`)}Suivie{:else}<Plus size={32} aria-hidden="true" />Ajouter{/if}
                     </button>
                   </div>
                 {/each}
@@ -267,12 +265,25 @@
           {/if}
         </div>
       </section>
-
+    {:else}
       <section class="card" data-testid="mk-chosen">
-        <h2>Dans la liste ({list.length}/{MAX_WATCHED})</h2>
+        <div class="money" role="group" aria-label="Devise des cryptos">
+          <span class="dim">Cryptos en</span>
+          {#each [{ id: 'EUR', label: 'Euro' }, { id: 'USD', label: 'Dollar' }] as option (option.id)}
+            <button
+              class="seg"
+              class:on={currency === option.id}
+              aria-pressed={currency === option.id}
+              data-testid="mk-currency-{option.id}"
+              onclick={() => setCurrency(option.id as 'EUR' | 'USD')}
+            >
+              {option.label}
+            </button>
+          {/each}
+        </div>
         <div class="list">
           {#if data && items.length === 0}
-            <p class="muted" data-testid="mk-none">Rien pour l’instant : cherche une crypto ou une valeur à gauche.</p>
+            <p class="muted" data-testid="mk-none">Rien pour l’instant : cherche une crypto ou une valeur dans l’onglet « Ajouter ».</p>
           {/if}
           {#each items as item, index (item.id)}
             <div class="row" data-testid="mk-item-{item.id}">
@@ -281,81 +292,84 @@
                 <small>{item.symbol} · {KIND_LABELS[item.kind]}</small>
               </span>
               <button class="step" aria-label="Monter {item.symbol}" data-testid="mk-up-{item.id}" disabled={index === 0} onclick={() => save(moved(list, index, -1))}>
-                <ArrowUp size={24} aria-hidden="true" />
+                <ArrowUp size={34} aria-hidden="true" />
               </button>
               <button class="step" aria-label="Descendre {item.symbol}" data-testid="mk-down-{item.id}" disabled={index === items.length - 1} onclick={() => save(moved(list, index, 1))}>
-                <ArrowDown size={24} aria-hidden="true" />
+                <ArrowDown size={34} aria-hidden="true" />
               </button>
               <button class="step remove" aria-label="Retirer {item.symbol}" data-testid="mk-remove-{item.id}" onclick={() => save(list.filter((_, i) => i !== index))}>
-                <X size={24} aria-hidden="true" />
+                <X size={34} aria-hidden="true" />
               </button>
             </div>
           {/each}
         </div>
       </section>
-    </div>
+    {/if}
   </div>
 {/if}
 
 <style>
+  /* Plein écran sous la barre du haut, un volet à la fois (texte doublé). */
   .overlay {
     position: fixed;
     inset: var(--topbar) 0 0 0;
     z-index: 30;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 10px 20px 14px;
+    gap: 8px;
+    padding: 8px 16px 10px;
     background: var(--bg);
   }
   header {
+    flex: none;
     display: flex;
     align-items: center;
-    gap: 16px;
-  }
-  h1 {
-    flex: 1 1 0;
-    font-size: var(--fs-title);
-    font-weight: 700;
-  }
-  .money {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .money .dim {
-    margin-right: 4px;
-    font-size: var(--fs-small);
-  }
-  .cols {
-    flex: 1 1 0;
-    min-height: 0;
-    display: grid;
-    grid-template-columns: 1.15fr 1fr;
+    justify-content: space-between;
     gap: 12px;
   }
-  .card {
+  .tabs {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    flex-direction: column;
-    gap: 10px;
-    min-height: 0;
-    padding: 12px 14px 10px;
+    gap: 8px;
   }
-  .card > h2 {
-    margin-bottom: 0;
-  }
-  .seg {
-    height: 48px;
-    min-width: 76px;
+  .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: var(--tap);
     padding: 0 16px;
     border-radius: 12px;
     background: var(--surface-2);
     border: 1px solid var(--line);
     font-weight: 600;
     text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .seg.wide {
+  .tab.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .card {
     flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+  .seg {
+    min-height: var(--tap);
+    min-width: 120px;
+    padding: 0 22px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
   }
   .seg.on {
     background: var(--accent-soft);
@@ -363,10 +377,12 @@
     color: var(--accent);
   }
   .kinds {
+    flex: none;
     display: flex;
     gap: 8px;
   }
   .entry {
+    flex: none;
     display: flex;
     gap: 8px;
   }
@@ -381,16 +397,26 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .money {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .money .dim {
+    margin-right: 6px;
+    font-size: var(--fs-small);
+  }
   .chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
   }
   .chip-btn {
-    min-width: 72px;
-    height: 48px;
-    padding: 0 14px;
-    border-radius: 24px;
+    min-width: 100px;
+    height: 64px;
+    padding: 0 22px;
+    border-radius: 32px;
     background: var(--surface-2);
     border: 1px solid var(--line);
     font-weight: 600;
@@ -401,7 +427,7 @@
   }
   .result {
     flex: 1 1 0;
-    min-height: 64px;
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -412,8 +438,8 @@
   .hit {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 60px;
+    gap: 12px;
+    min-height: 84px;
     border-top: 1px solid var(--line);
   }
   .hit:first-child {
@@ -428,7 +454,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 6px 6px 12px;
+    padding: 8px 8px 8px 16px;
     border-radius: var(--radius-s);
     background: var(--accent-soft);
     border: 1px solid var(--accent);
@@ -438,7 +464,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    line-height: 1.2;
+    line-height: 1.15;
   }
   .who strong {
     font-size: var(--fs-small);
@@ -448,7 +474,7 @@
     text-overflow: ellipsis;
   }
   .who small {
-    font-size: var(--fs-cap);
+    font-size: calc(13px * var(--ts));
     color: var(--text-2);
     white-space: nowrap;
     overflow: hidden;
@@ -457,14 +483,14 @@
   .problem {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 10px;
     color: var(--warn);
     font-size: var(--fs-small);
-    line-height: 1.3;
+    line-height: 1.25;
   }
   .problem :global(svg) {
     flex: none;
-    margin-top: 2px;
+    margin-top: 4px;
   }
   .list {
     flex: 1 1 0;
@@ -475,8 +501,8 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 60px;
+    gap: 12px;
+    min-height: 84px;
     border-top: 1px solid var(--line);
   }
   .row:first-child {
@@ -486,8 +512,8 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
+    width: var(--tap);
+    height: 64px;
     border-radius: 12px;
     background: var(--surface-3);
   }

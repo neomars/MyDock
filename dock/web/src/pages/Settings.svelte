@@ -161,7 +161,7 @@
           disabled={pairingUi.busy || !portalReady(portal)}
           onclick={() => void pairingUi.open()}
         >
-          <Link2 size={26} aria-hidden="true" />
+          <Link2 size={36} aria-hidden="true" />
           {isPaired(dock) ? 'Associer un autre PC…' : 'Associer un PC…'}
         </button>
         {#if portal && !portalReady(portal)}
@@ -203,12 +203,12 @@
       {/if}
       <div class="test">
         <button class="btn primary" data-testid="test-connection" disabled={test.busy} onclick={testConnection}>
-          <PlugZap size={26} aria-hidden="true" />
+          <PlugZap size={36} aria-hidden="true" />
           {test.busy ? 'Test en cours…' : 'Tester la connexion'}
         </button>
         {#if test.text}
           <span class="result" class:ok={test.ok} class:ko={!test.ok} data-testid="test-result">
-            {#if test.ok}<CircleCheck size={24} />{:else}<CircleAlert size={24} />{/if}
+            {#if test.ok}<CircleCheck size={34} />{:else}<CircleAlert size={34} />{/if}
             {test.text}
           </span>
         {/if}
@@ -270,6 +270,7 @@
     <section class="card" data-testid="settings-pages">
       <h2>Pages du dock</h2>
       <p data-testid="pages-count">{pagesLine}</p>
+      <p class="dim small">Chaque page visible est un gros bouton de l'accueil. Depuis une page, un balayage de gauche à droite y ramène.</p>
       <button class="btn" data-testid="choose-pages" onclick={() => pagesUi.edit()}>
         Choisir les pages et leur ordre…
       </button>
@@ -327,7 +328,7 @@
     <section class="card" data-testid="settings-latency">
       <h2>Latence appui → PC</h2>
       <button class="btn" data-testid="measure-latency" disabled={latency.busy} onclick={measureLatency}>
-        <Gauge size={26} aria-hidden="true" />
+        <Gauge size={36} aria-hidden="true" />
         {latency.busy ? 'Mesure en cours…' : 'Mesurer (20 essais)'}
       </button>
       {#if latency.done}
@@ -380,33 +381,35 @@
 </div>
 
 <style>
+  /* Texte doublé : une seule colonne, les cartes les unes sous les autres ; dans une ligne de réglage le libellé
+     passe au-dessus, la valeur et son bouton dessous. */
   .grid {
-    display: grid;
-    grid-template-columns: 1.15fr 1fr;
-    gap: 16px;
-    align-items: start;
-  }
-  .col {
     display: flex;
     flex-direction: column;
     gap: 16px;
   }
+  .col {
+    display: contents;
+  }
   .setting {
     display: grid;
-    grid-template-columns: 100px 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 12px;
-    min-height: 64px;
+    gap: 2px 14px;
+    padding: 6px 0 10px;
   }
   .setting + .setting {
     border-top: 1px solid var(--line);
   }
+  .setting .label {
+    grid-column: 1 / -1;
+  }
   .setting .btn {
-    min-width: 156px;
+    min-width: 200px;
   }
   .label {
     color: var(--text-3);
-    font-size: var(--fs-small);
+    font-size: var(--fs-cap);
   }
   .value {
     overflow: hidden;
@@ -449,21 +452,21 @@
     margin: 0;
   }
   .seg {
-    height: 48px;
-    min-width: 76px;
-    padding: 0 16px;
-    border-radius: 12px;
+    height: var(--tap);
+    min-width: 110px;
+    padding: 0 20px;
+    border-radius: 14px;
     background: var(--surface-2);
     border: 1px solid var(--line);
     font-weight: 600;
     text-align: center;
   }
   .pace.compact {
-    gap: 6px;
+    gap: 8px;
   }
   .pace.compact .seg {
     min-width: 0;
-    padding: 0 10px;
+    padding: 0 16px;
   }
   .trial {
     margin-top: 12px;
@@ -481,9 +484,12 @@
   }
   dl {
     display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 6px 16px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
     margin: 12px 0;
+  }
+  dd {
+    overflow-wrap: anywhere;
   }
   dl.stack {
     grid-template-columns: 1fr;
@@ -494,10 +500,10 @@
   }
   dt {
     color: var(--text-3);
-    font-size: var(--fs-small);
+    font-size: var(--fs-cap);
   }
   dd {
-    margin: 0;
+    margin: 0 0 10px;
   }
   .link {
     color: var(--accent);

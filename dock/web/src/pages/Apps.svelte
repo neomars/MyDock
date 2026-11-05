@@ -67,22 +67,22 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 52px;
-    margin-bottom: 8px;
+    min-height: calc(var(--tap) + 8px);
+    margin-bottom: 10px;
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
   }
   .tile {
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    min-height: 127px; /* la hauteur d'un nom sur deux lignes : une tuile ne change pas de taille en lançant */
-    padding: 10px 6px 6px;
+    gap: 8px;
+    min-height: 224px; /* la hauteur d'un nom sur deux lignes : une tuile ne change pas de taille en lançant */
+    padding: 14px 8px 8px;
     border-radius: var(--radius);
     background: var(--surface);
     border: 1px solid var(--line);
@@ -101,13 +101,13 @@
   .art {
     display: grid;
     place-items: center;
-    width: 64px;
-    height: 64px;
+    width: 104px;
+    height: 104px;
     overflow: hidden;
-    border-radius: 16px;
+    border-radius: 24px;
     background: hsl(var(--hue) 50% 28%);
     color: hsl(var(--hue) 85% 86%);
-    font-size: 30px;
+    font-size: calc(30px * var(--ts));
   }
   .art img {
     width: 100%;
@@ -132,7 +132,7 @@
     line-clamp: 1;
   }
   .state {
-    margin-top: -6px;
+    margin-top: -8px;
     font-size: var(--fs-cap);
     font-weight: 700;
     line-height: 1.2;
@@ -156,6 +156,6 @@
     color: var(--text);
   }
   .empty p {
-    max-width: 560px;
+    max-width: 760px;
   }
 </style>

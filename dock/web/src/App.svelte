@@ -1,28 +1,31 @@
 <script lang="ts">
   import type { Component } from 'svelte'
   import { onMount } from 'svelte'
+  import { fade, fly } from 'svelte/transition'
   import AppPicker from './components/AppPicker.svelte'
   import ConfirmDialog from './components/ConfirmDialog.svelte'
   import DebugOverlay from './components/DebugOverlay.svelte'
+  import HomeScreen from './components/HomeScreen.svelte'
   import Keyboard from './components/Keyboard.svelte'
   import LazyPage from './components/LazyPage.svelte'
   import MarketsEditor from './components/MarketsEditor.svelte'
   import OfflineScreen from './components/OfflineScreen.svelte'
   import PagesEditor from './components/PagesEditor.svelte'
   import ScreenSleep from './components/ScreenSleep.svelte'
-  import TabBar from './components/TabBar.svelte'
   import Toast from './components/Toast.svelte'
   import TopBar from './components/TopBar.svelte'
-  import { pageById, shownPage, visiblePages } from './lib/pages'
+  import { takeReopen } from './lib/build'
+  import { PAGES, pageById } from './lib/pages'
   import { justPaired } from './lib/pairing'
   import type { PageId } from './lib/protocol'
   import { sock } from './lib/socket.svelte'
+  import { swipeRight } from './lib/swipe'
   import { notify } from './lib/toast.svelte'
   import { wakeDone } from './lib/wake.svelte'
 
   const debug = new URLSearchParams(location.search).has('debug')
 
-  // Une page par onglet : le compilateur refuse qu'il en manque une.
+  // Une page par bouton de l'accueil : le compilateur refuse qu'il en manque une.
   const loaders: Record<PageId, () => Promise<{ default: Component }>> = {
     music: () => import('./pages/Music.svelte'),
     sound: () => import('./pages/Sound.svelte'),
@@ -35,15 +38,26 @@
     settings: () => import('./pages/Settings.svelte'),
   }
 
-  const pages = $derived(visiblePages(sock.ui?.order ?? [], sock.ui?.hidden ?? []))
-  let selected = $state<PageId | null>(null)
-  const currentId = $derived<PageId>(shownPage(selected ?? sock.ui?.last_page ?? 'system', pages))
-  const current = $derived(pageById(currentId))
-
-  function select(id: PageId): void {
-    selected = id
-    void sock.act('dock.ui.set', { last_page: id })
+  // Le menu principal (l'accueil, des gros boutons) ou une page. On revient à l'accueil par le bouton de la barre du
+  // haut ou par un balayage vers la droite ; on y démarre toujours (un dock qui redémarre n'ouvre pas une page au
+  // hasard), sauf juste après le rechargement qui répare l'écran d'une mise à jour : la page touchée se rouvre.
+  function firstView(): 'home' | PageId {
+    const id = takeReopen()
+    return PAGES.find((page) => page.id === id)?.id ?? 'home'
   }
+  let view = $state<'home' | PageId>(firstView())
+  const current = $derived(view === 'home' ? null : pageById(view))
+
+  function open(id: PageId): void {
+    view = id
+  }
+
+  function goHome(): void {
+    view = 'home'
+  }
+
+  // Les glissements des pages (de 0 à 190 ms) : aucun si la personne a demandé moins de mouvement.
+  const motion = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1
 
   // La barre du haut montre toujours le nom du PC (« host ») et le mini-lecteur (« music ») : on s'abonne
   // à ces deux thèmes en permanence ; les pages suivent les autres (system, procs…) tant qu'elles sont ouvertes.
@@ -79,26 +93,38 @@
 </script>
 
 <div class="app">
-  <TopBar onOpenMusic={() => select('music')} />
+  <TopBar onOpenMusic={() => open('music')} showHome={view !== 'home'} onHome={goHome} />
 
-  <main class="page" data-testid="page-{currentId}">
+  <div class="stage">
     {#if dockLost}
-      <section class="lost" data-testid="dock-lost">
+      <section class="layer lost" data-testid="dock-lost">
         <h1>Dock injoignable</h1>
         <p class="muted">Le serveur du dock ne répond plus. Reconnexion automatique…</p>
       </section>
     {:else if !sock.link}
       <!-- démarrage : les premiers instantanés arrivent en quelques millisecondes -->
-    {:else if current.needsPc && !sock.connected}
-      <OfflineScreen onSettings={() => select('settings')} />
+    {:else if view === 'home' || !current}
+      <div class="layer" in:fly={{ x: -60, duration: 170 * motion }} out:fade={{ duration: 120 * motion }}>
+        <HomeScreen onOpen={open} />
+      </div>
     {:else}
-      {#key currentId}
-        <LazyPage load={loaders[currentId]} />
-      {/key}
+      <main
+        class="layer page"
+        data-testid="page-{view}"
+        use:swipeRight={goHome}
+        in:fly={{ x: 90, duration: 190 * motion }}
+        out:fly={{ x: 90, duration: 160 * motion }}
+      >
+        {#if current.needsPc && !sock.connected}
+          <OfflineScreen onSettings={() => open('settings')} />
+        {:else}
+          {#key view}
+            <LazyPage load={loaders[view]} page={view} />
+          {/key}
+        {/if}
+      </main>
     {/if}
-  </main>
-
-  <TabBar {pages} current={currentId} onSelect={select} />
+  </div>
 </div>
 
 <AppPicker />
@@ -113,17 +139,33 @@
 <style>
   .app {
     display: grid;
-    grid-template-rows: var(--topbar) minmax(0, 1fr) var(--tabbar);
+    /* « minmax(0, 1fr) » et non « auto » : la colonne ne s'élargit jamais pour son contenu (la barre du haut, une page). */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--topbar) minmax(0, 1fr);
     height: 100%;
+  }
+  /* L'accueil et la page se partagent la même place : pendant un glissement, les deux sont là. */
+  .stage {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .layer {
+    grid-area: 1 / 1;
+    min-width: 0;
+    min-height: 0;
   }
   .page {
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 12px 20px 14px;
+    padding: 14px 20px 16px;
     overscroll-behavior: contain;
+    /* Le défilement vertical reste au navigateur ; le balayage vers la droite est à nous (voir lib/swipe.ts). */
+    touch-action: pan-y;
   }
   .lost {
-    height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;

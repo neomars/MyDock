@@ -670,6 +670,29 @@ async def test_changing_the_default_output_and_microphone():
         await eventually(lambda: published[-1]["default_source"] == mic)
 
 
+class EarlyEventPactl(DemoPactl):
+    """Annonce le changement de sortie par défaut avant de le refléter, et sans nouvel événement ensuite (PipeWire
+    le fait parfois : le relevé qui suit l'annonce montre encore l'ancienne sortie)."""
+
+    async def command(self, *args: str) -> None:
+        if args[0] != "set-default-sink":
+            await super().command(*args)
+            return
+        self.commands.append(args)
+        self._emit("change", "server", 0)  # l'annonce arrive d'abord…
+        await asyncio.sleep(0.1)
+        self.default_sink = args[1]  # …le changement n'est reflété qu'après, sans autre événement
+
+
+async def test_the_default_output_is_read_again_when_the_server_announces_it_too_early():
+    async with running(EarlyEventPactl()) as (provider, _pactl, published):
+        await eventually(lambda: published)
+        target = "bluez_output.80_C3_BA_12_34_56.1"
+        await provider.set_default("sink", target)
+        # Sans nouveau relevé, l'écran garderait l'ancienne sortie : aucun autre événement n'arrive.
+        await eventually(lambda: published[-1]["default_sink"] == target, timeout=3)
+
+
 @pytest.mark.parametrize(
     ("kind", "ident"),
     [

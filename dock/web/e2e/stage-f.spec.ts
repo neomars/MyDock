@@ -2,10 +2,10 @@
 // -> vrai agent de démonstration (aucun ordre n'éteint rien : le mode démo répond sans rien faire).
 
 import type { Page } from '@playwright/test'
-import { expect, shot, test } from './fixtures'
+import { expect, goHome, openPage, shot, test, tileOrder } from './fixtures'
 
 async function openPower(dock: Page): Promise<void> {
-  await dock.getByTestId('tab-power').tap()
+  await openPage(dock, 'power')
   await expect(dock.getByTestId('power-card')).toBeVisible()
   await expect(dock.getByTestId('power-poweroff')).toBeEnabled() // les droits sont arrivés
 }
@@ -89,20 +89,22 @@ test('Alimentation : PC éteint, les commandes sont grisées et le réveil reste
 
 // --- Réglages : pages visibles et ordre ------------------------------------------------------------------
 
-async function tabsShown(page: Page): Promise<string[]> {
-  return page.locator('[role=tablist][aria-label="Pages"] [role=tab]').evaluateAll((tabs) => tabs.map((t) => (t.getAttribute('data-testid') ?? '').replace('tab-', '')))
+/** Les boutons de l'accueil dans l'ordre : on repasse par l'accueil si une page est affichée. */
+async function tilesShown(page: Page): Promise<string[]> {
+  if (!(await page.getByTestId('home').isVisible())) await goHome(page)
+  return tileOrder(page)
 }
 
 async function openPagesEditor(dock: Page): Promise<void> {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('choose-pages').tap()
   await expect(dock.getByTestId('pages-editor')).toBeVisible()
 }
 
-const DEFAULT_TABS = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings']
+const DEFAULT_TILES = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings']
 
-test('Réglages : cacher une page la retire de la barre, et le dock s’en souvient après un rechargement', async ({ dock }) => {
-  expect(await tabsShown(dock)).toEqual(DEFAULT_TABS)
+test('Réglages : cacher une page retire son bouton de l’accueil, et le dock s’en souvient après un rechargement', async ({ dock }) => {
+  expect(await tilesShown(dock)).toEqual(DEFAULT_TILES)
   await openPagesEditor(dock)
   await dock.getByTestId('page-toggle-steam').tap()
   await dock.getByTestId('page-toggle-office').tap()
@@ -112,21 +114,21 @@ test('Réglages : cacher une page la retire de la barre, et le dock s’en souvi
   await dock.getByTestId('pages-done').tap()
   await expect(dock.getByTestId('pages-count')).toHaveText('7 pages visibles sur 9 (cachées : Steam, Office).')
   await shot(dock, '10-reglages-pages', 'f')
-  expect(await tabsShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'power', 'settings'])
+  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'power', 'settings'])
 
   await dock.reload() // c'est le Pi qui garde le choix, pas le navigateur
-  await expect(dock.getByTestId('tab-settings')).toBeVisible()
-  expect(await tabsShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'power', 'settings'])
+  await expect(dock.getByTestId('tile-settings')).toBeVisible()
+  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'power', 'settings'])
 })
 
-test('Réglages : monter une page déplace son onglet, « ordre d’origine » remet tout', async ({ dock }) => {
+test('Réglages : monter une page déplace son bouton, « ordre d’origine » remet tout', async ({ dock }) => {
   await openPagesEditor(dock)
   await dock.getByTestId('page-up-power').tap()
   await dock.getByTestId('page-up-power').tap()
   await expect(dock.getByTestId('page-row-markets')).toContainText('7') // Bourse est descendue d'un cran
-  expect(await tabsShown(dock)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'power', 'markets', 'system', 'settings'])
+  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'power', 'markets', 'system', 'settings'])
   await dock.getByTestId('pages-reset').tap()
-  await expect.poll(() => tabsShown(dock)).toEqual(DEFAULT_TABS)
+  await expect.poll(() => tilesShown(dock)).toEqual(DEFAULT_TILES)
   await expect(dock.getByTestId('pages-reset')).toBeDisabled()
 })
 
@@ -137,8 +139,10 @@ test('Réglages : on ne peut pas cacher les Réglages, il n’y aurait plus de r
     await dock.getByTestId(`page-toggle-${id}`).tap()
   }
   await expect(dock.getByTestId('pages-summary')).toContainText('1 page visible sur 9')
-  expect(await tabsShown(dock)).toEqual(['settings'])
+  expect(await tilesShown(dock)).toEqual(['settings'])
   await dock.getByTestId('pages-done').tap()
+  await expect(dock.getByTestId('tile-settings')).toBeVisible() // il reste un bouton : celui des Réglages
+  await dock.getByTestId('tile-settings').tap()
   await expect(dock.getByTestId('page-settings')).toBeVisible() // et la page reste utilisable
 })
 
@@ -151,7 +155,7 @@ async function centerOf(page: Page, testId: string): Promise<{ x: number; y: num
 }
 
 test('Réglages : la durée de veille se choisit, le dock la garde et la donne au script du Pi', async ({ dock, stack }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('sleep-0')).toHaveAttribute('aria-pressed', 'true') // jamais, tant qu'on ne l'a pas demandé
   await expect(dock.getByTestId('screen-note')).toHaveText("L'écran reste allumé.")
   const read = async () => (await dock.request.get(new URL('/api/screen', stack.url).toString())).json()
@@ -164,12 +168,13 @@ test('Réglages : la durée de veille se choisit, le dock la garde et la donne a
   await shot(dock, '11-reglage-ecran', 'f')
 
   await dock.reload() // le Pi garde le choix, pas le navigateur
+  await openPage(dock, 'settings')
   await expect(dock.getByTestId('sleep-300')).toHaveAttribute('aria-pressed', 'true')
 })
 
 test('Veille : l’écran noircit après l’inactivité, et le premier toucher ne déclenche rien', async ({ dock }) => {
   await dock.clock.install() // le temps est maintenant à nous : on avance d'une minute en un instant
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('sleep-60').tap()
   await expect(dock.getByTestId('sleep-60')).toHaveAttribute('aria-pressed', 'true')
   await expect(dock.getByTestId('screen-sleep')).toHaveCount(0)
@@ -182,30 +187,31 @@ test('Veille : l’écran noircit après l’inactivité, et le premier toucher 
   await expect(veil).toHaveCSS('background-color', 'rgb(0, 0, 0)')
   await shot(dock, '12-ecran-eteint', 'f')
 
-  // On touche l'écran noir juste là où se trouve l'onglet Alimentation : il ne doit rien ouvrir.
-  const { x, y } = await centerOf(dock, 'tab-power').catch(() => ({ x: 805, y: 565 })) // sous le voile : le centre reste lisible
+  // On touche l'écran noir juste là où se trouve le bouton « Jamais » (la page est défilée jusqu'aux durées de veille) :
+  // il ne doit rien changer.
+  const { x, y } = await centerOf(dock, 'sleep-0') // sous le voile : le centre reste lisible
   await dock.touchscreen.tap(x, y)
   await expect(veil).toHaveAttribute('data-phase', 'waking')
   await expect(veil).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)') // l'image est déjà revenue
   await dock.clock.fastForward(600)
   await expect(veil).toHaveCount(0)
   await expect(dock.getByTestId('page-settings')).toBeVisible()
-  await expect(dock.getByTestId('page-power')).toHaveCount(0) // le toucher n'a atteint rien d'autre que le voile
+  await expect(dock.getByTestId('sleep-60')).toHaveAttribute('aria-pressed', 'true') // le toucher n'a atteint rien d'autre que le voile
 
   // Le toucher suivant, lui, agit normalement.
-  await dock.getByTestId('tab-power').tap()
+  await openPage(dock, 'power')
   await expect(dock.getByTestId('page-power')).toBeVisible()
 })
 
 test('Veille : chaque toucher repousse l’extinction', async ({ dock }) => {
   await dock.clock.install()
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('sleep-60').tap()
   await expect(dock.getByTestId('sleep-60')).toHaveAttribute('aria-pressed', 'true')
   for (let i = 0; i < 3; i++) {
     await dock.clock.fastForward(45_000) // 135 s au total, mais jamais 60 s sans toucher
-    await dock.getByTestId('tab-power').tap()
-    await dock.getByTestId('tab-settings').tap()
+    await openPage(dock, 'power')
+    await openPage(dock, 'settings')
   }
   await expect(dock.getByTestId('screen-sleep')).toHaveCount(0)
   await dock.clock.fastForward(65_000)
@@ -213,7 +219,7 @@ test('Veille : chaque toucher repousse l’extinction', async ({ dock }) => {
 })
 
 test('Veille : « éteindre maintenant » sert d’essai, et un toucher rallume', async ({ dock }) => {
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await dock.getByTestId('sleep-now').tap()
   const veil = dock.getByTestId('screen-sleep')
   await expect(veil).toHaveAttribute('data-phase', 'asleep')
@@ -224,7 +230,7 @@ test('Veille : « éteindre maintenant » sert d’essai, et un toucher rallume'
 
 test('Veille : sans réglage choisi, l’écran ne s’éteint jamais tout seul', async ({ dock }) => {
   await dock.clock.install()
-  await dock.getByTestId('tab-power').tap()
+  await openPage(dock, 'power')
   await dock.clock.fastForward(3 * 3_600_000)
   await expect(dock.getByTestId('screen-sleep')).toHaveCount(0)
   await expect(dock.getByTestId('power-card')).toBeVisible()

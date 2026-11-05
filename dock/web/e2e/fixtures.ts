@@ -133,12 +133,56 @@ export const test = base.extend<{
     })
     page.on('pageerror', (error) => consoleProblems.push(`exception: ${error.message}`))
     await page.goto(stack.url)
-    await expect(page.getByTestId('system-host')).toBeVisible()
+    await expect(page.getByTestId('home')).toBeVisible()
     await use(page)
   },
 })
 
 export { expect }
+
+/**
+ * Ouvre une page depuis l'accueil (le bouton `tile-<id>`). Si une autre page est déjà affichée, on repasse
+ * d'abord par l'accueil avec le bouton de la barre du haut : c'est le chemin d'une vraie personne.
+ */
+export async function openPage(page: Page, id: string): Promise<void> {
+  const home = page.getByTestId('home')
+  if (!(await home.isVisible())) await goHome(page)
+  await page.getByTestId(`tile-${id}`).tap()
+  await expect(page.getByTestId(`page-${id}`)).toBeVisible()
+  await expect(home).toHaveCount(0) // le fondu de l'accueil est terminé : plus rien ne le recouvre ni ne le dédouble
+}
+
+/** Revient à l'accueil par le bouton de la barre du haut. */
+export async function goHome(page: Page): Promise<void> {
+  await page.getByTestId('home-back').tap()
+  await expect(page.getByTestId('home')).toBeVisible()
+  await expect(page.locator('main.page')).toHaveCount(0)
+}
+
+/** Les pages de l'accueil, dans l'ordre des boutons (de gauche à droite, de haut en bas). */
+export async function tileOrder(page: Page): Promise<string[]> {
+  return page
+    .locator('[data-testid="home-grid"] button[data-testid^="tile-"]')
+    .evaluateAll((tiles) => tiles.map((tile) => (tile.getAttribute('data-testid') ?? '').replace('tile-', '')))
+}
+
+/**
+ * Un vrai balayage tactile (événements du protocole DevTools, pas un simple clic) : le doigt part de (x0, y0), va en
+ * (x1, y1) en `steps` étapes d'environ 16 ms. Les événements touchent la page comme ceux de l'écran du Pi.
+ */
+export async function swipe(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, steps = 10): Promise<void> {
+  const cdp = await page.context().newCDPSession(page)
+  const point = (x: number, y: number) => [{ x, y, id: 1 }]
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: point(from.x, from.y) })
+  for (let i = 1; i <= steps; i++) {
+    const x = from.x + ((to.x - from.x) * i) / steps
+    const y = from.y + ((to.y - from.y) * i) / steps
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x, y) })
+    await page.waitForTimeout(16)
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  await page.waitForTimeout(60) // le relâchement arrive à la page avant qu'on rende la main (détacher la session le perdrait)
+}
 
 /**
  * Simule la mise à jour du paquet : tous les fichiers dont le nom porte une empreinte (« Music-B9amGNjk.js »)
@@ -165,16 +209,19 @@ export function rehashInterface(dir: string): void {
 
 /**
  * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
- * MYDOCK_SHOTS=g ne refait que les captures de l'étape g, MYDOCK_SHOTS=a, b, c, d, e ou f celles des étapes
+ * MYDOCK_SHOTS=h ne refait que les captures de l'étape h, MYDOCK_SHOTS=a, b, c, d, e, f ou g celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)
   fs.mkdirSync(dir, { recursive: true })
   await page.screenshot({ path: path.join(dir, `${name}.png`) })
 }
+
+/** Diamètre de la poignée des curseurs (voir Slider.svelte) : la course utile de la piste est réduite d'autant. */
+export const THUMB = { md: 44, lg: 52 } as const
 
 /** Tape un texte sur le clavier tactile, touche par touche (vrais appuis tactiles). */
 export async function typeOnKeyboard(page: Page, text: string): Promise<void> {

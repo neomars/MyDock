@@ -1,7 +1,7 @@
 // Étape b : pages Système et Musique, mini-lecteur. Vrai Chromium 1024×600 tactile -> vrai dock -> vrai agent de démonstration.
 
 import type { Page } from '@playwright/test'
-import { expect, shot, test } from './fixtures'
+import { expect, openPage, shot, test } from './fixtures'
 
 /** Secondes d'une durée « 3:42 » ou « 1:02:15 ». */
 const seconds = (text: string): number =>
@@ -12,13 +12,14 @@ const seconds = (text: string): number =>
     .reduce((total, part) => total * 60 + part, 0)
 
 async function openMusic(dock: Page): Promise<void> {
-  await dock.getByTestId('tab-music').tap()
+  await openPage(dock, 'music')
   await expect(dock.getByTestId('music-player')).toBeVisible()
 }
 
 // --- Système -----------------------------------------------------------------------------------
 
 test('Système : tuiles, graphique de 60 s, cœurs, stockage et batterie', async ({ dock }) => {
+  await openPage(dock, 'system')
   await expect(dock.getByTestId('system-page')).toBeVisible()
   await expect(dock.getByTestId('cpu-value')).toContainText('%')
   await expect(dock.getByTestId('tile-mem')).toContainText('/ 32 Go')
@@ -40,6 +41,7 @@ test('Système : tuiles, graphique de 60 s, cœurs, stockage et batterie', async
 })
 
 test('Système : le graphique passe de la charge au réseau', async ({ dock }) => {
+  await openPage(dock, 'system')
   await expect(dock.getByTestId('chart-card')).toContainText('Processeur')
   await dock.getByTestId('view-net').tap()
   await expect(dock.getByTestId('chart-card')).toContainText('Réception')
@@ -50,12 +52,14 @@ test('Système : le graphique passe de la charge au réseau', async ({ dock }) =
 })
 
 test('Système : l’historique grandit seconde après seconde', async ({ dock }) => {
+  await openPage(dock, 'system')
   const count = async () => ((await dock.getByTestId('chart-line').first().getAttribute('points')) ?? '').split(' ').length
   const before = await count()
   await expect.poll(count, { timeout: 8_000 }).toBeGreaterThan(before)
 })
 
 test('Système : les processus du système n’ont pas de bouton d’arrêt', async ({ dock }) => {
+  await openPage(dock, 'system')
   await expect(dock.getByTestId('procs')).toContainText('brave')
   await expect(dock.getByTestId('kill-4101')).toBeVisible()
   await expect(dock.getByTestId('proc-2210')).toContainText('gnome-shell')
@@ -64,6 +68,7 @@ test('Système : les processus du système n’ont pas de bouton d’arrêt', as
 })
 
 test('Système : arrêter un processus demande confirmation (annuler ne fait rien, confirmer l’arrête)', async ({ dock }) => {
+  await openPage(dock, 'system')
   await expect(dock.getByTestId('proc-9034')).toContainText('zoom-vide')
   await dock.getByTestId('kill-9034').tap()
   const dialog = dock.getByTestId('confirm')
@@ -83,6 +88,7 @@ test('Système : arrêter un processus demande confirmation (annuler ne fait rie
 })
 
 test('Système : les mesures disparaissent avec le PC et reviennent avec lui', async ({ dock, stack }) => {
+  await openPage(dock, 'system')
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toBeVisible({ timeout: 20_000 })
   await expect(dock.getByTestId('system-page')).toHaveCount(0)
@@ -169,10 +175,10 @@ test('Mini-lecteur : toujours dans la barre du haut, quelle que soit la page', a
   await expect(mini).toBeVisible()
   await expect(dock.getByTestId('mini-title')).toHaveText('Nuit blanche')
   for (const id of ['system', 'power', 'settings', 'markets']) {
-    await dock.getByTestId(`tab-${id}`).tap()
+    await openPage(dock, id)
     await expect(mini).toBeVisible()
   }
-  await dock.getByTestId('tab-settings').tap()
+  await openPage(dock, 'settings')
   await shot(dock, '06-mini-lecteur', 'b')
 
   await dock.getByTestId('mini-play').tap()
@@ -184,10 +190,10 @@ test('Mini-lecteur : toujours dans la barre du haut, quelle que soit la page', a
 
   await dock.getByTestId('mini-open').tap()
   await expect(dock.getByTestId('page-music')).toBeVisible()
-  await expect(dock.getByTestId('tab-music')).toHaveAttribute('aria-selected', 'true')
 })
 
 test('Musique : le mini-lecteur disparaît avec le PC', async ({ dock, stack }) => {
+  await openPage(dock, 'system')
   stack.pcOff()
   await expect(dock.getByTestId('offline-title')).toBeVisible({ timeout: 20_000 })
   await expect(dock.getByTestId('mini-player')).toHaveCount(0)

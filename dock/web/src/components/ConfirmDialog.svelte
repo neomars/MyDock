@@ -17,7 +17,7 @@
 {#if confirmState.open}
   <div class="scrim" role="presentation">
     <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" data-testid="confirm">
-      <TriangleAlert size={44} color="var(--warn)" aria-hidden="true" />
+      <TriangleAlert size={56} color="var(--warn)" aria-hidden="true" />
       <h2 id="confirm-title">{confirmState.label}</h2>
       <p class="muted">Cette action est sensible : confirme pour l'exécuter.</p>
       <p class="dim" data-testid="confirm-timer">Expire dans {formatCountdown(remaining)}</p>
@@ -30,34 +30,43 @@
 {/if}
 
 <style>
+  /* Texte doublé : la fenêtre prend presque toute la largeur ; si le libellé est très long elle défile, les deux boutons restent atteignables. */
   .scrim {
     position: fixed;
     inset: 0;
     z-index: 40;
     display: grid;
     place-items: center;
+    padding: 12px;
     background: rgb(0 0 0 / 0.62);
   }
   .dialog {
-    width: min(620px, calc(100vw - 48px));
+    width: min(920px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
-    padding: 28px 32px;
+    gap: 8px;
+    padding: 20px 28px;
     text-align: center;
     background: var(--surface-2);
     border: 1px solid var(--line);
     border-radius: 20px;
   }
   h2 {
-    font-size: var(--fs-title);
+    font-size: var(--fs);
     font-weight: 700;
+    line-height: 1.25;
+  }
+  p {
+    font-size: var(--fs-cap);
   }
   .actions {
     display: flex;
     gap: 16px;
-    margin-top: 14px;
+    margin-top: 8px;
     width: 100%;
   }
   .actions .btn {

@@ -61,6 +61,13 @@
   const masked = $derived(keyboard.secret && !keyboard.reveal)
   const shown = $derived(masked ? '•'.repeat(keyboard.value.length) : keyboard.value)
   const usable = (key: string) => isKeyAllowed(keyboard.kind, key)
+
+  // Un texte plus long que le champ (le jeton fait 43 caractères) : on montre toujours la fin, là où le curseur écrit.
+  let fieldEl = $state<HTMLElement>()
+  $effect(() => {
+    void shown
+    if (fieldEl) fieldEl.scrollLeft = fieldEl.scrollWidth
+  })
 </script>
 
 <svelte:window onkeydown={onKeydown} onpointerup={stopRepeat} onpointercancel={stopRepeat} />
@@ -73,7 +80,14 @@
           <strong>{keyboard.title}</strong>
           {#if keyboard.hint}<span class="dim">{keyboard.hint}</span>{/if}
         </div>
-        <div class="field mono" data-testid="keyboard-value">
+        <button class="btn" data-testid="keyboard-cancel" onclick={() => finish(null)}>Annuler</button>
+        <button class="btn primary" data-testid="keyboard-ok" onclick={() => finish(keyboard.value)}>
+          <Check size={34} aria-hidden="true" /> Valider
+        </button>
+      </div>
+
+      <div class="entry">
+        <div class="field mono" data-testid="keyboard-value" bind:this={fieldEl}>
           <span class="text">{shown}</span><span class="caret"></span>
         </div>
         {#if keyboard.secret}
@@ -82,13 +96,9 @@
             aria-label={keyboard.reveal ? 'Masquer' : 'Afficher'}
             onclick={() => (keyboard.reveal = !keyboard.reveal)}
           >
-            {#if keyboard.reveal}<EyeOff size={26} />{:else}<Eye size={26} />{/if}
+            {#if keyboard.reveal}<EyeOff size={36} />{:else}<Eye size={36} />{/if}
           </button>
         {/if}
-        <button class="btn" data-testid="keyboard-cancel" onclick={() => finish(null)}>Annuler</button>
-        <button class="btn primary" data-testid="keyboard-ok" onclick={() => finish(keyboard.value)}>
-          <Check size={26} /> Valider
-        </button>
       </div>
 
       <div class="keys">
@@ -108,7 +118,7 @@
                 aria-pressed={keyboard.shift}
                 onpointerdown={down(() => (keyboard.shift = !keyboard.shift))}
               >
-                <ArrowBigUp size={26} />
+                <ArrowBigUp size={38} />
               </button>
             {/if}
             {#each letters as key (key)}
@@ -118,7 +128,7 @@
             {/each}
             {#if index === 2}
               <button class="key wide" aria-label="Effacer" onpointerdown={startBackspace}>
-                <Delete size={26} />
+                <Delete size={38} />
               </button>
             {/if}
           </div>
@@ -140,6 +150,7 @@
 {/if}
 
 <style>
+  /* Texte doublé : une barre (titre, Annuler, Valider), le champ sur toute la largeur, puis cinq rangées de touches. */
   .scrim {
     position: fixed;
     inset: 0;
@@ -150,7 +161,7 @@
   }
   .osk {
     width: 100%;
-    padding: 10px 12px 12px;
+    padding: 8px 12px 10px;
     background: var(--surface);
     border-top: 1px solid var(--line);
   }
@@ -158,49 +169,61 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
   .title {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    min-width: 150px;
-    max-width: 230px;
     font-size: var(--fs-small);
-    line-height: 1.2;
+    line-height: 1.15;
+  }
+  .title strong,
+  .title .dim {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .title .dim {
-    font-size: var(--fs-cap);
+    font-size: calc(13px * var(--ts));
+  }
+  .head .btn {
+    padding: 0 22px;
+  }
+  .entry {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
   }
   .field {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    height: 56px;
+    height: 64px;
     padding: 0 16px;
     background: var(--bg);
     border: 2px solid var(--accent);
     border-radius: 12px;
-    font-size: 26px;
+    font-size: calc(18px * var(--ts));
     overflow: hidden;
   }
   .text {
+    flex: none;
     white-space: pre;
-    overflow: hidden;
   }
   .caret {
     flex: none;
-    width: 2px;
-    height: 32px;
+    width: 3px;
+    height: 44px;
     margin-left: 2px;
     background: var(--accent);
   }
-  .head .btn {
-    padding: 0 18px;
-  }
-  .head .btn.icon {
+  .entry .btn.icon {
     padding: 0;
-    width: var(--tap);
+    width: 76px;
+    height: 64px;
   }
   .keys {
     display: flex;
@@ -214,13 +237,13 @@
   .key {
     flex: 1 1 0;
     min-width: 0;
-    height: 52px;
+    height: 58px;
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 10px;
     background: var(--surface-3);
-    font-size: 26px;
+    font-size: calc(17px * var(--ts));
     font-weight: 500;
   }
   .key:active:not(:disabled) {

@@ -88,10 +88,11 @@
   .status {
     display: flex;
     align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    margin-bottom: 8px;
-    padding: 0 14px;
+    gap: 10px 14px;
+    flex-wrap: wrap;
+    min-height: calc(var(--tap) + 8px);
+    margin-bottom: 12px;
+    padding: 8px 18px;
     border-radius: var(--radius-s);
     background: var(--surface);
     border: 1px solid var(--line);
@@ -99,8 +100,8 @@
   }
   .status i {
     flex: none;
-    width: 12px;
-    height: 12px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: var(--text-3);
   }
@@ -113,11 +114,12 @@
   }
   .count {
     margin-left: auto;
+    font-size: var(--fs-cap);
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
   }
   .game {
     position: relative;
@@ -155,14 +157,14 @@
   }
   .badge {
     position: absolute;
-    left: 6px;
-    right: 6px;
-    top: 6px;
-    padding: 2px 0;
+    left: 8px;
+    right: 8px;
+    top: 8px;
+    padding: 4px 0;
     border-radius: 999px;
     background: var(--accent);
     color: var(--accent-ink);
-    font-size: 14px;
+    font-size: calc(12px * var(--ts));
     font-weight: 700;
     text-align: center;
   }
@@ -184,6 +186,6 @@
     color: var(--text);
   }
   .empty p {
-    max-width: 600px;
+    max-width: 760px;
   }
 </style>

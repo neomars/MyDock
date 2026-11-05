@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 MAX_VOLUME = 100
 NORM = 65536  # 100 % pour PulseAudio et PipeWire
 COALESCE_SECONDS = 0.05  # regroupe les salves d'événements (un seul relevé par salve)
+NUDGE_SECONDS = 0.3  # nouveau relevé après un changement de sortie par défaut (voir `_nudge`)
 RETRY_SECONDS = 5.0
 COMMAND_TIMEOUT = 5.0
 STOP_TIMEOUT = 2.0
@@ -505,6 +506,9 @@ class AudioProvider(Provider):
         self._loaded = False
         self._write_lock = asyncio.Lock()
         self._wanted: dict[tuple[str, str], int] = {}
+        self._events: asyncio.Queue[tuple[str, str, int] | None] | None = (
+            None  # ceux de la session en cours
+        )
 
     # --- cycle de vie ---
 
@@ -523,6 +527,7 @@ class AudioProvider(Provider):
 
     async def _session(self, publish: Publish) -> None:
         events: asyncio.Queue[tuple[str, str, int] | None] = asyncio.Queue()
+        self._events = events
         async with self._pactl.subscribe() as lines:
             pump = asyncio.create_task(self._pump(lines, events))
             try:
@@ -537,6 +542,7 @@ class AudioProvider(Provider):
                         await self._refresh(dirty)
                         await publish(self.snapshot())
             finally:
+                self._events = None
                 pump.cancel()
                 await asyncio.gather(pump, return_exceptions=True)
 
@@ -663,6 +669,16 @@ class AudioProvider(Provider):
             target = await self._target(kind, ident)
             verb = "set-default-sink" if kind == "sink" else "set-default-source"
             await self._apply(verb, _address(kind, target))
+        self._nudge("server")
+
+    def _nudge(self, facility: str) -> None:
+        """Redemande un relevé un instant plus tard : PipeWire annonce parfois le changement de sortie par défaut
+        avant de le refléter, et l'écran garderait l'ancienne sortie jusqu'au prochain événement."""
+        events = self._events
+        if events is not None:
+            asyncio.get_running_loop().call_later(
+                NUDGE_SECONDS, events.put_nowait, ("change", facility, 0)
+            )
 
 
 _PART_OF_KIND = {"sink": "sinks", "source": "sources", "app": "inputs"}

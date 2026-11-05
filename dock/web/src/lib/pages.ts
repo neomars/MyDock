@@ -1,4 +1,4 @@
-// Les neuf pages du dock, dans l'ordre par défaut de la barre d'onglets.
+// Les neuf pages du dock, dans l'ordre par défaut de l'écran d'accueil (un gros bouton chacune).
 
 import Cpu from '@lucide/svelte/icons/cpu'
 import FileText from '@lucide/svelte/icons/file-text'
@@ -14,7 +14,7 @@ import type { PageId } from './protocol'
 
 export interface PageInfo {
   id: PageId
-  /** Libellé court de l'onglet. */
+  /** Libellé court du bouton de l'accueil. */
   tab: string
   /** Titre de la page. */
   title: string
@@ -22,18 +22,21 @@ export interface PageInfo {
   icon: Component<any>
   /** Vrai : la page n'a de sens que PC allumé et connecté (sinon l'écran « PC hors ligne »). */
   needsPc: boolean
+  /** Les deux couleurs du bouton (du haut vers le bas) : une teinte par page, comme les touches d'un Stream Deck.
+   *  Le bas, où se lit le libellé en blanc, offre un contraste d'au moins 4,5 : 1 ; le haut, où se dessine l'icône, d'au moins 3 : 1. */
+  tone: { from: string; to: string }
 }
 
 export const PAGES: readonly PageInfo[] = [
-  { id: 'music', tab: 'Musique', title: 'Musique', icon: Music, needsPc: true },
-  { id: 'sound', tab: 'Son', title: 'Son', icon: SlidersVertical, needsPc: true },
-  { id: 'apps', tab: 'Applis', title: "Lanceur d'applications", icon: LayoutGrid, needsPc: true },
-  { id: 'steam', tab: 'Steam', title: 'Steam', icon: Gamepad2, needsPc: true },
-  { id: 'office', tab: 'Office', title: 'LibreOffice', icon: FileText, needsPc: true },
-  { id: 'markets', tab: 'Bourse', title: 'Bourse', icon: TrendingUp, needsPc: false },
-  { id: 'system', tab: 'Système', title: 'Système', icon: Cpu, needsPc: true },
-  { id: 'power', tab: 'Alimentation', title: 'Alimentation', icon: Power, needsPc: false },
-  { id: 'settings', tab: 'Réglages', title: 'Réglages', icon: Settings, needsPc: false },
+  { id: 'music', tab: 'Musique', title: 'Musique', icon: Music, needsPc: true, tone: { from: '#8b5cf6', to: '#5b21b6' } },
+  { id: 'sound', tab: 'Son', title: 'Son', icon: SlidersVertical, needsPc: true, tone: { from: '#3b82f6', to: '#1e40af' } },
+  { id: 'apps', tab: 'Applis', title: "Lanceur d'applications", icon: LayoutGrid, needsPc: true, tone: { from: '#ec4899', to: '#9d174d' } },
+  { id: 'steam', tab: 'Steam', title: 'Steam', icon: Gamepad2, needsPc: true, tone: { from: '#6366f1', to: '#312e81' } },
+  { id: 'office', tab: 'Office', title: 'LibreOffice', icon: FileText, needsPc: true, tone: { from: '#059669', to: '#065f46' } },
+  { id: 'markets', tab: 'Bourse', title: 'Bourse', icon: TrendingUp, needsPc: false, tone: { from: '#d97706', to: '#92400e' } },
+  { id: 'system', tab: 'Système', title: 'Système', icon: Cpu, needsPc: true, tone: { from: '#0891b2', to: '#155e75' } },
+  { id: 'power', tab: 'Alimentation', title: 'Alimentation', icon: Power, needsPc: false, tone: { from: '#ef4444', to: '#991b1b' } },
+  { id: 'settings', tab: 'Réglages', title: 'Réglages', icon: Settings, needsPc: false, tone: { from: '#64748b', to: '#334155' } },
 ]
 
 export const pageById = (id: PageId): PageInfo => PAGES.find((p) => p.id === id) ?? PAGES[0]
@@ -54,7 +57,7 @@ export function pageRows(order: PageId[], hidden: PageId[]): PageRow[] {
     .map((page) => ({ page, visible: page.id === 'settings' || !hidden.includes(page.id) }))
 }
 
-/** Pages visibles dans l'ordre choisi : ce que montre la barre d'onglets. */
+/** Pages visibles dans l'ordre choisi : un gros bouton de l'accueil chacune. */
 export function visiblePages(order: PageId[], hidden: PageId[]): PageInfo[] {
   return pageRows(order, hidden)
     .filter((row) => row.visible)
@@ -71,15 +74,10 @@ export function movePage(order: PageId[], hidden: PageId[], id: PageId, delta: -
   return ids
 }
 
-/** La liste des pages cachées une fois `id` caché ou remontré. Réglages ne se cache jamais : sans lui, plus de retour possible. */
+/** La liste des pages cachées une fois `id` caché ou remontré. Réglages ne se cache jamais : sans lui, plus moyen de les remettre. */
 export function toggleHidden(hidden: PageId[], id: PageId): PageId[] {
   if (id === 'settings') return hidden.filter((h) => h !== 'settings')
   return hidden.includes(id) ? hidden.filter((h) => h !== id) : [...hidden, id]
-}
-
-/** La page à montrer : celle demandée si elle est visible, sinon la première visible (une page cachée ne reste pas ouverte au démarrage). */
-export function shownPage(wanted: PageId, visible: PageInfo[]): PageId {
-  return visible.some((p) => p.id === wanted) || visible.length === 0 ? wanted : visible[0].id
 }
 
 /** « 7 pages visibles sur 9 (cachées : Steam, Office). » */
