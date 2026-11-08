@@ -1,3 +1,23 @@
+mydock-agent (1.3.0) unstable; urgency=medium
+
+  * Les applications lancées depuis le dock (Applis, Steam, Office, Spotify) ne sont plus des enfants de
+    l'agent : il demande au gestionnaire systemd de l'utilisateur de les lancer (« systemd-run --user »).
+    Elles héritaient de NoNewPrivileges, qui empêche un Snap (Spotify, Firefox…) de démarrer et prive
+    Electron, Chromium et Flatpak de leur bac à sable. Le durcissement de l'agent reste en place.
+    « mydock-agent doctor » vérifie ce que voit un programme lancé ainsi (section « Lancement des
+    programmes »).
+  * Spotify : « mydock-agent spotify login | logout | status » relie un compte (OAuth avec PKCE, sans
+    « client secret » ; le jeton reste sur le PC, dans ~/.config/mydock/spotify.toml, droits 600). Nouvelles
+    actions spotify.* (état, recherche, pages d'album, d'artiste et de playlist, bibliothèque, pochettes,
+    lancement de l'application, lecture) et music.shuffle / music.repeat (lecture aléatoire, répétition).
+    L'agent ne parle qu'à accounts.spotify.com et api.spotify.com, en https, sans suivre de redirection.
+  * « mydock-agent doctor » : nouvelle section « Spotify » (comment l'application est installée, compte
+    relié, droits accordés) ; elle ne modifie pas le jeton.
+  * La version suit celle du dock (1.3.0), dont la page « Musique » devient « Spotify » (voir le
+    changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Sun, 08 Nov 2026 19:00:00 +0000
+
 mydock-agent (1.2.0) unstable; urgency=medium
 
   * Son : après un changement de sortie (ou de micro) par défaut demandé depuis le dock, l'état est relu un

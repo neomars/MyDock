@@ -1,4 +1,4 @@
-// État de la musique pour toute l'interface : mini-lecteur de la barre du haut et page Musique.
+// État de la musique pour toute l'interface : mini-lecteur de la barre du haut et lecteur de la page Spotify.
 //
 // L'agent publie l'état des lecteurs seulement quand il change ; la position dans le morceau,
 // elle, avance toute seule : on la prolonge ici à partir de l'heure de réception de l'instantané.
@@ -6,7 +6,7 @@
 
 import { activePlayer, positionNow } from './music'
 import { pictureUrl } from './pictures.svelte'
-import type { MusicData, PlayerInfo } from './protocol'
+import type { LoopMode, MusicData, PlayerInfo } from './protocol'
 import { sock } from './socket.svelte'
 import { notify } from './toast.svelte'
 
@@ -66,6 +66,8 @@ class MusicStore {
   next = () => this.run('music.next')
   previous = () => this.run('music.previous')
   select = (id: string) => this.run('music.select', { player: id })
+  shuffle = (enabled: boolean) => this.run('music.shuffle', { enabled })
+  repeat = (mode: LoopMode) => this.run('music.repeat', { mode })
 
   async seek(positionMs: number): Promise<void> {
     if (await this.run('music.seek', { position_ms: positionMs })) await this.resync()

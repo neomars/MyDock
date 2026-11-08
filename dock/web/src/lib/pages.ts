@@ -4,12 +4,12 @@ import Cpu from '@lucide/svelte/icons/cpu'
 import FileText from '@lucide/svelte/icons/file-text'
 import Gamepad2 from '@lucide/svelte/icons/gamepad-2'
 import LayoutGrid from '@lucide/svelte/icons/layout-grid'
-import Music from '@lucide/svelte/icons/music'
 import Power from '@lucide/svelte/icons/power'
 import Settings from '@lucide/svelte/icons/settings'
 import SlidersVertical from '@lucide/svelte/icons/sliders-vertical'
 import TrendingUp from '@lucide/svelte/icons/trending-up'
 import type { Component } from 'svelte'
+import SpotifyIcon from '../components/SpotifyIcon.svelte'
 import type { PageId } from './protocol'
 
 export interface PageInfo {
@@ -28,7 +28,7 @@ export interface PageInfo {
 }
 
 export const PAGES: readonly PageInfo[] = [
-  { id: 'music', tab: 'Musique', title: 'Musique', icon: Music, needsPc: true, tone: { from: '#8b5cf6', to: '#5b21b6' } },
+  { id: 'music', tab: 'Spotify', title: 'Spotify', icon: SpotifyIcon, needsPc: true, tone: { from: '#16a34a', to: '#0b6b2e' } },
   { id: 'sound', tab: 'Son', title: 'Son', icon: SlidersVertical, needsPc: true, tone: { from: '#3b82f6', to: '#1e40af' } },
   { id: 'apps', tab: 'Applis', title: "Lanceur d'applications", icon: LayoutGrid, needsPc: true, tone: { from: '#ec4899', to: '#9d174d' } },
   { id: 'steam', tab: 'Steam', title: 'Steam', icon: Gamepad2, needsPc: true, tone: { from: '#6366f1', to: '#312e81' } },

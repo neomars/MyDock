@@ -26,10 +26,13 @@ from mydock_agent.doctor import (
     check_power,
     check_sensors,
     check_service,
+    check_spotify,
     check_steam,
     curl_check,
 )
 from mydock_agent.runtime import build_runtime
+from mydock_agent.spotify.auth import SCOPES, Credentials, TokenStore
+from mydock_agent.spotify.http import HttpError, HttpResponse
 from mydock_agent.testing import TOKEN, running_agent
 from mydock_common.auth import generate_token
 from mydock_common.report import Report
@@ -563,22 +566,47 @@ def test_a_pc_without_libreoffice_is_not_an_error(tmp_path):
     assert not report.failed
 
 
-def test_the_scope_check_reports_a_working_systemd_run(monkeypatch):
+def test_the_launch_check_reports_programs_started_outside_the_agent_sandbox(monkeypatch):
     calls = []
 
     def fake_run(command, **_kwargs):
         calls.append(command)
-        return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, "NoNewPrivs:\t0\n", "")
 
     monkeypatch.setattr(doctor.shutil, "which", lambda n: f"/usr/bin/{n}")
     monkeypatch.setattr(doctor.subprocess, "run", fake_run)
     report = Report()
     check_launch(report)
-    assert "systemd-run --user fonctionne" in report.render()
-    assert calls == [["systemd-run", "--user", "--scope", "--quiet", "--", "true"]]
+    text = report.render()
+    assert "systemd-run --user fonctionne" in text
+    assert "Snap" in text
+    assert not report.failed
+    # Un service du gestionnaire de l'utilisateur, pas un scope enfant du diagnostic : c'est ce qu'on veut voir.
+    assert calls[0][:6] == ["systemd-run", "--user", "--quiet", "--collect", "--pipe", "--"]
+    assert "--scope" not in calls[0]
+    assert calls[0][-2:] == ["NoNewPrivs", "/proc/self/status"]
 
 
-def test_the_scope_check_explains_a_failing_or_missing_systemd_run(monkeypatch):
+def test_the_launch_check_warns_when_a_launched_program_would_inherit_no_new_privileges(
+    monkeypatch,
+):
+    monkeypatch.setattr(doctor.shutil, "which", lambda n: f"/usr/bin/{n}")
+    monkeypatch.setattr(
+        doctor.subprocess,
+        "run",
+        lambda command, **_k: subprocess.CompletedProcess(command, 0, "NoNewPrivs:\t1\n", ""),
+    )
+    report = Report()
+    check_launch(report)
+    text = report.render()
+    assert "hérite de NoNewPrivileges" in text
+    assert "Snap" in text
+    assert (
+        not report.failed
+    )  # un avertissement : le diagnostic lui-même tourne peut-être hors de la session
+
+
+def test_the_launch_check_explains_a_failing_or_missing_systemd_run(monkeypatch):
     monkeypatch.setattr(doctor.shutil, "which", lambda _n: "/usr/bin/systemd-run")
     monkeypatch.setattr(
         doctor.subprocess,
@@ -733,3 +761,119 @@ def test_networks_are_not_probed_only_single_addresses():
     report = Report()
     check_dock(report, make_config("192.168.1.0/24"), fetch=lambda *a, **k: calls.append(a))
     assert calls == []
+
+
+# --- Spotify -----------------------------------------------------------------------------------------
+
+
+def spotify_apps(tmp_path, *, root="applications", name="spotify.desktop"):
+    folder = tmp_path / root
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_text("[Desktop Entry]\nType=Application\nName=Spotify\nExec=spotify %U\n")
+    return AppsProvider(directories=[folder], roots=[tmp_path], env={})
+
+
+def spotify_creds(**more):
+    values = {
+        "client_id": "0123456789abcdef0123456789abcdef",
+        "refresh_token": "SECRET-RENOUVELLEMENT",
+        "access_token": "SECRET-ACCES",
+        "expires_at": 10**12,
+        "scope": " ".join(SCOPES),
+        "user": "Marie",
+    }
+    values.update(more)
+    return Credentials(**values)
+
+
+class SpotifyTransport:
+    def __init__(self, status=200, body=b'{"display_name": "Marie"}'):
+        self.status, self.body, self.requests = status, body, []
+
+    def __call__(self, request, timeout):
+        self.requests.append(request)
+        if self.status == 0:
+            raise HttpError("URLError")
+        return HttpResponse(self.status, {}, self.body)
+
+
+def test_spotify_installed_as_a_package_a_snap_or_a_flatpak_is_named(tmp_path):
+    for root, name, kind in (
+        ("applications", "spotify.desktop", "paquet du système"),
+        ("snapd/desktop/applications", "spotify_spotify.desktop", "Snap"),
+        ("flatpak/exports/share/applications", "com.spotify.Client.desktop", "Flatpak"),
+    ):
+        report = Report()
+        folder = tmp_path / kind.replace(" ", "_")
+        check_spotify(
+            report,
+            spotify_apps(folder, root=root, name=name),
+            TokenStore(folder / "absent.toml"),
+        )
+        assert f"{name} ({kind})" in report.render()
+        assert not report.failed
+
+
+def test_spotify_not_installed_and_not_connected_are_not_errors(tmp_path):
+    report = Report()
+    check_spotify(
+        report,
+        AppsProvider(directories=[tmp_path / "absent"], roots=[tmp_path], env={}),
+        TokenStore(tmp_path / "absent.toml"),
+    )
+    text = report.render()
+    assert "n'est pas installée" in text
+    assert "mydock-agent spotify login --client-id ID" in text
+    assert not report.failed
+
+
+def test_a_connected_spotify_account_is_checked_without_touching_the_token_file(tmp_path):
+    store = TokenStore(tmp_path / "spotify.toml")
+    store.save(spotify_creds())
+    before = store.path.read_bytes()
+    transport = SpotifyTransport()
+    report = Report()
+    check_spotify(report, spotify_apps(tmp_path), store, transport, now=lambda: 1000.0)
+    text = report.render()
+    assert "Compte Spotify connecté : Marie" in text
+    assert "L'API de Spotify répond (compte « Marie »)" in text
+    assert "droits 600" in text
+    assert "SECRET" not in text  # jamais le jeton
+    assert store.path.read_bytes() == before
+    assert transport.requests[0].headers["Authorization"] == "Bearer SECRET-ACCES"
+
+
+def test_an_expired_spotify_token_is_not_renewed_by_the_diagnostic(tmp_path):
+    store = TokenStore(tmp_path / "spotify.toml")
+    store.save(spotify_creds(expires_at=10.0))
+    transport = SpotifyTransport()
+    report = Report()
+    check_spotify(report, spotify_apps(tmp_path), store, transport, now=lambda: 5000.0)
+    text = report.render()
+    assert "a expiré" in text
+    assert "spotify status --check" in text
+    assert (
+        transport.requests == []
+    )  # le diagnostic ne modifie rien et n'appelle pas Spotify pour rien
+
+
+def test_spotify_problems_are_warnings_with_the_fix(tmp_path):
+    store = TokenStore(tmp_path / "spotify.toml")
+    store.save(spotify_creds(scope="user-read-private"))
+    report = Report()
+    check_spotify(
+        report, spotify_apps(tmp_path), store, SpotifyTransport(403, b"{}"), now=lambda: 1.0
+    )
+    text = report.render()
+    assert "ne couvre pas toutes les autorisations" in text
+    assert "user-modify-playback-state" in text
+    assert "User Management" in text  # le refus de l'API, expliqué
+    assert not report.failed
+    report = Report()
+    check_spotify(report, spotify_apps(tmp_path), store, SpotifyTransport(0), now=lambda: 1.0)
+    assert "injoignable" in report.render()
+    store.path.chmod(0o644)
+    report = Report()
+    check_spotify(report, spotify_apps(tmp_path), store, SpotifyTransport(), now=lambda: 1.0)
+    assert "chmod 600" in report.render()
+    assert not report.failed

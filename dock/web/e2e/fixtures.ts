@@ -209,10 +209,10 @@ export function rehashInterface(dir: string): void {
 
 /**
  * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
- * MYDOCK_SHOTS=h ne refait que les captures de l'étape h, MYDOCK_SHOTS=a, b, c, d, e, f ou g celles des étapes
+ * MYDOCK_SHOTS=i ne refait que les captures de l'étape i, MYDOCK_SHOTS=a, b, c, d, e, f, g ou h celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)

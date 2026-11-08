@@ -56,6 +56,22 @@ from mydock_dock.wol import send_magic_packet
 log = logging.getLogger(__name__)
 
 MAX_INFLIGHT_ACTIONS = 32
+#: Combien de temps le dock attend la réponse de l'agent à une action du navigateur, en secondes.
+AGENT_ACT_TIMEOUT = 6.0
+#: Actions de l'agent qui peuvent durer (requêtes vers Spotify, lancement de l'application puis attente de son
+#: apparition) : leur préfixe -> délai. L'agent borne chacune lui-même (15 à 60 s) ; le dock attend un peu plus
+#: longtemps, pour que le message précis de l'agent arrive avant un « le PC n'a pas répondu à temps ».
+SLOW_AGENT_ACTS: dict[str, float] = {"spotify.": 70.0}
+
+
+def agent_act_timeout(name: str) -> float:
+    """Le délai d'attente de la réponse de l'agent pour cette action."""
+    for prefix, timeout in SLOW_AGENT_ACTS.items():
+        if name.startswith(prefix):
+            return timeout
+    return AGENT_ACT_TIMEOUT
+
+
 #: Thèmes que le dock suit tant qu'il est connecté à l'agent, même sans navigateur qui les demande :
 #: « host » (nom du PC) et « system » (l'agent garde l'historique de 60 s, la page Système l'affiche
 #: aussitôt ouverte). Les autres ne sont suivis que quand une page les montre.
@@ -469,7 +485,9 @@ class DockServer:
         if act.name.startswith("dock."):
             reply = await self.actions.invoke(act, ActionContext(conn.id, conn.peer))
         else:
-            reply = await self.link.request(act.name, act.params, confirm=act.confirm)
+            reply = await self.link.request(
+                act.name, act.params, confirm=act.confirm, timeout=agent_act_timeout(act.name)
+            )
             reply["id"] = act.id
         conn.outbox.push_control(proto.dumps(reply))
 

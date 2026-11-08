@@ -6,6 +6,7 @@ mydock-agent run [--demo]          démarre l'agent (commande par défaut ; le s
 mydock-agent init --allow IP_DU_PI crée ou met à jour la configuration seule (jeton généré)
 mydock-agent show-token            affiche le jeton, pour l'appairage avec le Pi
 mydock-agent doctor                diagnostic de l'installation
+mydock-agent spotify login         connecte ce PC à ton compte Spotify (recherche et bibliothèque dans le dock)
 mydock-agent enable-wol            prépare le PC à être allumé à distance (Wake-on-LAN)
 """
 
@@ -37,6 +38,8 @@ from mydock_agent.runtime import build_runtime
 from mydock_agent.server import create_app
 from mydock_agent.session import detect_session
 from mydock_agent.setup import run_pair, run_setup
+from mydock_agent.spotify.auth import DEFAULT_PORT as SPOTIFY_PORT
+from mydock_agent.spotify.cli import cmd_login, cmd_logout, cmd_status
 from mydock_common.config import ConfigError
 from mydock_common.protocol import MAX_MESSAGE_BYTES
 
@@ -152,6 +155,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     token = sub.add_parser("show-token", help="affiche le jeton pour l'appairage")
     token.add_argument("--config", type=Path)
+
+    spotify = sub.add_parser(
+        "spotify",
+        help="connecte ce PC à ton compte Spotify (recherche et bibliothèque de la page Spotify du dock)",
+        description=(
+            "Le lecteur Spotify du PC se pilote sans compte (lecture, pause, morceau suivant). Pour chercher et "
+            "parcourir la bibliothèque depuis le dock, connecte ton compte : le jeton reste sur ce PC, jamais sur le Pi."
+        ),
+    )
+    spotify_sub = spotify.add_subparsers(dest="spotify_command", required=True)
+    login = spotify_sub.add_parser(
+        "login", help="connecte un compte Spotify (ouvre ton navigateur)"
+    )
+    login.add_argument(
+        "--client-id", metavar="ID", help="le « Client ID » de ton application Spotify"
+    )
+    login.add_argument(
+        "--port",
+        type=int,
+        default=SPOTIFY_PORT,
+        metavar="PORT",
+        help=f"port local de retour (défaut : {SPOTIFY_PORT})",
+    )
+    login.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="n'ouvre pas le navigateur : copie l'adresse affichée",
+    )
+    spotify_sub.add_parser("logout", help="oublie le compte Spotify de ce PC")
+    status = spotify_sub.add_parser("status", help="montre le compte connecté")
+    status.add_argument(
+        "--check", action="store_true", help="interroge aussi Spotify pour vérifier le jeton"
+    )
 
     doctor = sub.add_parser("doctor", help="diagnostic de l'installation")
     doctor.add_argument("--config", type=Path)
@@ -305,6 +341,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_init(args)
     if command == "show-token":
         return cmd_show_token(args)
+    if command == "spotify":
+        if args.spotify_command == "login":
+            return cmd_login(args.client_id, port=args.port, open_browser=not args.no_browser)
+        if args.spotify_command == "logout":
+            return cmd_logout()
+        return cmd_status(check=args.check)
     if command == "doctor":
         return run_doctor(args.config, cpu_seconds=args.cpu)
     parser.error(f"commande inconnue : {command}")

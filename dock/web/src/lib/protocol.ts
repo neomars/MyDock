@@ -135,13 +135,107 @@ export interface PlayerInfo {
   /** Identifiant opaque de la pochette, à demander par l'action `music.art`. */
   art: string | null
   can: { play: boolean; pause: boolean; next: boolean; previous: boolean; seek: boolean }
+  /** Lecture aléatoire ; `null` quand le lecteur ne sait pas la régler (le bouton n'est alors pas proposé). */
+  shuffle: boolean | null
+  /** Répétition (rien, le morceau, la liste) ; `null` quand le lecteur ne sait pas la régler. */
+  loop: LoopMode | null
 }
+
+export type LoopMode = 'none' | 'track' | 'playlist'
 
 /** Thème « music » (agent) : les lecteurs MPRIS du PC. */
 export interface MusicData {
   players: PlayerInfo[]
   active: string | null
   unavailable?: string
+}
+
+// --- Spotify : réponses des actions `spotify.*` (voir agent/mydock_agent/spotify) -----------------------------
+
+/** Où en est Spotify sur le PC : installé, lancé, compte connecté. */
+export interface SpotifyStatus {
+  installed: boolean
+  running: boolean
+  /** Un jeton est enregistré sur le PC (`mydock-agent spotify login`). */
+  configured: boolean
+  /** Spotify a répondu avec ce jeton. */
+  connected: boolean
+  user: string | null
+  premium: boolean | null
+  message: string | null
+}
+
+/** `art` : identifiant opaque de pochette, à demander par l'action `spotify.image` (jamais une adresse web). */
+export interface SpotifyTrack {
+  kind: 'track'
+  id: string
+  uri: string
+  name: string
+  artists: string | null
+  album: string | null
+  album_id: string | null
+  duration_ms: number | null
+  number: number | null
+  explicit: boolean
+  playable: boolean
+  art: string | null
+}
+
+export interface SpotifyAlbum {
+  kind: 'album'
+  id: string
+  uri: string
+  name: string
+  artists: string | null
+  year: string | null
+  type: 'album' | 'single' | 'compilation' | null
+  tracks: number | null
+  art: string | null
+}
+
+export interface SpotifyArtist {
+  kind: 'artist'
+  id: string
+  uri: string
+  name: string
+  genres: string | null
+  art: string | null
+}
+
+export interface SpotifyPlaylist {
+  kind: 'playlist'
+  id: string
+  uri: string
+  name: string
+  owner: string | null
+  tracks: number | null
+  art: string | null
+}
+
+export type SpotifyItem = SpotifyTrack | SpotifyAlbum | SpotifyArtist | SpotifyPlaylist
+
+export interface SpotifySearch {
+  query: string
+  tracks: SpotifyTrack[]
+  albums: SpotifyAlbum[]
+  artists: SpotifyArtist[]
+  playlists: SpotifyPlaylist[]
+}
+
+/** La page d'un album, d'une playlist ou d'un artiste (`albums` seulement pour un artiste). */
+export interface SpotifyView {
+  kind: 'album' | 'playlist' | 'artist'
+  item: SpotifyAlbum | SpotifyPlaylist | SpotifyArtist
+  tracks: SpotifyTrack[]
+  albums?: SpotifyAlbum[]
+}
+
+export type LibrarySection = 'playlists' | 'liked' | 'albums' | 'artists' | 'recent'
+
+export interface SpotifyLibrary {
+  section: LibrarySection
+  kind: SpotifyItem['kind']
+  items: SpotifyItem[]
 }
 
 /** Famille d'un périphérique audio, pour choisir son icône. */

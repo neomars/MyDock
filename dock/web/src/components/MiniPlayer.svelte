@@ -93,7 +93,7 @@
     text-overflow: ellipsis;
   }
   .text small {
-    display: none; /* l'artiste se lit sur la page Musique : la barre du haut n'a de place que pour le titre */
+    display: none; /* l'artiste se lit sur la page Spotify : la barre du haut n'a de place que pour le titre */
   }
   .ctl {
     display: grid;

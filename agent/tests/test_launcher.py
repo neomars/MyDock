@@ -1,4 +1,4 @@
-"""Lancer un programme graphique : scope systemd, programme introuvable, échec immédiat, programme qui dure."""
+"""Lancer un programme graphique par le gestionnaire de l'utilisateur : service puis scope, repli direct, échecs."""
 
 import os
 import stat
@@ -40,23 +40,69 @@ def with_systemd_run(system) -> None:
     )
 
 
-async def test_a_program_is_started_in_its_own_systemd_scope_with_the_session_environment(system):
+async def test_a_program_is_started_by_the_user_manager_then_put_in_its_own_scope(system):
     with_systemd_run(system)
     system.make(
         "appli", 'echo "appli:$WAYLAND_DISPLAY" >> "$LOG"\nprintf "arg=%s\\n" "$@" >> "$LOG"\n'
     )
-    await SystemLauncher(system.env(WAYLAND_DISPLAY="wayland-test"), settle=0.5).start(
-        ["appli", "un", "deux mots"], label="Mon appli"
-    )
-    first, *rest = system.calls()
-    assert first.startswith("systemd-run --user --scope --quiet --collect ")
-    assert "--description=MyDock : Mon appli" in first
-    assert first.endswith(f"-- {system.dir}/appli un deux mots")
+    await SystemLauncher(
+        system.env(WAYLAND_DISPLAY="wayland-test", HOME="/home/test"), settle=0.5
+    ).start(["appli", "un", "deux mots"], label="Mon appli")
+    outer, inner, *rest = system.calls()
+    # Dehors : un service du gestionnaire de l'utilisateur, donc hors du bac à sable de l'agent.
+    assert outer.startswith("systemd-run --user --quiet --collect --wait ")
+    assert "--description=MyDock : lancement de Mon appli" in outer
+    assert "--working-directory=/home/test" in outer
+    assert "--setenv=WAYLAND_DISPLAY=wayland-test" in outer
+    assert "--scope" not in outer.split(" -- ")[0]
+    # Dedans : le scope du programme, qui lui survit quand le lanceur a rendu la main.
+    assert inner.startswith("systemd-run --user --scope --quiet --collect ")
+    assert "--description=MyDock : Mon appli" in inner
+    assert inner.endswith(f"-- {system.dir}/appli un deux mots")
     assert rest == [
         "appli:wayland-test",
         "arg=un",
         "arg=deux mots",
     ]  # les arguments restent intacts
+
+
+async def test_only_the_session_variables_are_handed_to_the_program(system):
+    with_systemd_run(system)
+    system.make("appli", "exit 0\n")
+    env = system.env(
+        DISPLAY=":0",
+        XDG_CURRENT_DESKTOP="ubuntu:GNOME",
+        NOTIFY_SOCKET="/run/systemd/notify",
+        INVOCATION_ID="abc",
+        MYDOCK_SECRET="jeton",
+    )
+    await SystemLauncher(env, settle=0.5).start(["appli"], label="Appli")
+    outer = system.calls()[0]
+    assert "--setenv=DISPLAY=:0" in outer
+    assert "--setenv=XDG_CURRENT_DESKTOP=ubuntu:GNOME" in outer
+    for private in ("NOTIFY_SOCKET", "INVOCATION_ID", "MYDOCK_SECRET", "jeton"):
+        assert private not in outer
+
+
+async def test_when_the_user_manager_cannot_be_reached_the_program_is_started_directly(system):
+    system.make(
+        "systemd-run",
+        'echo "systemd-run $*" >> "$LOG"\necho "Failed to connect to bus: No such file" >&2\nexit 1\n',
+    )
+    system.make("appli", 'echo "direct:$1" >> "$LOG"\n')
+    await SystemLauncher(system.env(), settle=0.5).start(["appli", "x"], label="Appli")
+    first, second = system.calls()
+    assert first.startswith("systemd-run --user --quiet --collect --wait ")
+    assert (
+        second == "direct:x"
+    )  # mieux vaut un programme lancé avec les restrictions de l'agent que rien
+
+
+async def test_a_program_that_fails_through_the_manager_reports_its_exit_code(system):
+    with_systemd_run(system)
+    system.make("echoue", "exit 3\n")
+    with pytest.raises(LaunchError, match=r"« Appli » a échoué \(code 3\)"):
+        await SystemLauncher(system.env(), settle=1.0).start(["echoue"], label="Appli")
 
 
 async def test_without_systemd_run_the_program_is_started_directly(system):

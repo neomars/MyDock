@@ -129,10 +129,43 @@ class Player(ServiceInterface):
         self.emit_properties_changed({"Metadata": self.metadata_value()})
 
 
-async def open_player(address: str, name: str, identity: str, **kwargs):
+class ModalPlayer(Player):
+    """Un lecteur comme Spotify : lecture aléatoire et répétition modifiables, et `OpenUri`."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.shuffle = False
+        self.loop = "None"
+
+    @dbus_property(access=PropertyAccess.READWRITE)
+    def Shuffle(self) -> "b":
+        return self.shuffle
+
+    @Shuffle.setter
+    def Shuffle(self, value: "b"):
+        self.calls.append(("Shuffle", value))
+        self.shuffle = value
+        self.emit_properties_changed({"Shuffle": value})
+
+    @dbus_property(access=PropertyAccess.READWRITE)
+    def LoopStatus(self) -> "s":
+        return self.loop
+
+    @LoopStatus.setter
+    def LoopStatus(self, value: "s"):
+        self.calls.append(("LoopStatus", value))
+        self.loop = value
+        self.emit_properties_changed({"LoopStatus": value})
+
+    @method()
+    def OpenUri(self, uri: "s"):
+        self.calls.append(("OpenUri", uri))
+
+
+async def open_player(address: str, name: str, identity: str, factory=Player, **kwargs):
     """Connecte un faux lecteur au bus et prend le nom MPRIS, comme le ferait une vraie application."""
     bus = await MessageBus(bus_address=address).connect()
-    player = Player(**kwargs)
+    player = factory(**kwargs)
     bus.export("/org/mpris/MediaPlayer2", Root(identity))
     bus.export("/org/mpris/MediaPlayer2", player)
     await bus.request_name(f"org.mpris.MediaPlayer2.{name}")
@@ -355,5 +388,93 @@ async def test_the_dying_session_bus_is_reported_then_the_agent_reconnects(
         finally:
             revived.terminate()
             revived.wait(timeout=5)
+    finally:
+        await shutdown(task, bus)
+
+
+# --- lecture aléatoire, répétition et ouverture d'une adresse : par le vrai bus ---------------------------------
+
+
+async def test_shuffle_and_repeat_are_read_from_and_written_to_a_real_player(daemon):
+    _, address = daemon
+    bus, player = await open_player(address, "spotify", "Spotify", factory=ModalPlayer)
+    _, registry, published, task = await run_provider(address)
+    try:
+        assert published[-1]["players"][0]["shuffle"] is False
+        assert published[-1]["players"][0]["loop"] == "none"
+
+        assert (await act(registry, "music.shuffle", {"enabled": True}))["ok"] is True
+        await eventually(lambda: ("Shuffle", True) in player.calls, timeout=5)
+        await eventually(lambda: published[-1]["players"][0]["shuffle"] is True, timeout=5)
+
+        for step, (mode, wire) in enumerate(
+            (("playlist", "Playlist"), ("track", "Track"), ("none", "None"))
+        ):
+            assert (await act(registry, "music.repeat", {"mode": mode}, act_id=f"r{step}"))[
+                "ok"
+            ] is True
+            await eventually(lambda wire=wire: ("LoopStatus", wire) in player.calls, timeout=5)
+            await eventually(
+                lambda mode=mode: published[-1]["players"][0]["loop"] == mode, timeout=5
+            )
+
+        assert (await act(registry, "music.shuffle", {"enabled": False}, act_id="s2"))["ok"] is True
+        await eventually(lambda: published[-1]["players"][0]["shuffle"] is False, timeout=5)
+    finally:
+        await shutdown(task, bus)
+
+
+async def test_a_real_player_without_shuffle_or_repeat_has_none_and_refuses_politely(daemon):
+    _, address = daemon
+    bus, player = await open_player(
+        address, "brave.instance1", "Brave"
+    )  # pas de Shuffle ni de LoopStatus
+    _, registry, published, task = await run_provider(address)
+    try:
+        assert published[-1]["players"][0]["shuffle"] is None
+        assert published[-1]["players"][0]["loop"] is None
+        shuffle = await act(registry, "music.shuffle", {"enabled": True})
+        assert (shuffle["ok"], shuffle["e"]["code"]) == (False, "unsupported")
+        repeat = await act(registry, "music.repeat", {"mode": "track"}, act_id="a2")
+        assert (repeat["ok"], repeat["e"]["code"]) == (False, "unsupported")
+    finally:
+        await shutdown(task, bus)
+    assert player.calls == []
+
+
+async def test_the_spotify_service_makes_a_real_player_open_an_album_without_an_account(
+    daemon, tmp_path
+):
+    """Sans compte, « jouer » passe par `OpenUri` : l'appel arrive vraiment au lecteur, avec la bonne adresse."""
+    from mydock_agent.spotify.auth import TokenStore
+    from mydock_agent.spotify.service import SpotifyService
+
+    class NoApps:
+        apps: list = []
+
+        async def refresh(self):
+            return False
+
+        async def launch(self, _app_id):  # pragma: no cover - le lecteur est déjà ouvert
+            raise AssertionError("Spotify tourne déjà")
+
+    album = "spotify:album:4aawyAB9vmqN3uQ7FjRGTy"
+    track = "spotify:track:0ETFjACtuP2ADo6LFhL6HN"
+    _, address = daemon
+    bus, player = await open_player(address, "spotify", "Spotify", factory=ModalPlayer)
+    provider, _, _, task = await run_provider(address)
+    try:
+        service = SpotifyService(
+            music=provider, apps=NoApps(), store=TokenStore(tmp_path / "absent.toml")
+        )
+        assert provider.has_player("spotify")
+        assert not provider.has_player("vlc")
+        assert await service.play(album) == {"via": "player", "started": False}
+        await eventually(lambda: ("OpenUri", album) in player.calls, timeout=5)
+        # Un morceau touché dans son album : c'est l'album entier que le lecteur ouvre (« suivant » enchaîne).
+        await service.play(track, album)
+        await eventually(lambda: player.calls.count(("OpenUri", album)) == 2, timeout=5)
+        await service.play(track)  # sans contexte : le morceau seul
+        await eventually(lambda: ("OpenUri", track) in player.calls, timeout=5)
     finally:
         await shutdown(task, bus)

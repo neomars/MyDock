@@ -83,6 +83,11 @@ class DemoMusic(Provider):
             can_seek=True,
         )
         self.spotify.status = "playing"
+        self.spotify.shuffle = False  # Spotify propose lecture aléatoire et répétition ; Brave non
+        self.spotify.loop = "none"
+        self._custom_art: dict[
+            str, str
+        ] = {}  # pochettes des morceaux choisis depuis la page Spotify
         self._load(self.spotify, 0)
         self.brave.status = "paused"
         self.brave.apply(
@@ -167,6 +172,46 @@ class DemoMusic(Provider):
         target.apply({"Position": position_ms * 1000})
         self._changed.set()
 
+    async def set_shuffle(self, player: str | None, enabled: bool) -> None:
+        target = self._pick(player)
+        if target.shuffle is None:
+            raise ActionError("unsupported", "Ce lecteur n'a pas de lecture aléatoire.")
+        target.shuffle = enabled
+        self._changed.set()
+
+    async def set_loop(self, player: str | None, mode: str) -> None:
+        target = self._pick(player)
+        if target.loop is None:
+            raise ActionError("unsupported", "Ce lecteur n'a pas de répétition.")
+        target.loop = mode
+        self._changed.set()
+
+    async def open_uri(self, player: str | None, uri: str) -> None:
+        raise ActionError(
+            "unsupported", "La démonstration joue par la page Spotify, pas par une adresse."
+        )
+
+    def has_player(self, base: str) -> bool:
+        return any(p.base == base for p in self.players)
+
+    def play_track(self, title: str, artist: str, album: str, seconds: int, art_key: str) -> None:
+        """Fait jouer à « Spotify » un morceau de la démonstration (choisi dans la recherche ou la bibliothèque)."""
+        url = f"demo://art/{art_key}"
+        self._custom_art[art_id(url)] = demo_art_svg(sum(map(ord, art_key)) % 360, album or title)
+        self.spotify.apply(
+            {
+                "Metadata": _metadata(
+                    (title, artist, album, seconds), url, f"/demo/track/{art_key}"
+                ),
+                "Position": 0,
+            }
+        )
+        self.spotify.status = "playing"
+        self._activity += 1
+        self.spotify.activity = self._activity
+        self._preferred = None
+        self._changed.set()
+
     def select(self, player: str) -> None:
         self._preferred = base_id(self._pick(player).id)
         self._changed.set()
@@ -184,6 +229,9 @@ class DemoMusic(Provider):
             if art_id(f"demo://art/{index}") == art:
                 svg = demo_art_svg(index, track[0])
                 return {"mime": "image/svg+xml", "data": base64.b64encode(svg.encode()).decode()}
+        if art in self._custom_art:
+            svg = self._custom_art[art]
+            return {"mime": "image/svg+xml", "data": base64.b64encode(svg.encode()).decode()}
         if art == art_id("demo://art/video"):
             svg = demo_art_svg(9, VIDEO[0])
             return {"mime": "image/svg+xml", "data": base64.b64encode(svg.encode()).decode()}
