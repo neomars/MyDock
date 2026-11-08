@@ -13,10 +13,11 @@ dock/web/playwright-report/
 dock/web/.vite/
 
 # Secrets et configuration locale : ne jamais committer.
-# Les vrais fichiers vivent hors du dépôt (~/.config/mydock/agent.toml sur le PC,
+# Les vrais fichiers vivent hors du dépôt (~/.config/mydock/agent.toml et spotify.toml sur le PC,
 # /etc/mydock/dock.toml sur le Pi) en droits 600.
 agent.toml
 dock.toml
+spotify.toml
 *.local.toml
 .env
 .env.*

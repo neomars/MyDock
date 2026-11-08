@@ -14,6 +14,7 @@ from mydock_agent.collectors.music import (
     MusicProvider,
     PlayerState,
     Signal,
+    Var,
     art_id,
     base_id,
     build_snapshot,
@@ -650,6 +651,11 @@ async def test_the_position_action_gives_a_fresh_reading():
         ("music.select", {}),
         ("music.art", {"art": "pas-un-id"}),
         ("music.art", {"art": "https://example.org/x.png"}),
+        ("music.shuffle", {}),
+        ("music.shuffle", {"enabled": "oui"}),
+        ("music.shuffle", {"enabled": 1}),
+        ("music.repeat", {"mode": "toujours"}),
+        ("music.repeat", {"mode": "track", "player": "../x"}),
     ],
 )
 async def test_bad_parameters_are_refused_before_reaching_the_bus(name, params):
@@ -661,6 +667,107 @@ async def test_bad_parameters_are_refused_before_reaching_the_bus(name, params):
         reply = await run_action(registry, name, params)
         assert reply["e"]["code"] == "bad_params"
         assert len(bus.calls) == calls
+    finally:
+        await stop(task)
+
+
+# --- lecture aléatoire, répétition, ouverture d'une adresse -------------------------------------------
+
+
+def test_shuffle_and_repeat_are_read_from_the_player_when_it_has_them():
+    state = PlayerState(id="spotify", owner=":1.1")
+    # Un lecteur sans ces propriétés n'en montre pas.
+    assert state.shuffle is None
+    assert state.loop is None
+    state.apply({"Shuffle": True, "LoopStatus": "Playlist"})
+    assert state.shuffle is True
+    assert state.loop == "playlist"
+    state.apply({"Shuffle": False, "LoopStatus": "None"})
+    assert (state.shuffle, state.loop) == (False, "none")
+    state.apply({"LoopStatus": "Inconnu", "Shuffle": "oui"})  # une valeur étrangère ne change rien
+    assert (state.shuffle, state.loop) == (False, "none")
+    snapshot = state.to_dict()
+    assert snapshot["shuffle"] is False
+    assert snapshot["loop"] == "none"
+
+
+async def test_shuffle_and_repeat_are_set_as_mpris_properties():
+    bus = FakeBus()
+    bus.add_player(SPOTIFY, ":1.10", "Spotify", Shuffle=False, LoopStatus="None")
+    _, registry, _, task = await with_actions(bus)
+    try:
+        assert (await run_action(registry, "music.shuffle", {"enabled": True}))["ok"] is True
+        destination, interface, _member, body = player_calls(bus, "Set")[-1]
+        assert (destination, interface) == (SPOTIFY, "org.freedesktop.DBus.Properties")
+        assert body == [music.PLAYER_IFACE, "Shuffle", Var("b", True)]
+        assert (await run_action(registry, "music.repeat", {"mode": "playlist"}))["ok"] is True
+        assert player_calls(bus, "Set")[-1][3] == [
+            music.PLAYER_IFACE,
+            "LoopStatus",
+            Var("s", "Playlist"),
+        ]
+        await run_action(registry, "music.repeat", {"mode": "track"})
+        assert player_calls(bus, "Set")[-1][3][2] == Var("s", "Track")
+        await run_action(registry, "music.repeat", {"mode": "none"})
+        assert player_calls(bus, "Set")[-1][3][2] == Var("s", "None")
+    finally:
+        await stop(task)
+
+
+async def test_opening_an_address_is_not_an_action_the_dock_can_ask_for():
+    bus = FakeBus()
+    bus.add_player(SPOTIFY, ":1.10", "Spotify")
+    _, registry, _, task = await with_actions(bus)
+    try:
+        for name in ("music.open", "music.open_uri", "music.play"):
+            reply = await run_action(registry, name, {"uri": "file:///etc/passwd"})
+            assert reply["e"]["code"] == "unknown_action"
+        assert not player_calls(bus, "OpenUri")
+    finally:
+        await stop(task)
+
+
+async def test_a_player_without_shuffle_or_repeat_says_so():
+    bus = FakeBus()
+    bus.add_player(BRAVE, ":1.20", "Brave")
+    _, registry, _, task = await with_actions(bus)
+    try:
+        for name, params in (
+            ("music.shuffle", {"enabled": True}),
+            ("music.repeat", {"mode": "track"}),
+        ):
+            refused = await run_action(registry, name, params)
+            assert refused["ok"] is False
+            assert refused["e"]["code"] == "unsupported"
+        assert not player_calls(bus, "Set")
+    finally:
+        await stop(task)
+
+
+async def test_a_player_that_refuses_a_setting_is_reported_not_crashed():
+    bus = FakeBus()
+    bus.add_player(SPOTIFY, ":1.10", "Spotify", Shuffle=False)
+    _, registry, _, task = await with_actions(bus)
+    try:
+        bus.fail_calls.add("Set")
+        refused = await run_action(registry, "music.shuffle", {"enabled": True})
+        assert refused["e"]["code"] == "failed"
+        assert "Spotify refuse" in refused["e"]["msg"]
+    finally:
+        await stop(task)
+
+
+async def test_the_provider_can_open_an_address_in_a_player_and_knows_which_players_run():
+    bus = FakeBus()
+    bus.add_player(SPOTIFY, ":1.10", "Spotify")
+    provider, _, _, task = await with_actions(bus)
+    try:
+        assert provider.has_player("spotify") is True
+        assert provider.has_player("vlc") is False
+        await provider.open_uri("spotify", "spotify:album:4aawyAB9vmqN3uQ7FjRGTy")
+        assert player_calls(bus, "OpenUri")[-1][3] == ["spotify:album:4aawyAB9vmqN3uQ7FjRGTy"]
+        with pytest.raises(music.ActionError):
+            await provider.open_uri("vlc", "spotify:track:x")  # un lecteur qui n'est pas là
     finally:
         await stop(task)
 

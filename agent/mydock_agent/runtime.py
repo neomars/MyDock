@@ -22,12 +22,15 @@ from mydock_agent.demo.audio import DemoPactl
 from mydock_agent.demo.music import DemoMusic
 from mydock_agent.demo.power import HOSTNAME as DEMO_HOSTNAME
 from mydock_agent.demo.power import DemoPower
+from mydock_agent.demo.spotify import DemoSpotify
 from mydock_agent.demo.system import (
     DemoProcessSource,
     DemoSensors,
     register_demo_system_actions,
 )
 from mydock_agent.hub import Provider
+from mydock_agent.spotify.actions import register_spotify_actions
+from mydock_agent.spotify.service import SpotifyService
 from mydock_common.actions import ActionRegistry
 
 
@@ -57,6 +60,7 @@ def build_runtime(*, demo: bool) -> tuple[list[Provider], ActionRegistry]:
         ]
         register_demo_system_actions(registry, procs, source)
         register_music_actions(registry, music)
+        register_spotify_actions(registry, DemoSpotify(music))
         register_audio_actions(registry, audio)
         register_apps_actions(registry, apps)
         register_steam_actions(registry, steam)
@@ -81,6 +85,7 @@ def build_runtime(*, demo: bool) -> tuple[list[Provider], ActionRegistry]:
         ]
         register_system_actions(registry, real_procs)
         register_music_actions(registry, real_music)
+        register_spotify_actions(registry, SpotifyService(music=real_music, apps=real_apps))
         register_audio_actions(registry, real_audio)
         register_apps_actions(registry, real_apps)
         register_steam_actions(registry, real_steam)

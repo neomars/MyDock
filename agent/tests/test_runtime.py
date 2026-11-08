@@ -28,14 +28,23 @@ REAL_ACTIONS = [
     "music.play_pause",
     "music.position",
     "music.previous",
+    "music.repeat",
     "music.seek",
     "music.select",
+    "music.shuffle",
     "office.new",
     "office.open",
     "power.lock",
     "power.poweroff",
     "power.reboot",
     "power.suspend",
+    "spotify.image",
+    "spotify.launch",
+    "spotify.library",
+    "spotify.play",
+    "spotify.search",
+    "spotify.status",
+    "spotify.view",
     "steam.cover",
     "steam.launch",
     "system.kill",
@@ -239,6 +248,62 @@ async def test_music_controls_work_over_the_wire(demo_agent):
         await send_json(ws, {"t": "act", "id": "a1", "a": "music.art", "p": {"art": art}})
         picture = await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == "a1")
         assert picture["r"]["mime"] == "image/svg+xml"
+
+
+async def test_spotify_search_browse_and_play_work_over_the_wire(demo_agent):
+    async def ask(ws, act_id, name, params=None):
+        await send_json(ws, {"t": "act", "id": act_id, "a": name, "p": params or {}})
+        return await recv_until(ws, lambda m: m.get("t") == "ack" and m["id"] == act_id)
+
+    async with demo_agent.connect() as ws:
+        await hello_and_subscribe(ws, "music")
+        first = await recv_until(ws, lambda m: m.get("topic") == "music")
+        spotify = first["data"]["players"][0]
+        assert (spotify["shuffle"], spotify["loop"]) == (
+            False,
+            "none",
+        )  # le lecteur annonce ses modes
+
+        status = await ask(ws, "s0", "spotify.status")
+        assert (status["ok"], status["r"]["connected"]) == (True, True)
+
+        found = await ask(ws, "s1", "spotify.search", {"query": "saisons"})
+        assert found["ok"] is True
+        album = found["r"]["albums"][0]
+        assert album["name"] == "Saisons"
+        assert album["art"] not in (None, "")
+
+        page = await ask(ws, "s2", "spotify.view", {"kind": "album", "id": album["id"]})
+        assert page["r"]["tracks"][0]["name"] == "Sous la pluie de Kyoto"
+        track = page["r"]["tracks"][2]
+
+        cover = await ask(ws, "s3", "spotify.image", {"art": album["art"]})
+        assert cover["r"]["mime"] == "image/svg+xml"
+
+        played = await ask(ws, "s4", "spotify.play", {"uri": track["uri"], "context": album["uri"]})
+        assert played["ok"] is True
+        changed = await recv_until(
+            ws,
+            lambda m: (
+                m.get("topic") == "music" and m["data"]["players"][0]["title"] == track["name"]
+            ),
+        )
+        assert changed["data"]["players"][0]["status"] == "playing"
+
+        assert (await ask(ws, "s5", "music.shuffle", {"enabled": True}))["ok"] is True
+        await recv_until(
+            ws, lambda m: m.get("topic") == "music" and m["data"]["players"][0]["shuffle"] is True
+        )
+        assert (await ask(ws, "s6", "music.repeat", {"mode": "track"}))["ok"] is True
+        await recv_until(
+            ws, lambda m: m.get("topic") == "music" and m["data"]["players"][0]["loop"] == "track"
+        )
+
+        # Rien qui ressemble à une adresse web ou à une commande n'est accepté.
+        hostile = await ask(ws, "s7", "spotify.play", {"uri": "https://open.spotify.com/track/x"})
+        assert hostile["e"]["code"] == "bad_params"
+        unknown = await ask(ws, "s8", "spotify.view", {"kind": "album", "id": "a" * 22})
+        assert unknown["e"]["code"] == "not_found"
 
 
 async def test_audio_controls_work_over_the_wire(demo_agent):

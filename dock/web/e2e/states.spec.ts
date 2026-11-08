@@ -1,4 +1,4 @@
-// États limites des pages Système et Musique : on simule le dock (WebSocket factice) pour produire des
+// États limites des pages Système, Musique et Spotify : on simule le dock (WebSocket factice) pour produire des
 // cas que la démonstration ne montre pas : aucun lecteur, bus D-Bus absent, carte NVIDIA éveillée,
 // 24 cœurs, processus têtu, textes très longs. Le vrai chemin (dock + agent) est couvert par stage-b.spec.ts.
 
@@ -163,7 +163,8 @@ async function noPageScroll(page: Page): Promise<void> {
 test('Musique : aucun lecteur ouvert, la page l’explique et le mini-lecteur reste caché', async ({ page, stack }) => {
   await mockDock(page, { music: { players: [], active: null } }, { startPage: 'music' })
   await page.goto(stack.url)
-  await expect(page.getByTestId('music-empty')).toContainText('Aucun lecteur ouvert')
+  await expect(page.getByTestId('music-empty')).toContainText('Spotify n’est pas ouvert')
+  await expect(page.getByTestId('sp-launch')).toBeVisible() // et le bouton qui le lance
   await expect(page.getByTestId('mini-player')).toHaveCount(0)
   await shot(page, '07-musique-vide', 'b')
 })
@@ -1469,4 +1470,207 @@ test('Veille : un réglage fait depuis un autre navigateur est pris en compte au
   mock.push('ui', { last_page: 'settings', order: [], hidden: [], pinned_apps: [], screen_sleep: 1800 })
   await expect(page.getByTestId('sleep-1800')).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByTestId('screen-note')).toContainText('30 minutes')
+})
+
+// --- Spotify : les états que la démonstration ne produit pas ---------------------------------------------------------
+
+const ID = (letter: string): string => letter.repeat(22)
+
+function spotifyTrack(extra: Record<string, unknown> = {}) {
+  return {
+    kind: 'track', id: ID('a'), uri: `spotify:track:${ID('a')}`, name: 'Morceau', artists: 'Artiste', album: 'Album',
+    album_id: ID('b'), duration_ms: 200_000, number: 1, explicit: false, playable: true, art: null, ...extra,
+  } // prettier-ignore
+}
+
+const STATUS_OK = { installed: true, running: true, configured: true, connected: true, user: 'Marie', premium: true, message: null }
+const WITH_PLAYER = { music: { players: [player()], active: 'spotify' } }
+const NO_PLAYER = { music: { players: [], active: null } }
+const failed = (code: string, msg: string) => ({ ok: false, r: undefined, e: { code, msg } })
+
+test('Spotify : sans compte connecté, la recherche et la bibliothèque disent comment le relier', async ({ page, stack }) => {
+  const message = 'Spotify n’est pas connecté : sur le PC, lance « mydock-agent spotify login ».'
+  const mock = await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => (act.a === 'spotify.status' ? { r: { ...STATUS_OK, configured: false, connected: false, user: null, premium: null, message } } : undefined),
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('music-title')).toHaveText('Morceau') // le lecteur marche sans compte
+  await page.getByTestId('sp-tab-search').tap()
+  await expect(page.getByTestId('sp-connect')).toBeVisible()
+  await expect(page.getByTestId('sp-connect-command')).toHaveText('mydock-agent spotify login')
+  await page.getByTestId('sp-tab-library').tap()
+  await expect(page.getByTestId('sp-connect')).toBeVisible()
+  await noPageScroll(page)
+  await shot(page, '09-sans-compte', 'i')
+  expect(mock.acts.filter((a) => a.a === 'spotify.search' || a.a === 'spotify.library')).toEqual([]) // rien n'est demandé sans compte
+})
+
+test('Spotify : un compte refusé affiche la raison, et « Vérifier à nouveau » repose la question', async ({ page, stack }) => {
+  const message = 'Ce compte Spotify n’est pas autorisé pour l’application : ajoute-le dans « User Management ».'
+  const mock = await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => (act.a === 'spotify.status' ? { r: { ...STATUS_OK, connected: false, user: null, premium: null, message } } : undefined),
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-search').tap()
+  await expect(page.getByTestId('sp-refused-message')).toHaveText(message)
+  const before = mock.acts.filter((a) => a.a === 'spotify.status').length
+  await page.getByTestId('sp-status-retry').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'spotify.status').length).toBeGreaterThan(before)
+  await shot(page, '10-compte-refuse', 'i')
+})
+
+test('Spotify : un agent plus ancien que le dock est reconnu ; le lecteur marche quand même', async ({ page, stack }) => {
+  await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => (act.a === 'spotify.status' ? failed('unknown_action', 'Action inconnue') : undefined),
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('music-title')).toHaveText('Morceau')
+  // Un agent d'avant la 1.3.0 ne publie ni aléatoire ni répétition : pas de boutons qui ne feraient rien.
+  await expect(page.getByTestId('music-shuffle')).toHaveCount(0)
+  await expect(page.getByTestId('music-repeat')).toHaveCount(0)
+  await page.getByTestId('sp-tab-search').tap()
+  await expect(page.getByTestId('sp-status-error')).toContainText('plus ancien que le dock')
+})
+
+test('Spotify : fermé et installé, un bouton le lance ; non installé, la page le dit', async ({ page, stack }) => {
+  const mock = await mockDock(page, NO_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => (act.a === 'spotify.status' ? { r: { ...STATUS_OK, running: false, configured: false, connected: false, message: null } } : undefined),
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('music-empty')).toContainText('Spotify n’est pas ouvert')
+  await shot(page, '11-spotify-ferme', 'i')
+  await page.getByTestId('sp-launch').tap()
+  await expect.poll(() => mock.acts.filter((a) => a.a === 'spotify.launch').length).toBe(1)
+  expect(mock.acts.find((a) => a.a === 'spotify.launch')!.p).toEqual({})
+})
+
+test('Spotify : une application non installée est annoncée, sans bouton qui ne ferait rien', async ({ page, stack }) => {
+  await mockDock(page, NO_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => (act.a === 'spotify.status' ? { r: { ...STATUS_OK, installed: false, running: false, configured: false, connected: false, message: null } } : undefined),
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('sp-not-installed')).toContainText('n’est pas installé')
+  await expect(page.getByTestId('sp-launch')).toHaveCount(0)
+})
+
+test('Spotify : une recherche qui échoue affiche la raison et se retente', async ({ page, stack }) => {
+  let calls = 0
+  await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => {
+      if (act.a === 'spotify.status') return { r: STATUS_OK }
+      if (act.a !== 'spotify.search') return undefined
+      calls += 1
+      return calls === 1
+        ? failed('busy', 'Spotify demande de patienter 5 s avant la prochaine requête.')
+        : { r: { query: 'mizu', tracks: [spotifyTrack({ name: 'Printemps' })], albums: [], artists: [], playlists: [] } }
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-search').tap()
+  await page.getByTestId('sp-search-field').tap()
+  await typeOnKeyboard(page, 'mizu')
+  await page.getByTestId('keyboard-ok').tap()
+  await expect(page.getByTestId('sp-search-error-message')).toContainText('patienter 5 s')
+  await shot(page, '12-recherche-echec', 'i')
+  await page.getByTestId('sp-search-retry').tap()
+  await expect(page.getByTestId('sp-results')).toContainText('Printemps')
+  expect(calls).toBe(2)
+})
+
+test('Spotify : une lecture refusée par Spotify affiche le message de l’agent', async ({ page, stack }) => {
+  const message = 'Cette commande demande un compte Spotify Premium.'
+  const mock = await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => {
+      if (act.a === 'spotify.status') return { r: STATUS_OK }
+      if (act.a === 'spotify.search') return { r: { query: 'a', tracks: [spotifyTrack()], albums: [], artists: [], playlists: [] } }
+      if (act.a === 'spotify.play') return failed('premium', message)
+      return undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-search').tap()
+  await page.getByTestId('sp-search-field').tap()
+  await typeOnKeyboard(page, 'a')
+  await page.getByTestId('keyboard-ok').tap()
+  await page.locator('[data-testid^=sp-track-]').first().tap()
+  await expect(page.getByTestId('toast')).toContainText(message)
+  // Le morceau est demandé dans son album : l'agent sait alors le placer dans l'album entier.
+  expect(mock.acts.find((a) => a.a === 'spotify.play')!.p).toEqual({ uri: `spotify:track:${ID('a')}`, context: `spotify:album:${ID('b')}` })
+})
+
+test('Spotify : les pochettes se demandent par identifiant, une fois chacune, jamais par adresse', async ({ page, stack }) => {
+  const mock = await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => {
+      if (act.a === 'spotify.status') return { r: STATUS_OK }
+      if (act.a === 'spotify.search') {
+        const tracks = ['0', '1', '2'].map((n) => spotifyTrack({ id: ID(n), uri: `spotify:track:${ID(n)}`, name: `Morceau ${n}`, art: `${n}`.repeat(16) }))
+        return { r: { query: 'a', tracks, albums: [], artists: [], playlists: [] } }
+      }
+      if (act.a === 'spotify.image') return { r: { mime: 'image/png', data: PIXEL } }
+      return undefined
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-search').tap()
+  await page.getByTestId('sp-search-field').tap()
+  await typeOnKeyboard(page, 'a')
+  await page.getByTestId('keyboard-ok').tap()
+  await expect(page.locator('[data-testid^=sp-track-] img')).toHaveCount(3)
+  await expect(page.locator('[data-testid^=sp-track-] img').first()).toHaveAttribute('src', /^data:image\/png;base64,/)
+  const asked = mock.acts.filter((a) => a.a === 'spotify.image').map((a) => a.p)
+  expect(asked.map((p) => p.art).sort()).toEqual(['0000000000000000', '1111111111111111', '2222222222222222'])
+  for (const p of asked) expect(Object.keys(p).sort()).toEqual(['art']) // rien d'autre : pas d'adresse, pas de chemin
+  // Revenir sur la même liste ne redemande rien.
+  await page.getByTestId('sp-tab-library').tap()
+  await page.getByTestId('sp-tab-search').tap()
+  await page.waitForTimeout(300)
+  expect(mock.acts.filter((a) => a.a === 'spotify.image')).toHaveLength(3)
+})
+
+test('Spotify : une page qui ne se charge pas propose de réessayer ; une pochette en échec ne bloque rien', async ({ page, stack }) => {
+  let views = 0
+  await mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => {
+      if (act.a === 'spotify.status') return { r: STATUS_OK }
+      if (act.a === 'spotify.search') {
+        const album = { kind: 'album', id: ID('c'), uri: `spotify:album:${ID('c')}`, name: 'Saisons', artists: 'Mizu', year: '2021', type: 'album', tracks: 1, art: 'cccccccccccccccc' }
+        return { r: { query: 'a', tracks: [], albums: [album], artists: [], playlists: [] } }
+      }
+      if (act.a === 'spotify.image') return failed('art_failed', 'Pochette injoignable.')
+      if (act.a !== 'spotify.view') return undefined
+      views += 1
+      if (views === 1) return failed('not_found', 'Spotify ne trouve pas cet élément.')
+      const item = { kind: 'album', id: ID('c'), uri: `spotify:album:${ID('c')}`, name: 'Saisons', artists: 'Mizu', year: '2021', type: 'album', tracks: 1, art: 'cccccccccccccccc' }
+      return { r: { kind: 'album', item, tracks: [spotifyTrack({ name: 'Printemps' })] } }
+    },
+  })
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-search').tap()
+  await page.getByTestId('sp-search-field').tap()
+  await typeOnKeyboard(page, 'a')
+  await page.getByTestId('keyboard-ok').tap()
+  await page.locator('[data-testid^=sp-album-]').first().tap()
+  await expect(page.getByTestId('sp-detail-error-message')).toHaveText('Spotify ne trouve pas cet élément.')
+  await page.getByTestId('sp-detail-retry').tap()
+  await expect(page.getByTestId('sp-detail-tracks')).toContainText('Printemps')
+  await expect(page.getByTestId('sp-detail-play')).toBeVisible() // sans pochette, la page reste complète
+})
+
+test('Spotify : fermé et agent trop ancien, la page explique la mise à jour au lieu d’offrir un bouton inutile', async ({ page, stack }) => {
+  await mockDock(page, NO_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => (act.a === 'spotify.status' ? failed('unknown_action', 'Action inconnue') : undefined),
+  })
+  await page.goto(stack.url)
+  await expect(page.getByTestId('sp-agent-old')).toContainText('mets-le à jour')
+  await expect(page.getByTestId('sp-launch')).toHaveCount(0)
 })

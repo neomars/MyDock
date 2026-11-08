@@ -11,7 +11,13 @@ from websockets.exceptions import InvalidStatus
 from mydock_agent.testing import ScriptedProvider, running_agent
 from mydock_common.config import load_toml
 from mydock_dock.agent_link import LinkState
-from mydock_dock.app import host_allowed, origin_allowed, pick_wol_interface
+from mydock_dock.app import (
+    AGENT_ACT_TIMEOUT,
+    agent_act_timeout,
+    host_allowed,
+    origin_allowed,
+    pick_wol_interface,
+)
 from mydock_dock.config import DockConfig
 from mydock_dock.testing import (
     RunningDock,
@@ -222,6 +228,23 @@ async def test_agent_actions_are_forwarded_with_the_browsers_id_and_hop_timing(s
     assert ack["ok"] is True
     assert ack["hop"]["link_ms"] >= 0
     assert ack["ms"] >= 0  # temps d'exécution mesuré par l'agent
+
+
+def test_slow_spotify_actions_get_more_time_than_the_others():
+    """Lancer Spotify puis jouer peut prendre une quarantaine de secondes : le dock ne doit pas abandonner à 6 s."""
+    assert agent_act_timeout("music.next") == AGENT_ACT_TIMEOUT == 6.0
+    assert agent_act_timeout("apps.launch") == 6.0
+    for name in (
+        "spotify.play",
+        "spotify.launch",
+        "spotify.search",
+        "spotify.view",
+        "spotify.image",
+    ):
+        assert agent_act_timeout(name) > 60.0
+    assert (
+        agent_act_timeout("spotifyx.play") == AGENT_ACT_TIMEOUT
+    )  # un préfixe exact, pas une simple ressemblance
 
 
 async def test_the_agent_stays_the_judge_of_unknown_actions_and_bad_params(stack):

@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -30,6 +31,9 @@ from mydock_agent.collectors.system import Sensors, cpu_temperature, disk_temper
 from mydock_agent.config import AgentConfig, default_config_path, load_config
 from mydock_agent.pairing import PORTAL_PORT, fetch_state, portal_url
 from mydock_agent.session import GRAPHICAL_VARS, detect_session, user_manager_environment
+from mydock_agent.spotify.auth import SCOPES, AuthError, TokenStore, whoami
+from mydock_agent.spotify.http import Transport, urllib_transport
+from mydock_agent.spotify.service import find_app
 from mydock_common.auth import bearer_headers
 from mydock_common.config import ConfigError
 from mydock_common.protocol import PROTOCOL_VERSION, ProtocolError, loads
@@ -462,38 +466,63 @@ def check_audio(
 
 
 def check_launch(report: Report) -> None:
-    """Les programmes lancés par le dock doivent vivre hors du groupe de l'agent (`systemd-run --user`)."""
+    """Les programmes lancés par le dock doivent vivre hors de l'agent, donc hors de son bac à sable.
+
+    L'unité de l'agent porte `NoNewPrivileges=yes` : ce qu'elle lance n'obtiendrait jamais de privilèges, et
+    un Snap (`snap-confine` est « setuid ») ne démarrerait pas. Le dock les fait donc lancer par le
+    gestionnaire systemd de l'utilisateur ; on le prouve ici en lisant ce que voit un programme lancé ainsi.
+    """
     report.section("Lancement des programmes")
     if not shutil.which("systemd-run"):
         report.add(
             WARN,
             "systemd-run est introuvable : les programmes lancés depuis le dock resteront rattachés "
-            "à l'agent et se fermeront quand on le redémarre (mise à jour du paquet).",
+            "à l'agent (ils se fermeront quand on le redémarre, et un Snap ou un Flatpak pourrait ne pas "
+            "démarrer).",
         )
         return
     try:
         result = subprocess.run(
-            ["systemd-run", "--user", "--scope", "--quiet", "--", "true"],
+            [
+                "systemd-run",
+                "--user",
+                "--quiet",
+                "--collect",
+                "--pipe",
+                "--",
+                "grep",
+                "NoNewPrivs",
+                "/proc/self/status",
+            ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=8,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         report.add(WARN, f"systemd-run --user n'a pas pu être essayé ({exc.__class__.__name__}).")
         return
-    if result.returncode == 0:
-        report.add(
-            OK,
-            "systemd-run --user fonctionne : chaque programme lancé a son propre scope, "
-            "comme avec le menu du bureau",
-        )
-    else:
+    if result.returncode != 0:
         detail = (result.stderr.strip().splitlines() or ["sans message"])[0][:150]
         report.add(
             WARN,
             f"systemd-run --user échoue ({detail}). Lance le diagnostic depuis un terminal de ta "
             "session graphique ; sinon les programmes lancés depuis le dock se fermeront avec l'agent.",
+        )
+        return
+    flag = result.stdout.split(":", 1)[-1].strip()
+    if flag == "0":
+        report.add(
+            OK,
+            "systemd-run --user fonctionne : un programme lancé par le dock ne dépend ni de l'agent ni de "
+            "ses restrictions (NoNewPrivileges) : un Snap, un Flatpak ou une application Electron peuvent démarrer",
+        )
+    else:
+        report.add(
+            WARN,
+            "un programme lancé par le dock hérite de NoNewPrivileges : les Snap (Spotify, Firefox…) ne "
+            "démarreraient pas. Lance ce diagnostic depuis un terminal de ta session graphique, ou vérifie "
+            "que `systemd-run --user` peut démarrer un service.",
         )
 
 
@@ -516,6 +545,77 @@ def check_apps(report: Report, provider: AppsProvider | None = None) -> None:
     missing = [a.name for a in apps if a.icon and a.icon_id is None]
     if missing:
         report.add(WARN, f"{len(missing)} applications sans icône exploitable")
+
+
+def install_kind(path: Path) -> str:
+    """Comment une application est installée, d'après l'emplacement de son fichier .desktop."""
+    text = str(path)
+    if "/snap/" in text or "/snapd/" in text:
+        return "Snap"
+    if "/flatpak/" in text:
+        return "Flatpak"
+    return "paquet du système"
+
+
+def check_spotify(
+    report: Report,
+    provider: AppsProvider | None = None,
+    store: TokenStore | None = None,
+    transport: Transport = urllib_transport,
+    now: Callable[[], float] = time.time,
+) -> None:
+    """Spotify : l'application du PC et la connexion au compte. Rien n'est modifié (pas même le jeton)."""
+    report.section("Spotify")
+    provider = provider or AppsProvider()
+    asyncio.run(provider.refresh())
+    app = find_app(provider.apps)
+    if app is None:
+        report.add(
+            INFO,
+            "L'application Spotify n'est pas installée sur ce PC (ni .deb, ni Snap, ni Flatpak) : "
+            "la page Spotify du dock ne pourra pas la lancer",
+        )
+    else:
+        report.add(OK, f"Application Spotify : {app.id} ({install_kind(app.path)})")
+    store = store or TokenStore()
+    try:
+        creds = store.load()
+    except ConfigError as exc:
+        report.add(WARN, f"Connexion à Spotify inutilisable : {exc}")
+        return
+    if creds is None:
+        report.add(
+            INFO,
+            "Pas de compte Spotify connecté : la page du dock commande le lecteur (lecture, pause, volume) "
+            "mais ne peut ni chercher ni parcourir. Pour l'activer :  mydock-agent spotify login --client-id ID",
+        )
+        return
+    report.add(
+        OK,
+        f"Compte Spotify connecté{' : ' + creds.user if creds.user else ''} "
+        f"(jeton dans {store.path}, droits 600)",
+    )
+    missing = sorted(set(SCOPES) - set(creds.scope.split()))
+    if creds.scope and missing:
+        report.add(
+            WARN,
+            "Le jeton ne couvre pas toutes les autorisations de cette version ("
+            + ", ".join(missing)
+            + ") : relance « mydock-agent spotify login »",
+        )
+    if creds.expired(now()):
+        report.add(
+            INFO,
+            "Le jeton d'accès a expiré ; l'agent le renouvelle tout seul à la prochaine commande "
+            "(« mydock-agent spotify status --check » le vérifie maintenant)",
+        )
+        return
+    try:
+        name = whoami(transport, creds)
+    except AuthError as exc:
+        report.add(WARN, str(exc))
+        return
+    report.add(OK, f"L'API de Spotify répond{' (compte « ' + name + ' »)' if name else ''}")
 
 
 def check_steam(report: Report, provider: SteamProvider | None = None) -> None:
@@ -759,6 +859,7 @@ def run_doctor(config_path: Path | None = None, *, cpu_seconds: float = 3.0) -> 
     check_audio(report)
     check_launch(report)
     check_apps(report)
+    check_spotify(report)
     check_steam(report)
     check_office(report)
     check_power(report, config)

@@ -1,3 +1,24 @@
+mydock (1.3.0) unstable; urgency=medium
+
+  * La page « Musique » devient « Spotify », au plus près de l'application officielle : trois onglets
+    (En lecture, Rechercher, Ta bibliothèque). Le lecteur garde la pochette, la progression glissable et le
+    volume de la sortie, et gagne la lecture aléatoire et la répétition (rien, la liste, le morceau). La
+    recherche classe les résultats en morceaux, artistes, albums et playlists, avec leurs pochettes ; la
+    bibliothèque donne les playlists, les titres likés, les albums, les artistes suivis et les titres
+    écoutés récemment ; un album, un artiste ou une playlist a sa page, avec un bouton « Lecture ». Un
+    bouton « Lancer Spotify » démarre l'application du PC quand elle est fermée.
+  * Le bouton de l'accueil s'appelle Spotify (son dessin et sa couleur). L'ordre et les pages cachées déjà
+    choisis dans Réglages sont conservés.
+  * La recherche et la bibliothèque demandent de relier un compte Spotify, une seule fois, sur le PC
+    (« mydock-agent spotify login ») ; la page l'explique tant que ce n'est pas fait. La lecture, la pause,
+    le morceau suivant, l'aléatoire, la répétition et le volume n'en ont pas besoin.
+  * Le dock attend jusqu'à 70 s la réponse de l'agent aux actions « spotify.* » (lancer l'application puis
+    jouer prend parfois une quarantaine de secondes) ; 6 s pour les autres, comme avant.
+  * Cette version demande aussi le nouveau paquet du PC (mydock-agent 1.3.0), proposé par la page du Pi :
+    un agent plus ancien le dit sur la page Spotify, et le lecteur continue de marcher.
+
+ -- neomars <neomars@users.noreply.github.com>  Sun, 08 Nov 2026 19:00:00 +0000
+
 mydock (1.2.0) unstable; urgency=medium
 
   * Nouvel écran d'accueil en gros boutons, comme les touches d'un Stream Deck : un bouton coloré par

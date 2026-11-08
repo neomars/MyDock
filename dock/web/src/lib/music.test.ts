@@ -14,6 +14,8 @@ const player = (extra: Partial<PlayerInfo> = {}): PlayerInfo => ({
   rate: 1,
   art: null,
   can: { play: true, pause: true, next: true, previous: true, seek: true },
+  shuffle: null,
+  loop: null,
   ...extra,
 })
 

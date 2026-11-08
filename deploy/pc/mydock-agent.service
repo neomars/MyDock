@@ -11,7 +11,9 @@ Restart=on-failure
 RestartSec=3
 # L'agent reste discret : le PC garde la priorité.
 Nice=5
-# Durcissement sans gêner le lancement des applications de l'utilisateur.
+# Durcissement. Les applications de l'utilisateur ne sont PAS lancées comme enfants de l'agent (elles
+# hériteraient de NoNewPrivileges, et un Snap ne démarrerait pas) : l'agent demande au gestionnaire
+# systemd de l'utilisateur de les lancer (« systemd-run --user »), voir mydock_agent/launcher.py.
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes

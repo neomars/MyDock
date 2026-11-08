@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
 import { clearKeyboard, expect, goHome, openPage, shot, test, typeOnKeyboard } from './fixtures'
 
 const TABS: [string, string][] = [
-  ['music', 'Musique'],
+  ['music', 'Spotify'],
   ['sound', 'Son'],
   ['apps', 'Applis'],
   ['steam', 'Steam'],

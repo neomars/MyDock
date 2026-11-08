@@ -1,4 +1,4 @@
-// État du son pour toute l'interface : page Son et volume de la page Musique.
+// État du son pour toute l'interface : page Son et volume de la page Spotify.
 //
 // L'agent publie l'état du son seulement quand il change (volume réglé au clavier du PC, casque
 // branché, application qui démarre). Les réglages partent sans attendre de réponse :

@@ -27,7 +27,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,6 +51,9 @@ TEXT_LIMIT = 200
 PREFERRED_PLAYER = "spotify"  # à égalité, Spotify passe en premier
 
 STATUSES = {"Playing": "playing", "Paused": "paused", "Stopped": "stopped"}
+#: « LoopStatus » de MPRIS <-> ce que l'écran manipule (« none », « track », « playlist »).
+LOOPS = {"None": "none", "Track": "track", "Playlist": "playlist"}
+LOOP_VALUES = {value: key for key, value in LOOPS.items()}
 
 
 # --- outils purs ---------------------------------------------------------------------------------
@@ -103,6 +106,8 @@ class PlayerState:
     can_next: bool = False
     can_previous: bool = False
     can_seek: bool = False
+    shuffle: bool | None = None  # None : ce lecteur ne propose pas la lecture aléatoire
+    loop: str | None = None  # « none », « track » ou « playlist » ; None : pas de répétition
     activity: int = 0  # plus grand = a joué plus récemment
     props: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -132,6 +137,10 @@ class PlayerState:
                 self.can_previous = bool(value)
             elif key == "CanSeek":
                 self.can_seek = bool(value)
+            elif key == "Shuffle" and isinstance(value, bool):
+                self.shuffle = value
+            elif key == "LoopStatus" and str(value) in LOOPS:
+                self.loop = LOOPS[str(value)]
 
     def _apply_metadata(self, meta: dict[str, Any]) -> None:
         artist = meta.get("xesam:artist") or meta.get("xesam:albumArtist")
@@ -173,6 +182,8 @@ class PlayerState:
             "position_ms": self.current_position_ms(now),
             "rate": self.rate,
             "art": art_id(self.art_url) if self.art_url else None,
+            "shuffle": self.shuffle,
+            "loop": self.loop,
             "can": {
                 "play": self.can_play,
                 "pause": self.can_pause,
@@ -296,8 +307,11 @@ def fetch_art(
     return data
 
 
-def prepare_art(data: bytes) -> tuple[str, bytes]:
-    """Image prête pour l'écran : réduite en JPEG si Pillow est là, sinon telle quelle si légère."""
+def prepare_art(data: bytes, size: int = ART_SIZE) -> tuple[str, bytes]:
+    """Image prête pour l'écran : réduite en JPEG si Pillow est là, sinon telle quelle si légère.
+
+    `size` : le plus grand côté, en pixels (les vignettes des listes n'ont pas besoin de la pochette entière).
+    """
     mime = sniff_image(data)
     if mime is None:
         raise ArtError("Ce fichier n'est pas une image.")
@@ -310,7 +324,7 @@ def prepare_art(data: bytes) -> tuple[str, bytes]:
     try:
         with Image.open(io.BytesIO(data)) as image:
             image = ImageOps.exif_transpose(image)
-            image.thumbnail((ART_SIZE, ART_SIZE))
+            image.thumbnail((size, size))
             if image.mode in ("RGBA", "LA", "P"):
                 background = Image.new("RGB", image.size, (19, 25, 35))
                 background.paste(image.convert("RGBA"), mask=image.convert("RGBA").split()[-1])
@@ -323,6 +337,14 @@ def prepare_art(data: bytes) -> tuple[str, bytes]:
 
 
 # --- accès D-Bus -------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Var:
+    """Une valeur à envoyer dans une variante D-Bus (« v ») : sa signature et la valeur."""
+
+    signature: str
+    value: Any
 
 
 @dataclass(frozen=True)
@@ -427,7 +449,7 @@ class DbusFastBus:
         signature: str = "",
         body: list[Any] | None = None,
     ) -> list[Any]:
-        from dbus_fast import Message, MessageType
+        from dbus_fast import Message, MessageType, Variant
 
         message = Message(
             destination=destination,
@@ -435,7 +457,10 @@ class DbusFastBus:
             interface=interface,
             member=member,
             signature=signature,
-            body=body or [],
+            body=[
+                Variant(item.signature, item.value) if isinstance(item, Var) else item
+                for item in body or []
+            ],
         )
         try:
             reply = await asyncio.wait_for(self._bus.call(message), CALL_TIMEOUT)
@@ -457,6 +482,10 @@ class MusicBackend(Protocol):
     async def next(self, player: str | None) -> None: ...
     async def previous(self, player: str | None) -> None: ...
     async def seek(self, player: str | None, position_ms: int) -> None: ...
+    async def set_shuffle(self, player: str | None, enabled: bool) -> None: ...
+    async def set_loop(self, player: str | None, mode: str) -> None: ...
+    async def open_uri(self, player: str | None, uri: str) -> None: ...
+    def has_player(self, base: str) -> bool: ...
     def select(self, player: str) -> None: ...
     async def position(self) -> dict[str, Any]: ...
     async def art(self, art: str) -> dict[str, str]: ...
@@ -696,6 +725,43 @@ class MusicProvider(Provider):
             current = target.position_ms or 0
             await self._call_player(target, "Seek", "x", [(position_ms - current) * 1000])
 
+    async def _set_property(
+        self, player: PlayerState, prop: str, signature: str, value: Any
+    ) -> None:
+        assert self._bus is not None
+        try:
+            await self._bus.call(
+                MPRIS_PREFIX + player.id,
+                OBJECT_PATH,
+                PROPS_IFACE,
+                "Set",
+                "ssv",
+                [PLAYER_IFACE, prop, Var(signature, value)],
+            )
+        except BusError:
+            raise ActionError(
+                "failed", f"{player.identity or player.id} refuse ce réglage."
+            ) from None
+
+    async def set_shuffle(self, player: str | None, enabled: bool) -> None:
+        target = self._by_id(player)
+        if target.shuffle is None:
+            raise ActionError("unsupported", "Ce lecteur n'a pas de lecture aléatoire.")
+        await self._set_property(target, "Shuffle", "b", enabled)
+
+    async def set_loop(self, player: str | None, mode: str) -> None:
+        target = self._by_id(player)
+        if target.loop is None or mode not in LOOP_VALUES:
+            raise ActionError("unsupported", "Ce lecteur n'a pas de répétition.")
+        await self._set_property(target, "LoopStatus", "s", LOOP_VALUES[mode])
+
+    async def open_uri(self, player: str | None, uri: str) -> None:
+        """Demande au lecteur d'ouvrir une adresse (« spotify:album:… »). Réservé à `SpotifyService`, qui la valide."""
+        await self._call_player(self._by_id(player), "OpenUri", "s", [uri])
+
+    def has_player(self, base: str) -> bool:
+        return any(p.base == base for p in self._players.values())
+
     def select(self, player: str) -> None:
         target = self._by_id(player)
         self._preferred = target.base
@@ -756,6 +822,16 @@ class SelectParams(_Strict):
     player: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,80}$")
 
 
+class ShuffleParams(_Strict):
+    enabled: bool = Field(strict=True)
+    player: str | None = PlayerId
+
+
+class RepeatParams(_Strict):
+    mode: Literal["none", "track", "playlist"]
+    player: str | None = PlayerId
+
+
 class ArtParams(_Strict):
     art: str = Field(pattern=r"^[0-9a-f]{16}$")
 
@@ -777,6 +853,14 @@ def register_music_actions(registry: ActionRegistry, backend: MusicBackend) -> N
         await backend.seek(params.player, params.position_ms)
         return {"done": True}
 
+    async def shuffle(_ctx: ActionContext, params: ShuffleParams) -> dict[str, bool]:
+        await backend.set_shuffle(params.player, params.enabled)
+        return {"done": True}
+
+    async def repeat(_ctx: ActionContext, params: RepeatParams) -> dict[str, bool]:
+        await backend.set_loop(params.player, params.mode)
+        return {"done": True}
+
     async def select(_ctx: ActionContext, params: SelectParams) -> dict[str, bool]:
         backend.select(params.player)
         return {"done": True}
@@ -791,6 +875,8 @@ def register_music_actions(registry: ActionRegistry, backend: MusicBackend) -> N
     registry.register("music.next", next_track, params=PlayerParams, timeout=4.0)
     registry.register("music.previous", previous_track, params=PlayerParams, timeout=4.0)
     registry.register("music.seek", seek, params=SeekParams, timeout=4.0)
+    registry.register("music.shuffle", shuffle, params=ShuffleParams, timeout=4.0)
+    registry.register("music.repeat", repeat, params=RepeatParams, timeout=4.0)
     registry.register("music.select", select, params=SelectParams)
     registry.register("music.position", position, timeout=4.0)
     registry.register("music.art", art, params=ArtParams, timeout=15.0)

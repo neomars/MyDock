@@ -55,6 +55,7 @@
 </script>
 
 <div class="wrap">
+  <span class="time" data-testid="time-elapsed">{shown !== null ? formatTrackTime(shown) : '–:––'}</span>
   <div
     bind:this={track}
     class="track"
@@ -77,19 +78,23 @@
     </div>
     {#if interactive}<div class="thumb" class:dragging={drag !== null} style:left="{ratio * 100}%"></div>{/if}
   </div>
-  <div class="times">
-    <span data-testid="time-elapsed">{shown !== null ? formatTrackTime(shown) : '–:––'}</span>
-    <span data-testid="time-total">{length ? formatTrackTime(length) : ''}</span>
-  </div>
+  <span class="time end" data-testid="time-total">{length ? formatTrackTime(length) : ''}</span>
 </div>
 
 <style>
+  /* Comme dans l'application officielle : le temps écoulé, la barre, la durée, sur une seule ligne (la page tient ainsi
+     dans l'écran). L'espace de chaque côté de la barre laisse la place à la poignée, qui déborde de 20 px à chaque bout. */
   .wrap {
+    display: flex;
+    align-items: center;
+    gap: 26px;
     width: 100%;
   }
   .track {
     position: relative;
-    height: 64px;
+    flex: 1 1 0;
+    min-width: 0;
+    height: 56px;
     display: flex;
     align-items: center;
     touch-action: none;
@@ -122,11 +127,13 @@
     margin: -26px 0 0 -26px;
     background: var(--accent);
   }
-  .times {
-    display: flex;
-    justify-content: space-between;
-    margin-top: -2px;
+  .time {
+    flex: none;
+    min-width: 2.4em;
     font-size: var(--fs-small);
     color: var(--text-2);
+  }
+  .time.end {
+    text-align: right;
   }
 </style>

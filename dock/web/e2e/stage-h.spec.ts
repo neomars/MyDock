@@ -6,7 +6,7 @@ import type { Page, WebSocketRoute } from '@playwright/test'
 import { clearKeyboard, expect, goHome, openPage, shot, swipe, test, tileOrder, typeOnKeyboard } from './fixtures'
 
 const PAGES: [id: string, label: string, shotName: string][] = [
-  ['music', 'Musique', '04-musique'],
+  ['music', 'Spotify', '04-musique'],
   ['sound', 'Son', '05-son'],
   ['apps', 'Applis', '06-applis'],
   ['steam', 'Steam', '07-steam'],
@@ -110,7 +110,7 @@ test('Accueil : le texte est doublé (courant 40 px, libellés des boutons 36 px
   expect(sizes.topbar).toBe(88)
 })
 
-test('Accueil : le bouton Musique montre le morceau en cours', async ({ dock }) => {
+test('Accueil : le bouton Spotify montre le morceau en cours', async ({ dock }) => {
   await expect(dock.getByTestId('tile-music-sub')).toHaveText('Nuit blanche')
   await dock.getByTestId('mini-next').tap()
   await expect(dock.getByTestId('tile-music-sub')).toHaveText('Sous la pluie de Kyoto')
@@ -211,7 +211,7 @@ test('Accueil : PC éteint, le bandeau le dit, propose de l’allumer et grise l
   await expect(dock.getByTestId('tile-settings')).not.toHaveAttribute('data-dim', 'true')
   expectOnScreen(await boxOf(dock, 'home-banner'), 'bandeau')
   expectOnScreen(await boxOf(dock, 'tile-settings'), 'dernier bouton')
-  await shot(dock, '02-accueil-pc-eteint', 'h')
+  await shot(dock, '00b-accueil-pc-eteint', 'i') // reprise en 1.3.0 : le bouton s'appelle maintenant Spotify
 
   await dock.getByTestId('banner-wake').tap()
   await expect(dock.getByTestId('toast')).toContainText('Paquet de réveil envoyé')
@@ -253,7 +253,7 @@ test.describe('dock neuf', () => {
     expectOnScreen(await boxOf(dock, 'home-banner'), 'bandeau')
     const code = await boxOf(dock, 'banner-code')
     expect(code.height, 'le code tient sur une seule ligne').toBeLessThan(80)
-    await shot(dock, '03-accueil-association', 'h')
+    await shot(dock, '00c-accueil-association', 'i')
   })
 })
 
