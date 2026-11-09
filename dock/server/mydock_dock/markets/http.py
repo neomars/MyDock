@@ -24,6 +24,7 @@ from typing import Protocol
 
 from mydock_dock import __version__
 from mydock_dock.markets.errors import BadResponse, NetworkError
+from mydock_dock.net import build_opener
 
 MAX_BODY_BYTES = 2 * 1024 * 1024
 DEFAULT_TIMEOUT = 10.0
@@ -103,10 +104,7 @@ class UrllibFetcher:
 
     def __init__(self, *, max_bytes: int = MAX_BODY_BYTES, context: ssl.SSLContext | None = None):
         self._max = max_bytes
-        handlers: list[urllib.request.BaseHandler] = [_SameHostRedirects()]
-        if context is not None:
-            handlers.append(urllib.request.HTTPSHandler(context=context))
-        self._opener = urllib.request.build_opener(*handlers)
+        self._opener = build_opener(_SameHostRedirects(), context=context)
 
     async def get(
         self,

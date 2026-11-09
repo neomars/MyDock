@@ -11,6 +11,7 @@
   import MarketsEditor from './components/MarketsEditor.svelte'
   import OfflineScreen from './components/OfflineScreen.svelte'
   import PagesEditor from './components/PagesEditor.svelte'
+  import SaverSources from './components/SaverSources.svelte'
   import ScreenSleep from './components/ScreenSleep.svelte'
   import Toast from './components/Toast.svelte'
   import TopBar from './components/TopBar.svelte'
@@ -130,6 +131,7 @@
 <AppPicker />
 <MarketsEditor />
 <PagesEditor />
+<SaverSources />
 <Keyboard />
 <ConfirmDialog />
 <Toast />

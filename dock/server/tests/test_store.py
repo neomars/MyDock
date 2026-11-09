@@ -17,6 +17,8 @@ def test_defaults(tmp_path):
         "saver_after": 300,  # l'économiseur d'écran démarre après 5 minutes sans toucher
         "saver_content": "videos",
         "saver_aerial": True,
+        "saver_apple": True,
+        "saver_sources": [],
     }
     assert store.pc["interfaces"] == []
 
@@ -211,6 +213,8 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         "saver_after": 300,
         "saver_content": "videos",
         "saver_aerial": True,
+        "saver_apple": True,
+        "saver_sources": [],
     }
     assert store.pc["hostname"] == "x"
 
@@ -290,3 +294,60 @@ def test_a_damaged_screensaver_in_the_file_falls_back_to_the_defaults(tmp_path, 
     )
     ui = StateStore(tmp_path).ui
     assert (ui["saver_after"], ui["saver_content"]) == (300, "videos")
+
+
+def test_screensaver_sources_are_https_addresses_and_persist(tmp_path):
+    store = StateStore(tmp_path)
+    urls = ["https://x.org/a.mp4", "https://x.org/liste.txt"]
+    assert store.update_ui({"saver_sources": urls})["saver_sources"] == urls
+    assert StateStore(tmp_path).ui["saver_sources"] == urls
+    assert store.update_ui({"saver_apple": False})["saver_apple"] is False
+    assert StateStore(tmp_path).ui["saver_apple"] is False
+    assert store.update_ui({"saver_sources": []})["saver_sources"] == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["http://x.org/a.mp4"],
+        ["https://user:pw@x.org/a.mp4"],
+        ["https://x.org/a b.mp4"],
+        ["https://x.org/a.mp4", "https://x.org/a.mp4"],
+        [f"https://x.org/{i}.mp4" for i in range(21)],
+        "https://x.org/a.mp4",
+        [None],
+    ],
+)
+def test_bad_screensaver_sources_are_refused_and_change_nothing(tmp_path, value):
+    store = StateStore(tmp_path)
+    store.update_ui({"saver_sources": ["https://x.org/ok.mp4"]})
+    with pytest.raises(ValidationFailure):
+        store.update_ui({"saver_sources": value})
+    assert store.ui["saver_sources"] == ["https://x.org/ok.mp4"]
+
+
+def test_apple_switch_must_be_a_boolean(tmp_path):
+    with pytest.raises(ValidationFailure):
+        StateStore(tmp_path).update_ui({"saver_apple": "oui"})
+
+
+def test_a_damaged_sources_list_in_the_file_keeps_only_the_valid_ones(tmp_path):
+    (tmp_path / "state.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "ui": {
+                    "saver_sources": [
+                        "https://x.org/a.mp4",
+                        "ftp://x.org/b",
+                        3,
+                        "https://x.org/a.mp4",
+                    ],
+                    "saver_apple": "peut-être",
+                },
+            }
+        )
+    )
+    ui = StateStore(tmp_path).ui
+    assert ui["saver_sources"] == ["https://x.org/a.mp4"]
+    assert ui["saver_apple"] is True

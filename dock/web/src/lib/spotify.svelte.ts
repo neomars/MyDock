@@ -52,7 +52,7 @@ function failure<T>(ack: Ack): Load<T> {
 
 /** Un agent d'avant la 1.4.0 connaît Spotify mais pas les appareils : on le dit au lieu d'afficher « Action inconnue ». */
 const AGENT_WITHOUT_OUTPUTS =
-  'L’agent installé sur le PC est plus ancien que le dock et ne sait pas choisir la sortie : mets-le à jour (paquet mydock-agent 1.4.0).'
+  'L’agent installé sur le PC est plus ancien que le dock et ne sait pas choisir la sortie : mets-le à jour (paquet mydock-agent 1.4.0 ou plus).'
 
 class SpotifyStore {
   status = $state.raw<SpotifyStatus | null>(null)

@@ -20,6 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import urlsplit
+
+from mydock_dock.net import build_opener
 
 #: Les formats que Chromium lit sans réglage : MP4 (H.264) et WebM. Pas de .mov ni .mkv : à convertir (voir le README).
 VIDEO_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm"}
@@ -152,7 +155,7 @@ def add_file(directory: Path, source: Path, name: str | None = None) -> Path:
         return _store(directory, name or clean_name(source.name), handle, MAX_BYTES)
 
 
-class _HttpsOnly(urllib.request.HTTPRedirectHandler):
+class HttpsOnly(urllib.request.HTTPRedirectHandler):
     """Suit les redirections, mais seulement vers du https."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
@@ -175,7 +178,7 @@ def add_url(
     request = urllib.request.Request(url, headers={"User-Agent": "mydock-dock"})
 
     def default_open(req: urllib.request.Request, timeout: float) -> BinaryIO:
-        return urllib.request.build_opener(_HttpsOnly).open(req, timeout=timeout)  # type: ignore[return-value]
+        return build_opener(HttpsOnly()).open(req, timeout=timeout)  # type: ignore[return-value]
 
     try:
         response = (opener or default_open)(request, TIMEOUT)
@@ -219,3 +222,25 @@ def human_size(size: int) -> str:
             return f"{value:.0f} {unit}" if unit == "o" else f"{value:.1f} {unit}".replace(".", ",")
         value /= 1024
     return f"{size} o"  # pragma: no cover
+
+
+MAX_SOURCE_URL = 500
+
+
+def valid_source_url(value: object) -> bool:
+    """Une adresse de source acceptable : https, un nom de machine, ni identifiants ni caractère de contrôle ni espace."""
+    if not isinstance(value, str) or not 10 <= len(value) <= MAX_SOURCE_URL:
+        return False
+    if any(ord(c) <= 32 or ord(c) == 127 for c in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        parts.port  # noqa: B018 - lève ValueError si le port est absurde
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and bool(parts.hostname)
+        and parts.username is None
+        and parts.password is None
+    )

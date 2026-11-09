@@ -45,6 +45,18 @@ export interface SaverVideo {
 }
 
 /** Où en est le téléchargement des vues aériennes (donné par `/api/screensaver`). */
+export interface AerialSource {
+  id: string
+  label: string
+  /** L'adresse saisie ; `null` pour les vues aériennes d'Apple. */
+  url: string | null
+  builtin: boolean
+  /** Combien de films, ou `null` pour une liste pas encore lue. */
+  total: number | null
+  done: number
+  error: string | null
+}
+
 export interface AerialStatus {
   total: number
   done: number
@@ -52,6 +64,34 @@ export interface AerialStatus {
   current: string | null
   error: string | null
   enabled: boolean
+  sources: AerialSource[]
+}
+
+const films = (n: number): string => `${n} film${n > 1 ? 's' : ''}`
+
+/** La phrase qui résume le téléchargement, sous le titre des Réglages et en tête de la fenêtre des vidéos. */
+export function aerialSummary(status: AerialStatus): string {
+  if (status.sources.length === 0) return 'Aucune source de vidéos : ajoute une adresse.'
+  if (!status.enabled) return `Téléchargement suspendu · ${status.done} sur ${status.total} prêtes.`
+  if (status.total > 0 && status.done >= status.total) return `${films(status.total)} prêts.`
+  const progress = `${status.done} sur ${status.total} prêtes`
+  if (status.active && status.current) return `${progress} · en cours : ${status.current}`
+  if (status.error) return `${progress} · ${status.error}`
+  return `${progress}.`
+}
+
+/** L'état d'une source, sur sa ligne : combien de films sont prêts, ou pourquoi elle n'avance pas. */
+export function sourceStatus(source: AerialSource): string {
+  if (source.total === null) return source.error ?? 'Liste à lire…'
+  const progress = source.total === 0 ? 'aucun film' : source.done >= source.total ? `${films(source.total)} prêts` : `${source.done} sur ${source.total} prêtes`
+  return source.error ? `${progress} · ${source.error}` : progress
+}
+
+/** Une adresse saisie au clavier tactile, nettoyée ; `null` si ce n'est pas une adresse https complète. */
+export function cleanSourceUrl(text: string): string | null {
+  const value = text.trim()
+  if (!/^https:\/\/[^\s/?#]+\S*$/i.test(value) || value.length > 500 || value.length < 10) return null
+  return value
 }
 
 export type SaverItem = { kind: 'scene'; id: SceneId } | { kind: 'video'; name: string }

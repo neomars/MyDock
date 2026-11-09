@@ -23,6 +23,7 @@ from mydock_dock.markets.model import (
     parse_refresh,
     parse_watchlist,
 )
+from mydock_dock.screensaver import valid_source_url
 from mydock_dock.validation import ValidationFailure
 
 log = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ SAVER_CHOICES = (0, 60, 120, 300, 600, 900, 1800)
 DEFAULT_SAVER_AFTER = 300
 #: Ce que l'économiseur montre : les scènes animées de l'interface, les vidéos du Pi, ou les deux.
 SAVER_CONTENT = ("all", "scenes", "videos")
+MAX_SAVER_SOURCES = 20  # adresses de vidéos ou de listes saisies dans Réglages
 APP_ID_RE = re.compile(r"^[A-Za-z0-9_.+-]{1,200}\.desktop$")  # identifiant d'un fichier .desktop
 
 
@@ -53,6 +55,8 @@ def _default_state() -> dict[str, Any]:
             "saver_after": DEFAULT_SAVER_AFTER,
             "saver_content": "videos",
             "saver_aerial": True,
+            "saver_apple": True,
+            "saver_sources": [],
         },
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
         "markets": {
@@ -97,6 +101,9 @@ class StateStore:
             ui["saver_content"] = "videos"
         if type(ui.get("saver_aerial")) is not bool:
             ui["saver_aerial"] = True
+        if type(ui.get("saver_apple")) is not bool:
+            ui["saver_apple"] = True
+        ui["saver_sources"] = _saver_sources_or_empty(ui.get("saver_sources"))
 
     def _save(self) -> None:
         try:
@@ -151,6 +158,12 @@ class StateStore:
             if type(patch["saver_aerial"]) is not bool:
                 raise ValidationFailure("Réglage des vues aériennes invalide.")
             new["saver_aerial"] = patch["saver_aerial"]
+        if "saver_apple" in patch:
+            if type(patch["saver_apple"]) is not bool:
+                raise ValidationFailure("Réglage des vues aériennes d'Apple invalide.")
+            new["saver_apple"] = patch["saver_apple"]
+        if "saver_sources" in patch:
+            new["saver_sources"] = _saver_sources(patch["saver_sources"])
         if new != ui:
             self._data["ui"] = new
             self._save()
@@ -194,6 +207,31 @@ class StateStore:
         if changed:
             self._save()
         return changed
+
+
+def _saver_sources(value: Any) -> list[str]:
+    """La liste des adresses de vidéos : des https valides, sans doublon, 20 au plus."""
+    if not isinstance(value, list) or len(value) > MAX_SAVER_SOURCES:
+        raise ValidationFailure(f"Au plus {MAX_SAVER_SOURCES} adresses de vidéos.")
+    for item in value:
+        if not valid_source_url(item):
+            raise ValidationFailure(
+                "Une adresse de vidéo doit commencer par https:// et être complète."
+            )
+    if len(set(value)) != len(value):
+        raise ValidationFailure("Cette adresse est déjà dans la liste.")
+    return list(value)
+
+
+def _saver_sources_or_empty(value: Any) -> list[str]:
+    """Au chargement : on garde les adresses valides, sans jamais échouer sur un fichier abîmé."""
+    if not isinstance(value, list):
+        return []
+    seen: list[str] = []
+    for item in value:
+        if valid_source_url(item) and item not in seen and len(seen) < MAX_SAVER_SOURCES:
+            seen.append(item)
+    return seen
 
 
 def _is_screen_sleep(value: Any) -> bool:

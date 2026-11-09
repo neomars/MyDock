@@ -3,6 +3,9 @@ import {
   DIGITS,
   LETTER_ROWS,
   SYMBOLS,
+  URL_SYMBOLS,
+  supportsUppercase,
+  symbolsFor,
   backspace,
   formatMacInput,
   isKeyAllowed,
@@ -85,5 +88,27 @@ describe('adresse MAC', () => {
     expect(backspace('02:00', 'mac')).toBe('02:0')
     expect(backspace('02:0', 'mac')).toBe('02')
     expect(backspace('02', 'mac')).toBe('0')
+  })
+})
+
+describe('le clavier des adresses web', () => {
+  it('propose les touches d’une adresse et accepte majuscules et chiffres', () => {
+    expect(symbolsFor('url')).toEqual(URL_SYMBOLS)
+    expect(symbolsFor('text')).toEqual(SYMBOLS)
+    for (const key of ['?', '=', '&', '%', '~', '/', ':', '.', '-', '_']) expect(URL_SYMBOLS).toContain(key)
+    expect(supportsUppercase('url')).toBe(true)
+    expect(typeChar('https://x.org/', 'M', 'url', false)).toBe('https://x.org/M')
+    expect(typeChar('https://x.org/a', '?', 'url', false)).toBe('https://x.org/a?')
+    expect(typeChar('https://x.org/', 'a', 'url', true)).toBe('https://x.org/A')
+  })
+  it('refuse l’espace et les caractères qui n’ont rien à faire dans une adresse', () => {
+    expect(isKeyAllowed('url', ' ')).toBe(false)
+    expect(isKeyAllowed('url', '"')).toBe(false)
+    expect(isKeyAllowed('url', '<')).toBe(false)
+  })
+  it('accepte jusqu’à 500 caractères', () => {
+    let value = ''
+    for (let i = 0; i < 520; i++) value = typeChar(value, 'a', 'url', false)
+    expect(value).toHaveLength(500)
   })
 })

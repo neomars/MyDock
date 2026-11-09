@@ -8,7 +8,7 @@
   import {
     DIGITS,
     LETTER_ROWS,
-    SYMBOLS,
+    symbolsFor,
     backspace,
     isKeyAllowed,
     supportsUppercase,
@@ -134,7 +134,7 @@
           </div>
         {/each}
         <div class="row">
-          {#each SYMBOLS as key (key)}
+          {#each symbolsFor(keyboard.kind) as key (key)}
             <button class="key" disabled={!usable(key)} onpointerdown={down(() => press(key))}>{key}</button>
           {/each}
           <button

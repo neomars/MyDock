@@ -259,6 +259,28 @@ async def test_the_refresh_button_asks_now(tmp_path):
         assert len(fetcher.calls_to("/ticker/24hr")) == before + 1
 
 
+async def test_the_connection_test_reports_each_step_and_a_verdict(tmp_path, monkeypatch):
+    from mydock_dock.markets import diagnose as dg
+
+    async def no_dns(_host):
+        raise OSError("pas de DNS")
+
+    monkeypatch.setattr(dg, "_resolve", no_dns)
+    fetcher = binance_fetcher()
+    async with (
+        running_dock(tmp_path, markets_fetcher=fetcher, markets_timing=TIMING) as dock,
+        dock.connect() as ws,
+    ):
+        ack = await call(ws, "d1", "dock.markets.diagnose")
+        assert ack["ok"] is True
+        checks = ack["r"]["checks"]
+        assert checks[0]["label"] == "Heure du Pi"
+        assert {"api.binance.com", "Binance"} <= {c["label"] for c in checks}
+        assert all(set(c) == {"label", "ok", "detail"} for c in checks)
+        assert next(c for c in checks if c["label"] == "api.binance.com")["ok"] is False
+        assert "Internet" in (ack["r"]["verdict"] or "") or ack["r"]["verdict"] is None
+
+
 async def test_provider_failures_reach_the_screen_with_the_old_quote(tmp_path):
     fetcher = binance_fetcher()
     async with (

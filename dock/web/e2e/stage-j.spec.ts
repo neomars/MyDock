@@ -4,7 +4,7 @@
 import type { Locator, Page } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
-import { expect, openPage, shot, test, THUMB } from './fixtures'
+import { expect, openPage, shot, test, THUMB, typeOnKeyboard } from './fixtures'
 
 const percent = (n: number) => `${n} %`
 
@@ -141,10 +141,14 @@ test('Économiseur : Réglages propose les délais, le dock garde le choix, et l
   await dock.waitForTimeout(300)
   await shot(dock, '05-reglage-economiseur-suite', 'j')
 
-  await dock.getByTestId('saver-aerial-toggle').tap() // suspendre le téléchargement des vues aériennes
-  await expect(dock.getByTestId('saver-aerial')).toContainText('téléchargement suspendu')
+  await dock.getByTestId('saver-videos-open').tap() // la fenêtre des vidéos : suspendre puis reprendre le téléchargement
+  await expect(dock.getByTestId('saver-sources')).toBeVisible()
   await dock.getByTestId('saver-aerial-toggle').tap()
-  await expect(dock.getByTestId('saver-aerial')).toContainText('0 sur 10 prêtes')
+  await expect(dock.getByTestId('saver-sources-summary')).toContainText('Téléchargement suspendu')
+  await dock.getByTestId('saver-aerial-toggle').tap()
+  await expect(dock.getByTestId('saver-sources-summary')).toContainText('0 sur 10 prêtes')
+  await dock.getByTestId('saver-sources-done').tap()
+  await expect(dock.getByTestId('saver-sources')).toHaveCount(0)
   await dock.getByTestId('saver-120').tap()
   await expect(dock.getByTestId('saver-120')).toHaveAttribute('aria-pressed', 'true')
   await expect(dock.getByTestId('saver-note')).toContainText('Sans toucher pendant 2 minutes')
@@ -325,4 +329,83 @@ test('Économiseur : une vidéo que le navigateur ne sait pas lire est écartée
   await expect(saver).toBeVisible()
   await expect(saver).toHaveAttribute('data-kind', 'scene', { timeout: 10_000 }) // pas d'écran noir : on retombe sur les scènes
   await expect(dock.getByTestId('saver-title')).not.toHaveText('')
+})
+
+// --- les adresses de téléchargement des vidéos (saisies au clavier tactile) -----------------------------------------------
+
+async function openVideos(page: Page): Promise<void> {
+  await openPage(page, 'settings')
+  await page.getByTestId('saver-videos-open').tap()
+  await expect(page.getByTestId('saver-sources')).toBeVisible()
+}
+
+test('Vidéos : la fenêtre montre les vues aériennes d’Apple et propose d’ajouter une adresse', async ({ dock }) => {
+  await openVideos(dock)
+  await expect(dock.getByTestId('saver-src-0')).toContainText("Vues aériennes d'Apple")
+  await expect(dock.getByTestId('saver-src-0-status')).toHaveText('0 sur 10 prêtes')
+  await expect(dock.getByTestId('saver-sources-summary')).toHaveText('0 sur 10 prêtes.')
+  await expect(dock.getByTestId('saver-add-url')).toBeVisible()
+  await dock.waitForTimeout(300)
+  await shot(dock, '12-videos-fenetre', 'j')
+})
+
+test('Vidéos : on saisit une adresse au clavier tactile, elle est gardée par le dock, puis retirée', async ({ dock }) => {
+  await openVideos(dock)
+  await dock.getByTestId('saver-add-url').tap()
+  await expect(dock.getByTestId('keyboard')).toBeVisible()
+  await expect(dock.getByTestId('keyboard-value')).toHaveText('https://') // déjà là : on ne tape que la suite
+  await typeOnKeyboard(dock, 'x.org/mer.mp4')
+  await dock.getByTestId('keyboard').getByRole('button', { name: '?', exact: true }).tap() // les touches d'une adresse web
+  await dock.getByTestId('keyboard').getByRole('button', { name: '&', exact: true }).tap()
+  await expect(dock.getByTestId('keyboard-value')).toHaveText('https://x.org/mer.mp4?&')
+  await shot(dock, '14-clavier-adresse', 'j')
+  await dock.getByTestId('keyboard').getByRole('button', { name: 'Effacer' }).tap()
+  await dock.getByTestId('keyboard').getByRole('button', { name: 'Effacer' }).tap()
+  await dock.getByTestId('keyboard-ok').tap()
+
+  await expect(dock.getByTestId('saver-src-1')).toContainText('x.org/mer.mp4')
+  await expect(dock.getByTestId('saver-src-1-status')).toHaveText('0 sur 1 prêtes')
+  await expect(dock.getByTestId('saver-sources-summary')).toHaveText('0 sur 11 prêtes.')
+  await shot(dock, '13-videos-adresse-ajoutee', 'j')
+
+  await dock.reload() // le dock garde l'adresse, pas le navigateur
+  await openVideos(dock)
+  await expect(dock.getByTestId('saver-src-1')).toContainText('x.org/mer.mp4')
+
+  await dock.getByTestId('saver-src-remove-1').tap() // retirer demande confirmation : les films seraient effacés
+  await dock.getByTestId('saver-src-cancel-1').tap()
+  await expect(dock.getByTestId('saver-src-1')).toBeVisible()
+  await dock.getByTestId('saver-src-remove-1').tap()
+  await dock.getByTestId('saver-src-confirm-1').tap()
+  await expect(dock.getByTestId('saver-src-1')).toHaveCount(0)
+})
+
+test('Vidéos : une adresse incomplète est refusée au clavier, une adresse déjà là aussi', async ({ dock }) => {
+  await openVideos(dock)
+  await dock.getByTestId('saver-add-url').tap()
+  await dock.getByTestId('keyboard-ok').tap() // « https:// » seul
+  await expect(dock.getByTestId('toast')).toContainText('adresse complète')
+  await expect(dock.getByTestId('saver-src-1')).toHaveCount(0)
+
+  for (const round of [1, 2]) {
+    await dock.getByTestId('saver-add-url').tap()
+    await typeOnKeyboard(dock, 'x.org/a.txt')
+    await dock.getByTestId('keyboard-ok').tap()
+    if (round === 2) await expect(dock.getByTestId('toast')).toContainText('déjà dans la liste')
+  }
+  await expect(dock.getByTestId('saver-src-1')).toContainText('x.org/a.txt')
+  await expect(dock.getByTestId('saver-src-1-status')).toHaveText('Liste à lire…') // un fichier texte : on ignore encore combien
+  await expect(dock.getByTestId('saver-src-2')).toHaveCount(0)
+})
+
+test('Vidéos : on retire les vues aériennes d’Apple, puis on les remet', async ({ dock }) => {
+  await openVideos(dock)
+  await dock.getByTestId('saver-src-remove-0').tap()
+  await dock.getByTestId('saver-src-confirm-0').tap()
+  await expect(dock.getByTestId('saver-src-0')).toHaveCount(0)
+  await expect(dock.getByTestId('saver-src-none')).toBeVisible()
+  await expect(dock.getByTestId('saver-sources-summary')).toContainText('Aucune source')
+  await dock.getByTestId('saver-add-apple').tap()
+  await expect(dock.getByTestId('saver-src-0')).toContainText("Vues aériennes d'Apple")
+  await expect(dock.getByTestId('saver-add-apple')).toHaveCount(0)
 })
