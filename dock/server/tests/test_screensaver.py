@@ -317,12 +317,13 @@ async def test_the_browser_lists_and_streams_the_videos_with_range_requests(stac
         listing = await client.get("/api/screensaver")
         assert listing.status_code == 200
         assert listing.headers["cache-control"] == "no-store"
-        assert listing.json() == {
-            "videos": [
-                {"name": "mer.mp4", "size": len(MP4), "mime": "video/mp4"},
-                {"name": "Vue du soir.webm", "size": 3000, "mime": "video/webm"},
-            ]
-        }
+        body = listing.json()
+        assert body["videos"] == [
+            {"name": "mer.mp4", "size": len(MP4), "mime": "video/mp4"},
+            {"name": "Vue du soir.webm", "size": 3000, "mime": "video/webm"},
+        ]
+        assert body["aerial"]["total"] == 10
+        assert body["aerial"]["done"] == 0
         whole = await client.get("/screensaver/mer.mp4")
         assert whole.status_code == 200
         assert whole.content == MP4
@@ -364,7 +365,8 @@ async def test_nothing_but_the_listed_videos_is_ever_served(stack, path):
 
 async def test_without_a_folder_the_list_is_empty(stack):
     async with httpx.AsyncClient(trust_env=False, base_url=stack.dock.origin) as client:
-        assert (await client.get("/api/screensaver")).json() == {"videos": []}
+        body = (await client.get("/api/screensaver")).json()
+        assert body["videos"] == []
 
 
 # --- les réglages et le diagnostic ---------------------------------------------------------------------------------
@@ -400,7 +402,7 @@ def test_the_diagnostic_reports_the_choice_and_the_videos(tmp_path):
     report = Report()
     check_saver(report, config)
     text = report.render()
-    assert "Économiseur : après 5 min sans toucher, contenu : scènes et vidéos" in text
+    assert "Économiseur : après 5 min sans toucher, contenu : vidéos du Pi" in text
     assert "Aucune vidéo" in text
     assert "mydock-dock screensaver add" in text
     assert not report.failed

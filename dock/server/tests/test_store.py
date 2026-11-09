@@ -15,7 +15,8 @@ def test_defaults(tmp_path):
         "pinned_apps": [],
         "screen_sleep": 0,  # jamais : on ne coupe pas l'écran sans que ce soit demandé
         "saver_after": 300,  # l'économiseur d'écran démarre après 5 minutes sans toucher
-        "saver_content": "all",
+        "saver_content": "videos",
+        "saver_aerial": True,
     }
     assert store.pc["interfaces"] == []
 
@@ -208,7 +209,8 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         "pinned_apps": [],
         "screen_sleep": 0,
         "saver_after": 300,
-        "saver_content": "all",
+        "saver_content": "videos",
+        "saver_aerial": True,
     }
     assert store.pc["hostname"] == "x"
 
@@ -287,4 +289,4 @@ def test_a_damaged_screensaver_in_the_file_falls_back_to_the_defaults(tmp_path, 
         json.dumps({"ui": {"saver_after": damaged, "saver_content": damaged}})
     )
     ui = StateStore(tmp_path).ui
-    assert (ui["saver_after"], ui["saver_content"]) == (300, "all")
+    assert (ui["saver_after"], ui["saver_content"]) == (300, "videos")

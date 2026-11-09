@@ -65,6 +65,7 @@ PI_SYSTEM_DEPENDS = [
     "chromium | chromium-browser",
     "wlr-randr",
     "swayidle",
+    "ffmpeg",
     "fonts-noto-core",
     "fonts-noto-color-emoji",
     "libgl1-mesa-dri",

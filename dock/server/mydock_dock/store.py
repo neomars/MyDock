@@ -51,7 +51,8 @@ def _default_state() -> dict[str, Any]:
             "pinned_apps": [],
             "screen_sleep": 0,
             "saver_after": DEFAULT_SAVER_AFTER,
-            "saver_content": "all",
+            "saver_content": "videos",
+            "saver_aerial": True,
         },
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
         "markets": {
@@ -93,7 +94,9 @@ class StateStore:
         if not _is_saver_after(ui.get("saver_after")):
             ui["saver_after"] = DEFAULT_SAVER_AFTER
         if ui.get("saver_content") not in SAVER_CONTENT:
-            ui["saver_content"] = "all"
+            ui["saver_content"] = "videos"
+        if type(ui.get("saver_aerial")) is not bool:
+            ui["saver_aerial"] = True
 
     def _save(self) -> None:
         try:
@@ -144,6 +147,10 @@ class StateStore:
             if patch["saver_content"] not in SAVER_CONTENT:
                 raise ValidationFailure("Contenu de l'économiseur d'écran inconnu.")
             new["saver_content"] = patch["saver_content"]
+        if "saver_aerial" in patch:
+            if type(patch["saver_aerial"]) is not bool:
+                raise ValidationFailure("Réglage des vues aériennes invalide.")
+            new["saver_aerial"] = patch["saver_aerial"]
         if new != ui:
             self._data["ui"] = new
             self._save()

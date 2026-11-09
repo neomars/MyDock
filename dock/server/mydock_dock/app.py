@@ -23,7 +23,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -32,6 +32,7 @@ from mydock_common.actions import ActionContext, ActionError, ActionRegistry, No
 from mydock_common.config import ConfigError
 from mydock_common.outbox import Outbox
 from mydock_dock import __version__, screensaver
+from mydock_dock.aerial import AerialFetcher
 from mydock_dock.agent_link import (
     AgentLink,
     LinkSettings,
@@ -122,6 +123,7 @@ class UiSetParams(_Strict):
     screen_sleep: StrictInt | None = None
     saver_after: StrictInt | None = None
     saver_content: Literal["all", "scenes", "videos"] | None = None
+    saver_aerial: StrictBool | None = None
 
 
 class MarketsSetParams(_Strict):
@@ -221,6 +223,9 @@ class DockServer:
         self._link_task: asyncio.Task[None] | None = None
         self._markets_task: asyncio.Task[None] | None = None
         self._pairing_task: asyncio.Task[None] | None = None
+        self._aerial_task: asyncio.Task[None] | None = None
+        # Les vues aériennes se téléchargent seules ; jamais en démonstration (aucun accès à Internet attendu).
+        self.aerial = AerialFetcher(config.saver_dir, lambda: bool(self.store.ui["saver_aerial"]))
         self._register_actions()
 
     # --- cycle de vie --------------------------------------------------------------------
@@ -231,6 +236,8 @@ class DockServer:
         self._markets_task = asyncio.create_task(self.markets.run(), name="markets")
         self.portal.start()
         self._pairing_task = asyncio.create_task(self._run_pairing(), name="pairing")
+        if not self.config.demo_markets:
+            self._aerial_task = asyncio.create_task(self.aerial.run(), name="aerial")
 
     async def _run_link(self) -> None:
         while True:  # la liaison ne doit jamais rester morte à cause d'une erreur inattendue
@@ -244,7 +251,9 @@ class DockServer:
 
     async def stop(self) -> None:
         tasks = [
-            t for t in (self._link_task, self._markets_task, self._pairing_task) if t is not None
+            t
+            for t in (self._link_task, self._markets_task, self._pairing_task, self._aerial_task)
+            if t is not None
         ]
         for task in tasks:
             task.cancel()
@@ -775,7 +784,10 @@ def create_app(server: DockServer) -> FastAPI:
         """Les vidéos que l'économiseur d'écran peut montrer (celles du dossier du Pi)."""
         found = await asyncio.to_thread(screensaver.videos, config.saver_dir)
         return JSONResponse(
-            {"videos": [{"name": v.name, "size": v.size, "mime": v.mime} for v in found]},
+            {
+                "videos": [{"name": v.name, "size": v.size, "mime": v.mime} for v in found],
+                "aerial": await asyncio.to_thread(server.aerial.status),
+            },
             headers={"Cache-Control": "no-store"},
         )
 

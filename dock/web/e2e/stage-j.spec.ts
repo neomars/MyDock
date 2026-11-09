@@ -123,9 +123,10 @@ test('Économiseur : Réglages propose les délais, le dock garde le choix, et l
   await openPage(dock, 'settings')
   const card = dock.getByTestId('settings-saver')
   await expect(dock.getByTestId('saver-300')).toHaveAttribute('aria-pressed', 'true') // 5 minutes, tant qu'on n'a rien choisi
-  await expect(dock.getByTestId('saver-content-all')).toHaveAttribute('aria-pressed', 'true')
+  await expect(dock.getByTestId('saver-content-videos')).toHaveAttribute('aria-pressed', 'true') // les vues aériennes d'abord
+  await expect(dock.getByTestId('saver-aerial')).toContainText('0 sur 10 prêtes')
   await expect(dock.getByTestId('saver-note')).toContainText('Sans toucher pendant 5 minutes')
-  await expect(dock.getByTestId('saver-videos')).toContainText('Aucune vidéo du Pi')
+  await expect(dock.getByTestId('saver-videos')).toContainText('Aucune vidéo prête')
   // La carte défile sous la barre du haut : d'abord son titre et ses choix, puis ses explications et le bouton d'essai.
   await card.evaluate((el) => {
     const page = el.closest('main.page')!
@@ -140,6 +141,10 @@ test('Économiseur : Réglages propose les délais, le dock garde le choix, et l
   await dock.waitForTimeout(300)
   await shot(dock, '05-reglage-economiseur-suite', 'j')
 
+  await dock.getByTestId('saver-aerial-toggle').tap() // suspendre le téléchargement des vues aériennes
+  await expect(dock.getByTestId('saver-aerial')).toContainText('téléchargement suspendu')
+  await dock.getByTestId('saver-aerial-toggle').tap()
+  await expect(dock.getByTestId('saver-aerial')).toContainText('0 sur 10 prêtes')
   await dock.getByTestId('saver-120').tap()
   await expect(dock.getByTestId('saver-120')).toHaveAttribute('aria-pressed', 'true')
   await expect(dock.getByTestId('saver-note')).toContainText('Sans toucher pendant 2 minutes')
