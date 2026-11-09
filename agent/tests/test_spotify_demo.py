@@ -164,3 +164,22 @@ async def test_the_demo_answers_the_same_actions_as_the_real_service():
     assert answer["ok"] is True
     assert answer["r"]["artists"][0]["name"] == "Mizu"
     assert len(CATALOG) == 4
+
+
+async def test_the_demo_has_connect_devices_and_a_transfer_moves_the_music():
+    _, demo = make()
+    first = (await demo.devices())["devices"]
+    assert first[0]["this_pc"] is True  # ce PC d'abord
+    assert [d["name"] for d in first if d["active"]] == [first[0]["name"]]
+    assert {d["type"] for d in first} >= {"Computer", "Speaker", "Smartphone", "TV"}
+    speaker = next(d for d in first if d["type"] == "Speaker")
+    assert await demo.transfer(speaker["id"]) == {"device": speaker["id"]}
+    after = {d["id"]: d for d in (await demo.devices())["devices"]}
+    assert [i for i, d in after.items() if d["active"]] == [speaker["id"]]
+    assert await demo.set_volume(speaker["id"], 61) == {"device": speaker["id"], "volume": 61}
+    assert (await demo.devices())["devices"][1:][0]["volume"] in range(0, 101)
+    with pytest.raises(ActionError) as info:
+        await demo.transfer("0" * 40)
+    assert info.value.code == "unknown_device"
+    with pytest.raises(ActionError):
+        await demo.set_volume("0" * 40, 10)

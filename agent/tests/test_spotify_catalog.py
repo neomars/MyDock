@@ -9,6 +9,7 @@ from mydock_agent.spotify.catalog import (
     album_view,
     artist_item,
     artist_view,
+    device_item,
     entries_tracks,
     image_host_ok,
     library_section,
@@ -438,3 +439,54 @@ def test_recently_played_shows_a_track_once_even_if_it_was_replayed():
 def test_an_empty_or_broken_library_answer_gives_an_empty_section(section):
     for raw in (None, {}, {"items": None}, []):
         assert library_section(section, raw, ArtRegistry())["items"] == []
+
+
+# --- appareils Spotify Connect ---------------------------------------------------------------------------------
+
+
+def test_a_connect_device_is_shaped_for_the_screen():
+    item = device_item(
+        {
+            "id": "0d1841b0976bae2a3a310dd74c0f3df354899bc8",
+            "name": "Salon",
+            "type": "CastAudio",
+            "is_active": True,
+            "is_restricted": False,
+            "supports_volume": True,
+            "volume_percent": 35,
+        }
+    )
+    assert item == {
+        "id": "0d1841b0976bae2a3a310dd74c0f3df354899bc8",
+        "name": "Salon",
+        "type": "CastAudio",
+        "active": True,
+        "restricted": False,
+        "volume": 35,
+        "can_volume": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, "x", {}, {"id": None}, {"id": "court"}, {"id": "a b c d e f g h"}, {"id": "x" * 129}],
+)
+def test_a_device_without_a_usable_id_is_dropped(raw):
+    assert device_item(raw) is None
+
+
+def test_odd_device_fields_get_safe_values():
+    item = device_item(
+        {
+            "id": "abcdefgh1234",
+            "name": "\x00",
+            "type": "Hologram",
+            "volume_percent": "fort",
+            "is_active": "oui",
+        }
+    )
+    assert item is not None
+    assert (item["type"], item["volume"], item["active"]) == ("Unknown", None, False)
+    assert item["name"] == "Appareil sans nom"
+    assert device_item({"id": "abcdefgh1234", "volume_percent": 101})["volume"] is None  # type: ignore[index]
+    assert device_item({"id": "abcdefgh1234", "volume_percent": 0})["volume"] == 0  # type: ignore[index]

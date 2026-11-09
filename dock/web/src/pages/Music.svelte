@@ -1,10 +1,12 @@
 <script lang="ts">
   import Disc3 from '@lucide/svelte/icons/disc-3'
   import Library from '@lucide/svelte/icons/library'
+  import MonitorSpeaker from '@lucide/svelte/icons/monitor-speaker'
   import Search from '@lucide/svelte/icons/search'
   import type { Component } from 'svelte'
   import { onMount } from 'svelte'
   import SpotifyDetail from '../components/SpotifyDetail.svelte'
+  import SpotifyDevices from '../components/SpotifyDevices.svelte'
   import SpotifyLibrary from '../components/SpotifyLibrary.svelte'
   import SpotifyPlayer from '../components/SpotifyPlayer.svelte'
   import SpotifySearch from '../components/SpotifySearch.svelte'
@@ -17,12 +19,20 @@
     { id: 'player', label: 'En lecture', icon: Disc3 },
     { id: 'search', label: 'Rechercher', icon: Search },
     { id: 'library', label: 'Ta bibliothèque', icon: Library },
+    { id: 'devices', label: 'Sortie sonore', icon: MonitorSpeaker },
   ]
 
   // On arrive toujours sur ce qui joue ; l'état de Spotify (installé, lancé, compte) se lit une fois à l'ouverture.
   onMount(() => {
     spotify.go('player')
     void spotify.refreshStatus()
+  })
+
+  // Où sort la musique (le nom de l'appareil sur le lecteur, son volume) : suivi tant que la page est ouverte, dès que
+  // le compte est connu.
+  $effect(() => {
+    if (!spotify.status?.connected) return
+    return spotify.watchDevices()
   })
 </script>
 
@@ -50,8 +60,10 @@
       <SpotifyDetail />
     {:else if spotify.tab === 'search'}
       <SpotifySearch />
-    {:else}
+    {:else if spotify.tab === 'library'}
       <SpotifyLibrary />
+    {:else}
+      <SpotifyDevices />
     {/if}
   </div>
 </div>

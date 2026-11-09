@@ -111,3 +111,105 @@ describe('la veille de l’écran', () => {
     expect(screenSleep.phase).toBe('awake')
   })
 })
+
+describe('l’économiseur d’écran', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    screenSleep.setDelay(0)
+    screenSleep.setSaverDelay(0)
+  })
+  afterEach(() => {
+    screenSleep.setDelay(0)
+    screenSleep.setSaverDelay(0)
+    vi.useRealTimers()
+  })
+
+  it('ne démarre jamais quand le réglage est « jamais »', () => {
+    vi.advanceTimersByTime(24 * 3_600_000)
+    expect(screenSleep.phase).toBe('awake')
+  })
+
+  it('démarre après la durée choisie sans toucher, et pas avant', () => {
+    screenSleep.setSaverDelay(120)
+    vi.advanceTimersByTime(119_000)
+    expect(screenSleep.phase).toBe('awake')
+    vi.advanceTimersByTime(1_500)
+    expect(screenSleep.phase).toBe('saver')
+  })
+
+  it('un toucher repousse le départ', () => {
+    screenSleep.setSaverDelay(60)
+    vi.advanceTimersByTime(50_000)
+    screenSleep.activity()
+    vi.advanceTimersByTime(50_000)
+    expect(screenSleep.phase).toBe('awake')
+    vi.advanceTimersByTime(11_000)
+    expect(screenSleep.phase).toBe('saver')
+  })
+
+  it('le toucher qui le ferme réveille sans rien déclencher dessous, puis tout repart de zéro', () => {
+    screenSleep.setSaverDelay(60)
+    vi.advanceTimersByTime(61_000)
+    expect(screenSleep.phase).toBe('saver')
+    screenSleep.wake()
+    expect(screenSleep.phase).toBe('waking') // le voile invisible avale la fin du geste
+    screenSleep.released()
+    vi.advanceTimersByTime(SETTLE_MS + 10)
+    expect(screenSleep.phase).toBe('awake')
+    vi.advanceTimersByTime(30_000)
+    expect(screenSleep.phase).toBe('awake') // 30 s depuis le réveil : pas encore
+    vi.advanceTimersByTime(31_000)
+    expect(screenSleep.phase).toBe('saver')
+  })
+
+  it('l’écran noir vient après l’économiseur quand on l’a demandé plus tard', () => {
+    screenSleep.setSaverDelay(60)
+    screenSleep.setDelay(300)
+    vi.advanceTimersByTime(61_000)
+    expect(screenSleep.phase).toBe('saver')
+    screenSleep.activity() // pendant l'économiseur, un toucher ne repousse rien : c'est le voile qui réagit
+    vi.advanceTimersByTime(238_000)
+    expect(screenSleep.phase).toBe('saver')
+    vi.advanceTimersByTime(2_000)
+    expect(screenSleep.phase).toBe('asleep')
+  })
+
+  it('l’écran noir l’emporte quand il doit venir avant, ou en même temps', () => {
+    screenSleep.setSaverDelay(300)
+    screenSleep.setDelay(60)
+    vi.advanceTimersByTime(61_000)
+    expect(screenSleep.phase).toBe('asleep')
+    screenSleep.setDelay(0)
+    screenSleep.setSaverDelay(300)
+    screenSleep.setDelay(300)
+    vi.advanceTimersByTime(301_000)
+    expect(screenSleep.phase).toBe('asleep') // jamais passé par l'économiseur
+  })
+
+  it('se lance sur demande, et se ferme au toucher', () => {
+    screenSleep.saverNow()
+    expect(screenSleep.phase).toBe('saver')
+    screenSleep.wake()
+    screenSleep.released()
+    vi.advanceTimersByTime(SETTLE_MS + 10)
+    expect(screenSleep.phase).toBe('awake')
+  })
+
+  it('un essai sans délai configuré ne rallume pas tout seul, mais « jamais » le ferme', () => {
+    screenSleep.saverNow()
+    vi.advanceTimersByTime(3_600_000)
+    expect(screenSleep.phase).toBe('saver')
+    screenSleep.setSaverDelay(0)
+    expect(screenSleep.phase).toBe('awake')
+  })
+
+  it('ne se confond pas avec la veille : réveiller l’écran noir marche comme avant', () => {
+    screenSleep.setDelay(60)
+    vi.advanceTimersByTime(61_000)
+    expect(screenSleep.phase).toBe('asleep')
+    screenSleep.wake()
+    expect(screenSleep.phase).toBe('waking')
+    vi.advanceTimersByTime(FAILSAFE_MS + 10)
+    expect(screenSleep.phase).toBe('awake')
+  })
+})

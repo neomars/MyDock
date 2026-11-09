@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlsplit
 
 from mydock_common.config import ConfigError
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
-from mydock_dock import __version__
+from mydock_dock import __version__, screensaver
 from mydock_dock.agent_link import (
     UNREACHABLE_ERRNOS,
     LinkFailure,
@@ -362,6 +362,48 @@ def sleep_script_running() -> bool:
     return result.returncode == 0
 
 
+def check_saver(report: Report, config: DockConfig) -> None:
+    """Économiseur d'écran : le réglage choisi, et les vidéos que le Pi peut montrer."""
+    report.section("Économiseur d'écran")
+    ui = StateStore(config.state_dir).ui
+    after, content = ui["saver_after"], ui["saver_content"]
+    contents = {"all": "scènes et vidéos", "scenes": "scènes animées", "videos": "vidéos du Pi"}
+    if after == 0:
+        report.add(
+            INFO, "Économiseur : jamais (Réglages → Économiseur d'écran pour choisir un délai)"
+        )
+    else:
+        report.add(
+            OK,
+            f"Économiseur : après {after // 60} min sans toucher, contenu : {contents.get(content, content)}",
+        )
+    directory = config.saver_dir
+    found = screensaver.videos(directory)
+    if not found:
+        report.add(
+            INFO,
+            f"Aucune vidéo dans {directory} : l'économiseur montre ses scènes animées. Pour ajouter des "
+            "vues aériennes : sudo mydock-dock screensaver add ADRESSE_HTTPS_OU_FICHIER",
+        )
+        return
+    total = sum(v.size for v in found)
+    report.add(OK, f"{len(found)} vidéo(s) dans {directory} ({screensaver.human_size(total)})")
+    if not os.access(directory, os.R_OK | os.X_OK):
+        report.add(
+            WARN,
+            f"{directory} n'est pas lisible par le service du dock (sudo chmod 755 {directory})",
+        )
+    for video in found:
+        if video.size > 300 * 1024**2:
+            report.add(
+                WARN,
+                f"{video.name} pèse {screensaver.human_size(video.size)} : lourde pour le Pi ; la convertir en "
+                "1024×600 H.264 (voir le README) la rend fluide",
+            )
+    if after > 0 and content == "scenes":
+        report.add(INFO, "Le contenu est réglé sur « scènes » : les vidéos ne sont pas montrées")
+
+
 def check_screen(
     report: Report,
     config: DockConfig,
@@ -575,6 +617,7 @@ def run_doctor(
         asyncio.run(_check_pc(report, config))
         check_wol(report, config)
         check_screen(report, config)
+        check_saver(report, config)
         check_portal(report, config)
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)

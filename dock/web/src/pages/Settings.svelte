@@ -17,7 +17,10 @@
   import { pairingUi } from '../lib/pairing.svelte'
   import { picker } from '../lib/picker.svelte'
   import { SLEEP_OPTIONS, sleepPhrase } from '../lib/screen'
+  import { CONTENT_OPTIONS, SAVER_OPTIONS, saverNeverShows, saverPhrase, type SaverContent } from '../lib/saver'
+  import { saver } from '../lib/saver.svelte'
   import { screenSleep } from '../lib/screen.svelte'
+  import { onMount } from 'svelte'
   import type { Ack, MarketRefresh } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
@@ -45,6 +48,16 @@
     const ack = await sock.act('dock.ui.set', { screen_sleep: seconds })
     if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
   }
+
+  async function setSaver(patch: { saver_after: number } | { saver_content: SaverContent }): Promise<void> {
+    const ack = await sock.act('dock.ui.set', patch)
+    if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
+  }
+
+  // Les vidéos que le Pi garde pour l'économiseur : relues à l'ouverture des Réglages.
+  onMount(() => void saver.refresh())
+  const saverAfter = $derived(sock.ui?.saver_after ?? 0)
+  const saverContent = $derived(sock.ui?.saver_content ?? 'all')
 
   async function editHost(): Promise<void> {
     const value = await editText({
@@ -263,6 +276,57 @@
       </p>
       <button class="btn trial" data-testid="sleep-now" onclick={() => screenSleep.sleepNow()}>Éteindre maintenant (essai)</button>
       <p class="dim small">L'essai noircit seulement l'image : c'est le Pi (swayidle) qui coupe le rétroéclairage, après le délai.</p>
+    </section>
+
+    <section class="card" data-testid="settings-saver">
+      <h2>Économiseur d'écran</h2>
+      <div class="pace compact" role="group" aria-label="Démarrer l'économiseur d'écran après inactivité">
+        <span class="dim small">Démarrer après</span>
+        {#each SAVER_OPTIONS as option (option.id)}
+          <button
+            class="seg"
+            class:on={saverAfter === option.id}
+            aria-pressed={saverAfter === option.id}
+            disabled={!sock.ui}
+            data-testid="saver-{option.id}"
+            onclick={() => setSaver({ saver_after: option.id })}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+      <div class="pace compact" role="group" aria-label="Ce que montre l'économiseur d'écran">
+        <span class="dim small">Montrer</span>
+        {#each CONTENT_OPTIONS as option (option.id)}
+          <button
+            class="seg"
+            class:on={saverContent === option.id}
+            aria-pressed={saverContent === option.id}
+            disabled={!sock.ui}
+            data-testid="saver-content-{option.id}"
+            onclick={() => setSaver({ saver_content: option.id })}
+          >
+            {option.label}
+          </button>
+        {/each}
+      </div>
+      <p class="dim small" data-testid="saver-note">
+        {#if saverAfter === 0}
+          Pas d'économiseur : l'écran reste tel quel.
+        {:else if saverNeverShows(saverAfter, sock.ui?.screen_sleep ?? 0)}
+          <span class="warn">L'écran s'éteint avant ({sleepPhrase(sock.ui?.screen_sleep ?? 0)}) : l'économiseur n'apparaîtra pas.</span>
+        {:else}
+          Sans toucher pendant {saverPhrase(saverAfter)}, l'économiseur d'écran démarre ; un toucher le ferme sans rien déclencher.
+        {/if}
+      </p>
+      <p class="dim small" data-testid="saver-videos">
+        {#if saver.videos.length > 0}
+          {saver.videos.length} vidéo{saver.videos.length > 1 ? 's' : ''} du Pi en plus des scènes animées.
+        {:else}
+          Aucune vidéo du Pi : seules les scènes animées passent. Pour ajouter des vues aériennes : <span class="mono">sudo mydock-dock screensaver add</span>.
+        {/if}
+      </p>
+      <button class="btn trial" data-testid="saver-now" onclick={() => screenSleep.saverNow()}>Essayer maintenant</button>
     </section>
   </div>
 

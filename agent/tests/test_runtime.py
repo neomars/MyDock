@@ -38,13 +38,16 @@ REAL_ACTIONS = [
     "power.poweroff",
     "power.reboot",
     "power.suspend",
+    "spotify.devices",
     "spotify.image",
     "spotify.launch",
     "spotify.library",
     "spotify.play",
     "spotify.search",
     "spotify.status",
+    "spotify.transfer",
     "spotify.view",
+    "spotify.volume",
     "steam.cover",
     "steam.launch",
     "system.kill",
@@ -298,6 +301,21 @@ async def test_spotify_search_browse_and_play_work_over_the_wire(demo_agent):
         await recv_until(
             ws, lambda m: m.get("topic") == "music" and m["data"]["players"][0]["loop"] == "track"
         )
+
+        listing = await ask(ws, "d1", "spotify.devices")
+        devices = listing["r"]["devices"]
+        assert devices[0]["this_pc"] is True  # ce PC d'abord
+        assert [d["name"] for d in devices if d["active"]] == [devices[0]["name"]]
+        speaker = next(d for d in devices if d["type"] == "Speaker")
+        assert (await ask(ws, "d2", "spotify.transfer", {"device": speaker["id"]}))["ok"] is True
+        assert (await ask(ws, "d3", "spotify.volume", {"device": speaker["id"], "percent": 42}))[
+            "ok"
+        ]
+        after = (await ask(ws, "d4", "spotify.devices"))["r"]["devices"]
+        moved = next(d for d in after if d["id"] == speaker["id"])
+        assert (moved["active"], moved["volume"]) == (True, 42)
+        gone = await ask(ws, "d5", "spotify.transfer", {"device": "0" * 40})
+        assert gone["e"]["code"] == "unknown_device"
 
         # Rien qui ressemble à une adresse web ou à une commande n'est accepté.
         hostile = await ask(ws, "s7", "spotify.play", {"uri": "https://open.spotify.com/track/x"})

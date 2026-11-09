@@ -5,6 +5,8 @@ import type {
   LibrarySection,
   LoopMode,
   PlayerInfo,
+  SpotifyDevice,
+  SpotifyDeviceType,
   SpotifyItem,
   SpotifySearch,
   SpotifyStatus,
@@ -116,4 +118,54 @@ export function contextFor(track: SpotifyTrack, page?: { kind: string; uri: stri
 /** Mise en forme d'une recherche saisie : espaces superflus retirés, longueur bornée comme le fait l'agent. */
 export function cleanQuery(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 120)
+}
+
+// --- la sortie sonore : les appareils Spotify Connect ------------------------------------------------------------
+
+const TYPE_LABELS: Record<SpotifyDeviceType, string> = {
+  Computer: 'Ordinateur',
+  Tablet: 'Tablette',
+  Smartphone: 'Téléphone',
+  Speaker: 'Enceinte',
+  CastAudio: 'Enceinte connectée',
+  CastVideo: 'Chromecast',
+  TV: 'Télévision',
+  AVR: 'Ampli',
+  STB: 'Décodeur',
+  AudioDongle: 'Adaptateur audio',
+  GameConsole: 'Console de jeu',
+  Automobile: 'Voiture',
+  Unknown: 'Appareil',
+}
+
+export const deviceTypeLabel = (type: SpotifyDeviceType): string => TYPE_LABELS[type] ?? TYPE_LABELS.Unknown
+
+/** Le nom affiché : « Ce PC » pour la machine que le dock pilote, le nom donné à l'appareil pour les autres. */
+export const deviceTitle = (device: SpotifyDevice): string => (device.this_pc ? 'Ce PC' : device.name)
+
+/** La ligne sous le nom : le genre d'appareil (le nom de la machine pour ce PC), et son volume s'il le dit. */
+export function deviceSubtitle(device: SpotifyDevice): string {
+  return joined([
+    device.this_pc ? device.name : deviceTypeLabel(device.type),
+    device.volume !== null && device.can_volume ? `${device.volume} %` : null,
+    device.restricted ? 'commandes refusées' : null,
+  ])
+}
+
+/** L'appareil sur lequel la musique sort, s'il y en a un. */
+export function activeDevice(devices: readonly SpotifyDevice[] | null | undefined): SpotifyDevice | null {
+  return devices?.find((d) => d.active) ?? null
+}
+
+/** Un appareil à qui l'on peut passer la musique. */
+export const canTransferTo = (device: SpotifyDevice): boolean => !device.restricted
+
+/** Les appareils dans l'état où l'on vient de passer la musique sur `id` (avant que Spotify le confirme). */
+export function withActive(devices: readonly SpotifyDevice[], id: string): SpotifyDevice[] {
+  return devices.map((d) => ({ ...d, active: d.id === id }))
+}
+
+/** Les appareils une fois le volume de `id` changé (avant que Spotify le confirme). */
+export function withVolume(devices: readonly SpotifyDevice[], id: string, volume: number): SpotifyDevice[] {
+  return devices.map((d) => (d.id === id ? { ...d, volume } : d))
 }

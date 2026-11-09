@@ -167,6 +167,52 @@ def choose_device(devices: Any, hostname: str) -> dict[str, Any] | None:
     return None
 
 
+def _usable(devices: Any) -> list[dict[str, Any]]:
+    return (
+        [
+            d
+            for d in devices
+            if isinstance(d, dict) and isinstance(d.get("id"), str) and not d.get("is_restricted")
+        ]
+        if isinstance(devices, list)
+        else []
+    )
+
+
+def pick_device(devices: Any, hostname: str, *, prefer_pc: bool) -> dict[str, Any] | None:
+    """Où jouer : l'appareil actif (celui que l'utilisateur a choisi, ici ou dans une application de Spotify) ;
+    ce PC quand l'application vient d'être lancée pour l'occasion, ou quand aucun appareil n'est actif."""
+    if not prefer_pc:
+        active = [d for d in _usable(devices) if d.get("is_active")]
+        if active:
+            return active[0]
+    return choose_device(devices, hostname)
+
+
+def local_device_id(devices: list[dict[str, Any]], hostname: str) -> str | None:
+    """L'identifiant de l'appareil qui est ce PC : même nom que lui, sinon l'unique « Computer » de la liste."""
+    named = [d for d in devices if d["name"].casefold() == hostname.casefold()]
+    if named:
+        return named[0]["id"]
+    computers = [d for d in devices if d["type"] == "Computer"]
+    return computers[0]["id"] if len(computers) == 1 else None
+
+
+def describe_device(error: ApiError) -> ActionError:
+    """Les erreurs de Spotify quand on commande un appareil, en phrases qui disent quoi faire."""
+    text = error.message.lower()
+    if error.status == 404 or "not found" in text:
+        return ActionError(
+            "device_gone",
+            "Cet appareil ne répond plus : vérifie qu'il est allumé et connecté au même compte Spotify.",
+        )
+    if error.status == 403 and error.reason != "PREMIUM_REQUIRED" and "premium" not in text:
+        return ActionError(
+            "device_restricted", "Cet appareil n'accepte pas les commandes à distance."
+        )
+    return describe(error)
+
+
 def play_body(uri: str, context: str | None) -> dict[str, Any]:
     """Le corps de `PUT /me/player/play` : un contenu entier, ou un morceau (dans son album ou sa playlist)."""
     kind = (catalog.parse_uri(uri) or ("", ""))[0]
@@ -226,6 +272,9 @@ class SpotifyService:
         self._searches: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
         self._images: OrderedDict[tuple[str, bool], dict[str, str]] = OrderedDict()
         self._me: tuple[float, dict[str, Any]] | None = None
+        self._device_ids: set[str] = (
+            set()
+        )  # ceux de la dernière liste : le dock ne commande que ceux-là
 
     # --- le jeton ---
 
@@ -498,7 +547,7 @@ class SpotifyService:
         started = (await self.launch())["started"]
         if self._has_token():
             try:
-                await self._play_with_api(uri, context)
+                await self._play_with_api(uri, context, prefer_pc=started)
                 return {"via": "api", "started": started}
             except ApiError as exc:
                 if exc.status == 429:
@@ -517,19 +566,22 @@ class SpotifyService:
         except ActionError:
             return False
 
-    async def _play_with_api(self, uri: str, context: str | None) -> None:
-        device = await self._wait_device()
+    async def _play_with_api(self, uri: str, context: str | None, *, prefer_pc: bool) -> None:
+        device = await self._wait_device(prefer_pc)
         await self._request(
             "PUT", "/me/player/play", {"device_id": device["id"]}, play_body(uri, context)
         )
+        self._device_ids.add(device["id"])
 
-    async def _wait_device(self) -> dict[str, Any]:
-        """L'appareil Spotify Connect de ce PC : il apparaît quelques secondes après le lancement de l'application."""
+    async def _wait_device(self, prefer_pc: bool) -> dict[str, Any]:
+        """L'appareil où jouer : l'actif, ou ce PC (qui apparaît quelques secondes après le lancement de l'application)."""
         waited = 0.0
         while True:
             reply = await self._request("GET", "/me/player/devices")
-            device = choose_device(
-                reply.get("devices") if isinstance(reply, dict) else None, self._hostname()
+            device = pick_device(
+                reply.get("devices") if isinstance(reply, dict) else None,
+                self._hostname(),
+                prefer_pc=prefer_pc,
             )
             if device is not None:
                 return device
@@ -537,3 +589,54 @@ class SpotifyService:
                 raise ApiError(404, "NO_ACTIVE_DEVICE", "Aucun appareil Spotify Connect")
             await self._sleep(1.0)
             waited += 1.0
+
+    # --- la sortie sonore : les appareils Spotify Connect ---
+
+    async def devices(self) -> dict[str, Any]:
+        """Les appareils du compte (ce PC, enceintes en Wi-Fi, téléphones, télés…) : où la musique peut sortir."""
+        reply = await self._get("/me/player/devices")
+        items = [
+            item
+            for raw in (reply.get("devices") if isinstance(reply, dict) else None) or []
+            if (item := catalog.device_item(raw)) is not None
+        ]
+        local = local_device_id(items, self._hostname())
+        for item in items:
+            item["this_pc"] = item["id"] == local
+        items.sort(
+            key=lambda d: (not d["this_pc"], d["name"].casefold())
+        )  # ordre stable : ce PC, puis par nom
+        self._device_ids = {d["id"] for d in items}
+        return {"devices": items}
+
+    async def _known_device(self, device_id: str) -> None:
+        """Le dock ne commande qu'un appareil que l'agent a lui-même listé (liste relue une fois s'il manque)."""
+        if device_id not in self._device_ids:
+            await self.devices()
+        if device_id not in self._device_ids:
+            raise ActionError(
+                "unknown_device",
+                "Cet appareil n'est plus visible : ouvre la liste pour l'actualiser.",
+            )
+
+    async def transfer(self, device_id: str, play: bool = True) -> dict[str, Any]:
+        """Fait sortir la musique sur cet appareil (la lecture en cours le suit si `play`)."""
+        await self._known_device(device_id)
+        try:
+            await self._request("PUT", "/me/player", body={"device_ids": [device_id], "play": play})
+        except ApiError as exc:
+            raise describe_device(exc) from None
+        return {"device": device_id}
+
+    async def set_volume(self, device_id: str, percent: int) -> dict[str, Any]:
+        """Règle le volume d'un appareil Spotify Connect (celui de ce PC se règle sur la sortie du PC)."""
+        await self._known_device(device_id)
+        try:
+            await self._request(
+                "PUT",
+                "/me/player/volume",
+                {"volume_percent": percent, "device_id": device_id},
+            )
+        except ApiError as exc:
+            raise describe_device(exc) from None
+        return {"device": device_id, "volume": percent}

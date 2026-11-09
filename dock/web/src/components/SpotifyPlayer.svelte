@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MonitorSpeaker from '@lucide/svelte/icons/monitor-speaker'
   import MusicIcon from '@lucide/svelte/icons/music'
   import Pause from '@lucide/svelte/icons/pause'
   import Play from '@lucide/svelte/icons/play'
@@ -13,8 +14,9 @@
   import { subtitle } from '../lib/music'
   import type { PlayerInfo } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
-  import { loopLabel, nextLoop } from '../lib/spotify'
+  import { deviceTitle, loopLabel, nextLoop } from '../lib/spotify'
   import { spotify } from '../lib/spotify.svelte'
+  import DeviceVolume from './DeviceVolume.svelte'
   import Progress from './Progress.svelte'
   import SpotifyIcon from './SpotifyIcon.svelte'
   import VolumeBar from './VolumeBar.svelte'
@@ -59,6 +61,10 @@
   }
 
   const installed = $derived(spotify.status?.installed)
+
+  // La musique sort sur une enceinte, un téléphone… (et non sur ce PC) : le lecteur le dit, et son volume est celui de
+  // cet appareil. Sur ce PC, c'est le volume de la sortie du PC, comme avant.
+  const elsewhere = $derived(player?.id === 'spotify' && spotify.output !== null && !spotify.output.this_pc ? spotify.output : null)
 </script>
 
 {#if music.unavailable}
@@ -98,6 +104,12 @@
     <div class="meta">
       <h1 class="title" data-testid="music-title">{player.title ?? 'Sans titre'}</h1>
       <p class="artist" data-testid="music-artist">{subtitle(player) || player.name}</p>
+      {#if elsewhere}
+        <button class="output" data-testid="music-output" onclick={() => spotify.go('devices')}>
+          <MonitorSpeaker size={30} aria-hidden="true" />
+          <span>{deviceTitle(elsewhere)}</span>
+        </button>
+      {/if}
       {#if player.id !== 'spotify'}
         <p class="source dim" data-testid="music-source">{player.name}{playing ? ' · lecture' : player.status === 'paused' ? ' · pause' : ''}</p>
       {/if}
@@ -144,7 +156,11 @@
       {/if}
     </div>
 
-    {#if output}
+    {#if elsewhere && elsewhere.can_volume}
+      <div class="volume" data-testid="music-volume" data-device={elsewhere.id}>
+        <DeviceVolume device={elsewhere} />
+      </div>
+    {:else if output}
       <div class="volume" data-testid="music-volume">
         <VolumeBar kind="sink" id={output.id} name={output.label} volume={output.volume} muted={output.muted} testid="music-vol" />
       </div>
@@ -226,6 +242,29 @@
   .source {
     margin-top: 0;
     font-size: var(--fs-cap);
+  }
+  .output {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 100%;
+    min-height: 56px;
+    margin-top: 6px;
+    padding: 0 20px 0 16px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-cap);
+    font-weight: 600;
+  }
+  .output span {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .output:active {
+    filter: brightness(1.2);
   }
   .prog {
     grid-area: prog;

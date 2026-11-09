@@ -238,6 +238,41 @@ export interface SpotifyLibrary {
   items: SpotifyItem[]
 }
 
+/** Les types d'appareils que Spotify Connect annonce. */
+export type SpotifyDeviceType =
+  | 'Computer'
+  | 'Tablet'
+  | 'Smartphone'
+  | 'Speaker'
+  | 'CastAudio'
+  | 'CastVideo'
+  | 'TV'
+  | 'AVR'
+  | 'STB'
+  | 'AudioDongle'
+  | 'GameConsole'
+  | 'Automobile'
+  | 'Unknown'
+
+/** Un appareil Spotify Connect du compte : ce PC, une enceinte en Wi-Fi, un téléphone, une télé… */
+export interface SpotifyDevice {
+  id: string
+  name: string
+  type: SpotifyDeviceType
+  /** La musique sort sur cet appareil en ce moment. */
+  active: boolean
+  /** Il n'accepte aucune commande à distance. */
+  restricted: boolean
+  volume: number | null
+  can_volume: boolean
+  /** C'est ce PC (l'application Spotify installée sur la machine que le dock pilote). */
+  this_pc: boolean
+}
+
+export interface SpotifyDevices {
+  devices: SpotifyDevice[]
+}
+
 /** Famille d'un périphérique audio, pour choisir son icône. */
 export type AudioKind =
   | 'speakers'
@@ -521,6 +556,10 @@ export interface UiState {
   pinned_apps: string[]
   /** Secondes d'inactivité avant l'extinction de l'écran du dock ; 0 : jamais. */
   screen_sleep: number
+  /** Secondes sans toucher avant l'économiseur d'écran ; 0 : jamais. */
+  saver_after: number
+  /** Ce que montre l'économiseur : ses scènes animées, les vidéos du Pi, ou les deux. */
+  saver_content: 'all' | 'scenes' | 'videos'
 }
 
 export interface Ack {

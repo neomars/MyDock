@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from mydock_common.actions import ActionContext, ActionRegistry, NoParams
 
 ID = r"[A-Za-z0-9]{22}"
+DEVICE_ID = r"[A-Za-z0-9_.:-]{8,128}"  # un identifiant d'appareil Spotify Connect (40 caractères hexadécimaux en général)
 
 
 class SpotifyBackend(Protocol):
@@ -25,6 +26,9 @@ class SpotifyBackend(Protocol):
     async def image(self, art: str, *, large: bool = False) -> dict[str, str]: ...
     async def launch(self) -> dict[str, Any]: ...
     async def play(self, uri: str, context: str | None = None) -> dict[str, Any]: ...
+    async def devices(self) -> dict[str, Any]: ...
+    async def transfer(self, device_id: str, play: bool = True) -> dict[str, Any]: ...
+    async def set_volume(self, device_id: str, percent: int) -> dict[str, Any]: ...
 
 
 class _Strict(BaseModel):
@@ -62,6 +66,16 @@ class PlayParams(_Strict):
     context: str | None = Field(default=None, pattern=f"^spotify:(album|playlist):{ID}$")
 
 
+class TransferParams(_Strict):
+    device: str = Field(pattern=f"^{DEVICE_ID}$")
+    play: bool = Field(default=True, strict=True)
+
+
+class VolumeParams(_Strict):
+    device: str = Field(pattern=f"^{DEVICE_ID}$")
+    percent: int = Field(ge=0, le=100, strict=True)
+
+
 def register_spotify_actions(registry: ActionRegistry, backend: SpotifyBackend) -> None:
     async def status(_ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         return await backend.status()
@@ -84,6 +98,15 @@ def register_spotify_actions(registry: ActionRegistry, backend: SpotifyBackend) 
     async def play(_ctx: ActionContext, params: PlayParams) -> dict[str, Any]:
         return await backend.play(params.uri, params.context)
 
+    async def devices(_ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        return await backend.devices()
+
+    async def transfer(_ctx: ActionContext, params: TransferParams) -> dict[str, Any]:
+        return await backend.transfer(params.device, params.play)
+
+    async def volume(_ctx: ActionContext, params: VolumeParams) -> dict[str, Any]:
+        return await backend.set_volume(params.device, params.percent)
+
     registry.register("spotify.status", status, timeout=15.0)
     registry.register("spotify.search", search, params=SearchParams, timeout=20.0)
     registry.register("spotify.view", view, params=ViewParams, timeout=25.0)
@@ -91,3 +114,6 @@ def register_spotify_actions(registry: ActionRegistry, backend: SpotifyBackend) 
     registry.register("spotify.image", image, params=ImageParams, timeout=15.0)
     registry.register("spotify.launch", launch, timeout=40.0)
     registry.register("spotify.play", play, params=PlayParams, timeout=60.0)
+    registry.register("spotify.devices", devices, timeout=15.0)
+    registry.register("spotify.transfer", transfer, params=TransferParams, timeout=20.0)
+    registry.register("spotify.volume", volume, params=VolumeParams, timeout=15.0)

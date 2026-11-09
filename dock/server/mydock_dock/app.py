@@ -19,10 +19,10 @@ import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -31,7 +31,7 @@ from mydock_common import protocol as proto
 from mydock_common.actions import ActionContext, ActionError, ActionRegistry, NoParams
 from mydock_common.config import ConfigError
 from mydock_common.outbox import Outbox
-from mydock_dock import __version__
+from mydock_dock import __version__, screensaver
 from mydock_dock.agent_link import (
     AgentLink,
     LinkSettings,
@@ -120,6 +120,8 @@ class UiSetParams(_Strict):
     hidden: list[str] | None = None
     pinned_apps: list[str] | None = None
     screen_sleep: StrictInt | None = None
+    saver_after: StrictInt | None = None
+    saver_content: Literal["all", "scenes", "videos"] | None = None
 
 
 class MarketsSetParams(_Strict):
@@ -766,6 +768,25 @@ def create_app(server: DockServer) -> FastAPI:
         """La durée d'inactivité choisie dans les Réglages : le script de veille de l'écran la lit."""
         return JSONResponse(
             {"sleep_after": server.store.ui["screen_sleep"]}, headers={"Cache-Control": "no-store"}
+        )
+
+    @app.get("/api/screensaver")
+    async def saver_list() -> JSONResponse:
+        """Les vidéos que l'économiseur d'écran peut montrer (celles du dossier du Pi)."""
+        found = await asyncio.to_thread(screensaver.videos, config.saver_dir)
+        return JSONResponse(
+            {"videos": [{"name": v.name, "size": v.size, "mime": v.mime} for v in found]},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/screensaver/{name}")
+    async def saver_file(name: str) -> FileResponse:
+        """Une vidéo de la liste (jamais un chemin : le nom doit être l'un de ceux du dossier). Gère les « Range »."""
+        video = await asyncio.to_thread(screensaver.find, config.saver_dir, name)
+        if video is None:
+            raise HTTPException(status_code=404)
+        return FileResponse(
+            video.path, media_type=video.mime, headers={"Cache-Control": "private, max-age=600"}
         )
 
     @app.websocket("/ws")

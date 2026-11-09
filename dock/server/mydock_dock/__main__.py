@@ -18,7 +18,7 @@ import uvicorn
 
 from mydock_common.config import ConfigError
 from mydock_common.protocol import MAX_MESSAGE_BYTES
-from mydock_dock import __version__
+from mydock_dock import __version__, screensaver
 from mydock_dock.app import DockServer, create_app
 from mydock_dock.config import DockConfig, default_config_path, init_config
 from mydock_dock.doctor import run_doctor
@@ -64,6 +64,25 @@ def build_parser() -> argparse.ArgumentParser:
     secret.add_argument(
         "--ask-token", action="store_true", help="demande le jeton (saisie masquée)"
     )
+
+    saver = sub.add_parser(
+        "screensaver",
+        help="les vidéos de l'économiseur d'écran (list, add, remove)",
+        description=(
+            "L'économiseur d'écran a ses propres scènes animées ; les vidéos sont celles que tu ajoutes ici. "
+            "Elles vont dans le dossier d'état du dock : lance « add » et « remove » avec sudo."
+        ),
+    )
+    saver.add_argument("--config", type=Path)
+    saver_sub = saver.add_subparsers(dest="saver_command", required=True)
+    saver_sub.add_parser("list", help="liste les vidéos")
+    add = saver_sub.add_parser("add", help="ajoute une vidéo (adresse https ou fichier du disque)")
+    add.add_argument("source", help="adresse https d'une vidéo MP4 ou WebM, ou chemin d'un fichier")
+    add.add_argument(
+        "--name", help="nom du fichier dans le dossier (par défaut : celui de la source)"
+    )
+    remove = saver_sub.add_parser("remove", help="retire une vidéo")
+    remove.add_argument("name")
 
     doctor = sub.add_parser("doctor", help="diagnostic de l'installation")
     doctor.add_argument("--config", type=Path)
@@ -127,6 +146,38 @@ def _read_token(args: argparse.Namespace) -> str | None:
     return None
 
 
+def cmd_screensaver(args: argparse.Namespace) -> int:
+    try:
+        directory = DockConfig.load(args.config).saver_dir
+    except ConfigError as exc:
+        print(f"Erreur de configuration : {exc}", file=sys.stderr)
+        return 2
+    try:
+        if args.saver_command == "list":
+            found = screensaver.videos(directory)
+            if not found:
+                print(f"Aucune vidéo dans {directory} : l'économiseur montre ses scènes animées.")
+            for video in found:
+                print(f"{video.name}  ({screensaver.human_size(video.size)})")
+            return 0
+        if args.saver_command == "add":
+            if args.source.startswith(("http://", "https://")):
+                saved = screensaver.add_url(directory, args.source, args.name)
+            else:
+                saved = screensaver.add_file(directory, Path(args.source).expanduser(), args.name)
+            print(
+                f"Ajoutée : {saved.name} ({screensaver.human_size(saved.stat().st_size)}), dans {directory}."
+            )
+            print("L'économiseur la montrera au prochain passage (aucun redémarrage).")
+            return 0
+        screensaver.remove(directory, args.name)
+        print(f"Retirée : {args.name}.")
+        return 0
+    except screensaver.SaverError as exc:
+        print(f"Erreur : {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     try:
         config = init_config(
@@ -159,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if args.command == "init":
         return cmd_init(args)
+    if args.command == "screensaver":
+        return cmd_screensaver(args)
     if args.command == "doctor":
         return run_doctor(args.config or default_config_path(), offline=args.offline)
     parser.error(f"commande inconnue : {args.command}")

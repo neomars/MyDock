@@ -37,6 +37,10 @@ export interface Stack {
   agentPort: number
   /** Le dossier de l'interface servie par le dock : une copie jetable de dist/ si `liveWeb`, sinon vide. */
   webDir: string
+  /** Le dossier d'état du dock (réglages, vidéos de l'économiseur) : jetable, propre à ce test. */
+  stateDir: string
+  /** Le dossier des vidéos de l'économiseur d'écran : il n'existe qu'une fois qu'on y a mis une vidéo. */
+  saverDir: string
   /** « PC éteint » : plus rien ne répond sur le port de l'agent. */
   pcOff(): void
   /** « Agent arrêté seul » : le PC répond mais l'agent est absent (connexion refusée). */
@@ -62,6 +66,7 @@ export const test = base.extend<{
   stack: async ({ unpaired, liveWeb }, use) => {
     const [dockPort, agentPort, wolPort] = [await freePort(), await freePort(), await freePort()]
     const webDir = liveWeb ? fs.mkdtempSync(path.join(os.tmpdir(), 'mydock-web-')) : ''
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mydock-state-'))
     if (liveWeb) fs.cpSync(path.join(ROOT, 'dock', 'web', 'dist'), webDir, { recursive: true })
     const wolPackets: Buffer[] = []
     const udp = dgram.createSocket('udp4')
@@ -75,6 +80,7 @@ export const test = base.extend<{
         '--dock-port', String(dockPort),
         '--agent-port', String(agentPort),
         '--wol-target', `127.0.0.1:${wolPort}`,
+        '--state-dir', stateDir,
         ...(unpaired ? ['--unpaired'] : []),
         ...(liveWeb ? ['--web-dir', webDir] : []),
       ],
@@ -99,6 +105,8 @@ export const test = base.extend<{
       portal,
       agentPort,
       webDir,
+      stateDir,
+      saverDir: path.join(stateDir, 'screensaver'),
       pcOff: () => child.kill('SIGUSR1'),
       agentDown: () => child.kill('SIGHUP'),
       pcOn: () => child.kill('SIGUSR2'),
@@ -116,6 +124,7 @@ export const test = base.extend<{
     })
     udp.close()
     if (webDir) fs.rmSync(webDir, { recursive: true, force: true })
+    fs.rmSync(stateDir, { recursive: true, force: true })
   },
 
   // Erreurs console et exceptions de la page : chaque test vérifie qu'il n'y en a aucune.
@@ -209,10 +218,10 @@ export function rehashInterface(dir: string): void {
 
 /**
  * Capture 1024x600 rangée avec le rapport de l'étape (docs/etapes/<étape>/).
- * MYDOCK_SHOTS=i ne refait que les captures de l'étape i, MYDOCK_SHOTS=a, b, c, d, e, f, g ou h celles des étapes
+ * MYDOCK_SHOTS=j ne refait que les captures de l'étape j, MYDOCK_SHOTS=a, b, c, d, e, f, g, h ou i celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)
