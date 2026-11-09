@@ -15,6 +15,11 @@ mydock (1.4.0) unstable; urgency=medium
     « sudo mydock-dock screensaver add ADRESSE_HTTPS_OU_FICHIER » (MP4 H.264 ou WebM, dossier
     /var/lib/mydock/screensaver, sans redémarrage) ; « Tout », « Scènes » ou « Mes vidéos » choisit ce qui
     passe, et une vidéo illisible est écartée au profit d'une scène.
+  * Les vues aériennes se téléchargent toutes seules : une minute après le démarrage, le dock prend dix films
+    « Aerial » (cinq de jour, cinq de nuit, liste de xscreensaver-aerial) chez Apple, les convertit en MP4
+    H.264 1024×600 avec ffmpeg (nouvelle dépendance) et les range dans le dossier de l'économiseur, qui passe
+    en « Mes vidéos » par défaut (les scènes dessinées servent de secours). Avancement et bouton
+    « Suspendre le téléchargement » dans Réglages.
   * Avec la veille de l'écran : l'économiseur passe en premier, puis l'écran s'éteint s'il est réglé plus
     long. Réglé pareil ou plus court, la veille passe avant : Réglages le dit.
   * Le serveur ne sert que les vidéos qu'il vient de lister dans son dossier (extensions MP4 et WebM, ni

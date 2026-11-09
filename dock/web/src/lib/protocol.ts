@@ -560,6 +560,8 @@ export interface UiState {
   saver_after: number
   /** Ce que montre l'économiseur : ses scènes animées, les vidéos du Pi, ou les deux. */
   saver_content: 'all' | 'scenes' | 'videos'
+  /** Le dock télécharge-t-il les vues aériennes ? */
+  saver_aerial: boolean
 }
 
 export interface Ack {

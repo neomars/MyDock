@@ -44,6 +44,16 @@ export interface SaverVideo {
   mime: string
 }
 
+/** Où en est le téléchargement des vues aériennes (donné par `/api/screensaver`). */
+export interface AerialStatus {
+  total: number
+  done: number
+  active: boolean
+  current: string | null
+  error: string | null
+  enabled: boolean
+}
+
 export type SaverItem = { kind: 'scene'; id: SceneId } | { kind: 'video'; name: string }
 
 /** Une scène dure ce temps-là ; une vidéo joue jusqu'au bout, mais au plus ce temps-là. */

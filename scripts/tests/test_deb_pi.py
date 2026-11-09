@@ -311,6 +311,9 @@ def test_no_secret_is_packaged(extracted):
         if not path.is_file() or path.is_symlink() or path.suffix in (".gz", ".deb"):
             continue
         for line in path.read_text(errors="ignore").splitlines():
+            line = re.sub(
+                r"[\w.\-]+\.mov", "", line
+            )  # noms publics des films d'Apple (aerial.py), pas des jetons
             for match in pattern.findall(line):
                 # Les seuls mots de 43 caractères sont des identifiants, jamais un jeton
                 # (un jeton mêle chiffres et lettres sans séparateur lisible).

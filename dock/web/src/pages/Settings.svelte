@@ -49,15 +49,21 @@
     if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
   }
 
-  async function setSaver(patch: { saver_after: number } | { saver_content: SaverContent }): Promise<void> {
+  async function setSaver(patch: { saver_after: number } | { saver_content: SaverContent } | { saver_aerial: boolean }): Promise<void> {
     const ack = await sock.act('dock.ui.set', patch)
     if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
+    else if ('saver_aerial' in patch) void saver.refresh()
   }
 
   // Les vidéos que le Pi garde pour l'économiseur : relues à l'ouverture des Réglages.
-  onMount(() => void saver.refresh())
+  // Pendant le téléchargement des vues aériennes, on suit l'avancement.
+  onMount(() => {
+    void saver.refresh()
+    const timer = setInterval(() => void saver.refresh(), 15_000)
+    return () => clearInterval(timer)
+  })
   const saverAfter = $derived(sock.ui?.saver_after ?? 0)
-  const saverContent = $derived(sock.ui?.saver_content ?? 'all')
+  const saverContent = $derived(sock.ui?.saver_content ?? 'videos')
 
   async function editHost(): Promise<void> {
     const value = await editText({
@@ -323,9 +329,25 @@
         {#if saver.videos.length > 0}
           {saver.videos.length} vidéo{saver.videos.length > 1 ? 's' : ''} du Pi en plus des scènes animées.
         {:else}
-          Aucune vidéo du Pi : seules les scènes animées passent. Pour ajouter des vues aériennes : <span class="mono">sudo mydock-dock screensaver add</span>.
+          Aucune vidéo prête pour l'instant : les scènes animées passent. Pour ajouter les tiennes : <span class="mono">sudo mydock-dock screensaver add</span>.
         {/if}
       </p>
+      {#if saver.aerial}
+        <p class="dim small" data-testid="saver-aerial">
+          {#if !saver.aerial.enabled}
+            Vues aériennes : téléchargement suspendu ({saver.aerial.done} sur {saver.aerial.total} prêtes).
+          {:else if saver.aerial.done >= saver.aerial.total}
+            Vues aériennes : {saver.aerial.total} films prêts.
+          {:else if saver.aerial.error}
+            <span class="warn">Vues aériennes : {saver.aerial.done} sur {saver.aerial.total} prêtes. {saver.aerial.error}</span>
+          {:else}
+            Vues aériennes : {saver.aerial.done} sur {saver.aerial.total} prêtes{saver.aerial.active ? ` (en cours : ${saver.aerial.current})` : ''}.
+          {/if}
+        </p>
+        <button class="btn trial" data-testid="saver-aerial-toggle" onclick={() => setSaver({ saver_aerial: !saver.aerial?.enabled })}>
+          {saver.aerial.enabled ? 'Suspendre le téléchargement' : 'Reprendre le téléchargement'}
+        </button>
+      {/if}
       <button class="btn trial" data-testid="saver-now" onclick={() => screenSleep.saverNow()}>Essayer maintenant</button>
     </section>
   </div>
