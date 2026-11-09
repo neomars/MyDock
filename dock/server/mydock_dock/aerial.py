@@ -55,7 +55,11 @@ def target_name(title: str) -> str:
 
 
 class AerialError(Exception):
-    """Un film qui n'a pas pu être pris ; le message est affichable."""
+    """Un film qui n'a pas pu être pris ; le message est affichable. `fatal` : inutile d'essayer les suivants."""
+
+    def __init__(self, message: str, *, fatal: bool = False) -> None:
+        super().__init__(message)
+        self.fatal = fatal
 
 
 class AerialFetcher:
@@ -120,7 +124,10 @@ class AerialFetcher:
 
     async def fetch_missing(self) -> None:
         if not self._which("ffmpeg"):
-            raise AerialError("ffmpeg n'est pas installé sur le Pi (sudo apt install ffmpeg).")
+            raise AerialError(
+                "ffmpeg n'est pas installé sur le Pi (sudo apt install ffmpeg).", fatal=True
+            )
+        failures: list[str] = []
         for filename, title in self.missing():
             if not self._enabled():
                 break
@@ -128,10 +135,20 @@ class AerialFetcher:
             try:
                 await asyncio.to_thread(self._download, filename, title)
                 await self._convert(filename, title)
+            except AerialError as exc:
+                if exc.fatal:
+                    raise
+                # Un film en échec (adresse introuvable, fichier abîmé) n'arrête pas les autres : on passe au suivant.
+                failures.append(str(exc))
+                log.warning("Vues aériennes : %s", exc)
             finally:
                 self.current = None
                 with contextlib.suppress(OSError):
                     (self.directory / WORK / filename).unlink()
+        if failures:
+            raise AerialError(
+                f"{len(failures)} film(s) en échec, nouvel essai plus tard : {failures[-1]}"
+            )
 
     # --- un film -------------------------------------------------------------------------
 
@@ -144,7 +161,7 @@ class AerialFetcher:
                 f"Impossible d'écrire dans {self.directory} ({exc.strerror})."
             ) from None
         if shutil.disk_usage(work).free < screensaver.FREE_MARGIN + 2 * 400 * 1024**2:
-            raise AerialError("Pas assez de place libre sur la carte du Pi.")
+            raise AerialError("Pas assez de place libre sur la carte du Pi.", fatal=True)
         request = urllib.request.Request(
             f"{BASE_URL}/{filename}", headers={"User-Agent": "mydock-dock"}
         )

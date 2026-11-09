@@ -103,10 +103,10 @@ async def test_network_failure_is_reported_then_retried(tmp_path, monkeypatch):
     task = asyncio.create_task(f.run())
     for _ in range(100):
         await asyncio.sleep(0.02)
-        if len(attempts) >= 2:
+        if len(attempts) >= 11 and f.error:
             break
     task.cancel()
-    assert len(attempts) >= 2
+    assert len(attempts) >= 11  # tous les films essayés, puis un nouvel essai
     assert "Téléchargement impossible" in (f.error or "")
 
 
@@ -133,3 +133,21 @@ async def test_a_failed_conversion_leaves_no_half_film(tmp_path):
     with pytest.raises(AerialError, match="Conversion"):
         await f._convert(*CATALOG[0])
     assert f.status()["done"] == 0
+
+
+async def test_one_missing_film_does_not_block_the_others(tmp_path, monkeypatch):
+    def fake_open(self, request, timeout=None):
+        if CATALOG[0][0] in request.full_url:
+            raise OSError("404")
+        return FakeResponse(b"mov" * 100)
+
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", fake_open)
+    f = fetcher(tmp_path)
+
+    async def fake_convert(filename, title):
+        (f.directory / target_name(title)).write_bytes(b"mp4")
+
+    monkeypatch.setattr(f, "_convert", fake_convert)
+    with pytest.raises(AerialError, match="1 film"):
+        await f.fetch_missing()
+    assert f.status()["done"] == 9
