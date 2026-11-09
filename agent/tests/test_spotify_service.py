@@ -693,7 +693,9 @@ PC = {"id": "pc-id", "name": "mon-pc", "type": "Computer", "is_active": False}
 
 async def test_a_track_is_played_in_its_album_on_this_pc_through_the_api(tmp_path):
     rig = Rig(tmp_path)
-    devices(rig, {"id": "tel", "name": "iPhone", "type": "Smartphone", "is_active": True}, PC)
+    devices(
+        rig, {"id": "tel-id-123", "name": "iPhone", "type": "Smartphone", "is_active": False}, PC
+    )
     rig.api.on("PUT", "/me/player/play", reply(204))
     result = await rig.service.play(TRACK, ALBUM)
     assert result == {"via": "api", "started": False}
@@ -702,6 +704,204 @@ async def test_a_track_is_played_in_its_album_on_this_pc_through_the_api(tmp_pat
     assert json.loads(call.body) == {"context_uri": ALBUM, "offset": {"uri": TRACK}}
     assert call.headers["Content-Type"] == "application/json"
     assert rig.music.opened == []
+
+
+PC_LONG = {"id": "pc-0123456789abcdef", "name": "mon-pc", "type": "Computer", "is_active": False}
+SPEAKER = {
+    "id": "salon-0123456789",
+    "name": "Salon",
+    "type": "Speaker",
+    "is_active": True,
+    "volume_percent": 35,
+}
+
+
+async def test_the_music_follows_the_device_chosen_as_the_active_one(tmp_path):
+    """Une enceinte choisie comme sortie reçoit aussi ce qu'on lance depuis le dock (comme dans l'application)."""
+    rig = Rig(tmp_path)
+    devices(rig, PC, SPEAKER)
+    rig.api.on("PUT", "/me/player/play", reply(204))
+    assert (await rig.service.play(ALBUM))["via"] == "api"
+    call = rig.api.hits("PUT", "/me/player/play")[0]
+    assert rig.api.query(call) == {"device_id": "salon-0123456789"}
+
+
+async def test_an_application_just_started_for_the_occasion_plays_on_this_pc(tmp_path):
+    """Spotify vient d'être lancé sur ce PC : un téléphone resté « actif » ne détourne pas la musique."""
+    rig = Rig(tmp_path, running=False, appears_after=2.0)
+    devices(
+        rig, PC, {"id": "tel-id-123", "name": "iPhone", "type": "Smartphone", "is_active": True}
+    )
+    rig.api.on("PUT", "/me/player/play", reply(204))
+    assert await rig.service.play(ALBUM) == {"via": "api", "started": True}
+    assert rig.api.query(rig.api.hits("PUT", "/me/player/play")[0]) == {"device_id": "pc-id"}
+
+
+def test_where_to_play_is_the_active_device_or_this_pc():
+    pc = {"id": "pc-id", "name": "mon-pc", "type": "Computer"}
+    box = {"id": "box-id", "name": "Salon", "type": "Speaker", "is_active": True}
+    restricted = {
+        "id": "r-id",
+        "name": "Autre",
+        "type": "Speaker",
+        "is_active": True,
+        "is_restricted": True,
+    }
+    assert svc.pick_device([pc, box], "mon-pc", prefer_pc=False)["id"] == "box-id"
+    assert svc.pick_device([pc, box], "mon-pc", prefer_pc=True)["id"] == "pc-id"
+    assert (
+        svc.pick_device([pc, {**box, "is_active": False}], "mon-pc", prefer_pc=False)["id"]
+        == "pc-id"
+    )
+    assert (
+        svc.pick_device([pc, restricted], "mon-pc", prefer_pc=False)["id"] == "pc-id"
+    )  # jamais un appareil restreint
+    assert svc.pick_device([], "mon-pc", prefer_pc=False) is None
+    assert svc.pick_device(None, "mon-pc", prefer_pc=False) is None
+
+
+def test_this_pc_is_recognised_in_the_list_by_its_name_or_as_the_only_computer():
+    def item(ident, name, kind):
+        return {"id": ident, "name": name, "type": kind}
+
+    named = [
+        item("a", "Salon", "Speaker"),
+        item("b", "Mon-PC", "Computer"),
+        item("c", "Web", "Computer"),
+    ]
+    assert svc.local_device_id(named, "mon-pc") == "b"
+    assert (
+        svc.local_device_id(
+            [item("a", "Salon", "Speaker"), item("c", "Ubuntu", "Computer")], "autre"
+        )
+        == "c"
+    )
+    assert svc.local_device_id(named[:1] + named[2:], "autre") == "c"
+    assert (
+        svc.local_device_id([item("b", "A", "Computer"), item("c", "B", "Computer")], "autre")
+        is None
+    )
+    assert svc.local_device_id([], "mon-pc") is None
+
+
+async def test_the_devices_of_the_account_are_listed_with_this_pc_first(tmp_path):
+    rig = Rig(tmp_path)
+    devices(
+        rig,
+        SPEAKER,
+        {
+            "id": "tel-id-123",
+            "name": "iPhone de Marie",
+            "type": "Smartphone",
+            "is_active": False,
+            "volume_percent": 60,
+        },
+        {**PC_LONG, "volume_percent": 54},
+        {"id": "court", "name": "Id trop court"},  # inutilisable : ignoré
+        None,
+    )
+    reply_ = await rig.service.devices()
+    assert [d["name"] for d in reply_["devices"]] == ["mon-pc", "iPhone de Marie", "Salon"]
+    pc, phone, salon = reply_["devices"]
+    assert (pc["this_pc"], phone["this_pc"], salon["this_pc"]) == (True, False, False)
+    assert (salon["active"], salon["type"], salon["volume"]) == (True, "Speaker", 35)
+    assert (pc["volume"], pc["can_volume"], pc["restricted"]) == (54, True, False)
+    json.dumps(reply_)
+
+
+async def test_a_device_without_a_volume_or_with_an_odd_type_is_still_listed(tmp_path):
+    rig = Rig(tmp_path)
+    devices(
+        rig,
+        {
+            "id": "tv-0123456789",
+            "name": "",
+            "type": "Hologram",
+            "supports_volume": False,
+            "volume_percent": 300,
+        },
+    )
+    [tv] = (await rig.service.devices())["devices"]
+    assert (tv["name"], tv["type"], tv["volume"], tv["can_volume"]) == (
+        "Appareil sans nom",
+        "Unknown",
+        None,
+        False,
+    )
+
+
+async def test_playback_is_transferred_to_a_listed_device(tmp_path):
+    rig = Rig(tmp_path)
+    devices(rig, PC_LONG, SPEAKER)
+    rig.api.on("PUT", "/me/player", reply(204))
+    assert await rig.service.transfer("salon-0123456789") == {"device": "salon-0123456789"}
+    call = rig.api.hits("PUT", "/me/player")[0]
+    assert json.loads(call.body) == {"device_ids": ["salon-0123456789"], "play": True}
+    await rig.service.transfer("pc-0123456789abcdef", play=False)
+    assert json.loads(rig.api.hits("PUT", "/me/player")[1].body) == {
+        "device_ids": ["pc-0123456789abcdef"],
+        "play": False,
+    }
+
+
+async def test_an_unknown_device_is_refused_after_one_fresh_look_at_the_list(tmp_path):
+    """Le dock ne commande jamais un appareil que l'agent n'a pas listé lui-même."""
+    rig = Rig(tmp_path)
+    devices(rig, PC)
+    rig.api.on("PUT", "/me/player", reply(204))
+    with pytest.raises(ActionError) as info:
+        await rig.service.transfer("jamais-vu-0123456")
+    assert info.value.code == "unknown_device"
+    assert len(rig.api.hits("GET", "/me/player/devices")) == 1  # la liste a été relue une fois
+    assert rig.api.hits("PUT", "/me/player") == []
+    # Un appareil apparu depuis la dernière liste est trouvé par cette relecture.
+    devices(rig, PC, SPEAKER)
+    await rig.service.transfer("salon-0123456789")
+    assert len(rig.api.hits("PUT", "/me/player")) == 1
+
+
+async def test_the_volume_of_a_device_is_set_through_the_api(tmp_path):
+    rig = Rig(tmp_path)
+    devices(rig, PC, SPEAKER)
+    rig.api.on("PUT", "/me/player/volume", reply(204))
+    assert await rig.service.set_volume("salon-0123456789", 40) == {
+        "device": "salon-0123456789",
+        "volume": 40,
+    }
+    call = rig.api.hits("PUT", "/me/player/volume")[0]
+    assert rig.api.query(call) == {"volume_percent": "40", "device_id": "salon-0123456789"}
+    with pytest.raises(ActionError):
+        await rig.service.set_volume("inconnu-0123456789", 10)
+
+
+@pytest.mark.parametrize(
+    ("failure", "code", "words"),
+    [
+        (error(404, "Device not found", "NO_ACTIVE_DEVICE"), "device_gone", "ne répond plus"),
+        (
+            error(403, "Restriction violated", "UNKNOWN"),
+            "device_restricted",
+            "commandes à distance",
+        ),
+        (error(403, "Premium required", "PREMIUM_REQUIRED"), "premium", "Premium"),
+        (error(429, retry_after="1"), "busy", "patienter"),
+    ],
+)
+async def test_a_device_that_refuses_the_command_says_why(tmp_path, failure, code, words):
+    rig = Rig(tmp_path)
+    devices(rig, SPEAKER)
+    rig.api.on("PUT", "/me/player", failure)
+    with pytest.raises(ActionError) as info:
+        await rig.service.transfer("salon-0123456789")
+    assert info.value.code == code
+    assert words in info.value.message
+
+
+async def test_the_list_of_devices_needs_a_connected_account(tmp_path):
+    rig = Rig(tmp_path, creds=False)
+    with pytest.raises(ActionError) as info:
+        await rig.service.devices()
+    assert info.value.code == "not_connected"
 
 
 async def test_spotify_is_started_first_when_it_is_closed(tmp_path):
@@ -800,13 +1000,16 @@ def actions():
 def test_the_spotify_actions_are_exactly_these_and_none_is_sensitive():
     _, registry = actions()
     assert registry.names == [
+        "spotify.devices",
         "spotify.image",
         "spotify.launch",
         "spotify.library",
         "spotify.play",
         "spotify.search",
         "spotify.status",
+        "spotify.transfer",
         "spotify.view",
+        "spotify.volume",
     ]
     assert not any(registry.is_sensitive(n) for n in registry.names)
 
@@ -822,10 +1025,22 @@ async def test_valid_requests_reach_the_service(tmp_path):
     assert (await invoke(registry, "spotify.play", {"uri": TRACK, "context": ALBUM}))["ok"]
     assert (await invoke(registry, "spotify.play", {"uri": ALBUM}))["ok"]
     assert (await invoke(registry, "spotify.status"))["ok"]
+    assert (await invoke(registry, "spotify.devices"))["ok"]
+    assert (await invoke(registry, "spotify.transfer", {"device": "abcdefgh1234"}))["ok"]
+    assert (await invoke(registry, "spotify.transfer", {"device": "abcdefgh1234", "play": False}))[
+        "ok"
+    ]
+    assert (await invoke(registry, "spotify.volume", {"device": "abcdefgh1234", "percent": 0}))[
+        "ok"
+    ]
     assert (await invoke(registry, "spotify.launch"))["ok"]
     assert [c[0] for c in backend.calls] == [
-        "search", "view", "library", "image", "play", "play", "status", "launch",
+        "search", "view", "library", "image", "play", "play", "status",
+        "devices", "transfer", "transfer", "set_volume", "launch",
     ]  # fmt: skip
+    assert backend.calls[8] == ("transfer", ("abcdefgh1234", True), {})
+    assert backend.calls[9] == ("transfer", ("abcdefgh1234", False), {})
+    assert backend.calls[10] == ("set_volume", ("abcdefgh1234", 0), {})
     assert backend.calls[0][1] == ("les fantômes",)  # espaces et saut de ligne ramenés à un espace
     assert backend.calls[3] == ("image", ("0123456789abcdef",), {"large": True})
     assert backend.calls[4][1] == (TRACK, ALBUM)
@@ -860,6 +1075,19 @@ async def test_valid_requests_reach_the_service(tmp_path):
         ("spotify.play", {"uri": TRACK, "context": f"spotify:artist:{ID_A}"}),
         ("spotify.play", {"uri": TRACK, "context": "https://evil.example"}),
         ("spotify.play", {"uri": TRACK, "device_id": "x"}),
+        ("spotify.transfer", {}),
+        ("spotify.transfer", {"device": "court"}),
+        ("spotify.transfer", {"device": "a" * 129}),
+        ("spotify.transfer", {"device": "abcdefgh ijkl"}),
+        ("spotify.transfer", {"device": "abcdefgh/../x"}),
+        ("spotify.transfer", {"device": "abcdefgh1234", "play": "oui"}),
+        ("spotify.transfer", {"device": "abcdefgh1234", "uri": "spotify:track:x"}),
+        ("spotify.volume", {"device": "abcdefgh1234"}),
+        ("spotify.volume", {"device": "abcdefgh1234", "percent": 101}),
+        ("spotify.volume", {"device": "abcdefgh1234", "percent": -1}),
+        ("spotify.volume", {"device": "abcdefgh1234", "percent": "50"}),
+        ("spotify.volume", {"device": "abcdefgh1234", "percent": 50.5}),
+        ("spotify.devices", {"x": 1}),
         ("spotify.status", {"x": 1}),
         ("spotify.launch", {"command": "rm -rf /"}),
     ],

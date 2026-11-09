@@ -87,6 +87,11 @@ class DockConfig:
     def loopback_only(self) -> bool:
         return ipaddress.IPv4Address(self.listen_host).is_loopback
 
+    @property
+    def saver_dir(self) -> Path:
+        """Le dossier des vidéos de l'économiseur d'écran (voir screensaver.py)."""
+        return self.state_dir / "screensaver"
+
     # --- lecture -------------------------------------------------------------------------
 
     @classmethod

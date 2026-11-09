@@ -51,6 +51,14 @@ CATALOG: dict[str, dict[str, list[tuple[str, int]]]] = {
         "Correspondances": [("Changement à Nation", 181), ("Ligne 4", 207)],
     },
 }
+#: Les appareils Spotify Connect de la démonstration : ce PC (son nom est celui de la machine), des enceintes en Wi-Fi…
+DEVICES = (
+    ("pc-demo", "Computer", 54),
+    ("Salon (Sonos Era 100)", "Speaker", 35),
+    ("Cuisine (Echo Dot)", "CastAudio", 20),
+    ("iPhone de Marie", "Smartphone", 60),
+    ("TV du salon", "TV", 25),
+)
 PLAYLISTS = {
     "Soirée calme": ("Spotify", ["Nuit blanche", "Printemps", "Quai 9", "Neige fine", "Écho"]),
     "Route de nuit": ("Toi", ["Autoroute 17", "Sortie 42", "Sous les néons", "Onde courte"]),
@@ -107,6 +115,19 @@ class DemoSpotify:
                     "year": str(2018 + a + b), "type": "album", "tracks": len(tracks), "art": cover, "artist_id": artist_id,
                     "_tracks": tracks,
                 }  # fmt: skip
+        self.outputs: list[dict[str, Any]] = [
+            {
+                "id": hashlib.sha1(name.encode(), usedforsecurity=False).hexdigest(),
+                "name": name,
+                "type": kind,
+                "active": index == 0,
+                "restricted": False,
+                "volume": volume,
+                "can_volume": True,
+                "this_pc": index == 0,
+            }
+            for index, (name, kind, volume) in enumerate(DEVICES)
+        ]
         self.playlists: dict[str, dict[str, Any]] = {}
         for p, (name, (owner, titles)) in enumerate(PLAYLISTS.items()):
             ident = spotify_id(f"playlist:{name}")
@@ -231,3 +252,26 @@ class DemoSpotify:
             track["name"], track["artists"], track["album"], track["seconds"], track["album"]
         )
         return {"via": "api", "started": False}
+
+    async def devices(self) -> dict[str, Any]:
+        ordered = sorted(self.outputs, key=lambda d: (not d["this_pc"], d["name"].casefold()))
+        return {"devices": [dict(d) for d in ordered]}
+
+    def _output(self, device_id: str) -> dict[str, Any]:
+        found = next((d for d in self.outputs if d["id"] == device_id), None)
+        if found is None:
+            raise ActionError(
+                "unknown_device",
+                "Cet appareil n'est plus visible : ouvre la liste pour l'actualiser.",
+            )
+        return found
+
+    async def transfer(self, device_id: str, play: bool = True) -> dict[str, Any]:
+        target = self._output(device_id)
+        for device in self.outputs:
+            device["active"] = device is target
+        return {"device": device_id}
+
+    async def set_volume(self, device_id: str, percent: int) -> dict[str, Any]:
+        self._output(device_id)["volume"] = percent
+        return {"device": device_id, "volume": percent}

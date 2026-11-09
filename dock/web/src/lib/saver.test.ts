@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest'
+import {
+  CONTENT_OPTIONS,
+  SAVER_OPTIONS,
+  SCENE_IDS,
+  SCENE_TITLES,
+  clockText,
+  pickNext,
+  playable,
+  saverNeverShows,
+  saverPhrase,
+  videoTitle,
+  type SaverItem,
+  type SaverVideo,
+} from './saver'
+
+const video = (name: string): SaverVideo => ({ name, size: 1000, mime: 'video/mp4' })
+const seq = (...values: number[]) => {
+  let i = 0
+  return () => values[i++ % values.length]
+}
+
+describe('les réglages proposés', () => {
+  it('sont ceux que le dock accepte, « jamais » en premier', () => {
+    expect(SAVER_OPTIONS.map((o) => o.id)).toEqual([0, 60, 120, 300, 600, 900, 1800])
+    expect(SAVER_OPTIONS[0].label).toBe('Jamais')
+    expect(CONTENT_OPTIONS.map((o) => o.id)).toEqual(['all', 'scenes', 'videos'])
+  })
+  it('chaque scène a un nom lisible', () => {
+    for (const id of SCENE_IDS) expect(SCENE_TITLES[id].length).toBeGreaterThan(5)
+  })
+  it('se disent en toutes lettres', () => {
+    expect(saverPhrase(60)).toBe('1 minute')
+    expect(saverPhrase(300)).toBe('5 minutes')
+    expect(saverPhrase(900)).toBe('15 minutes')
+  })
+  it('préviennent quand l’écran s’éteint avant l’économiseur', () => {
+    expect(saverNeverShows(300, 600)).toBe(false)
+    expect(saverNeverShows(600, 300)).toBe(true)
+    expect(saverNeverShows(300, 300)).toBe(true)
+    expect(saverNeverShows(300, 0)).toBe(false) // l'écran ne s'éteint jamais
+    expect(saverNeverShows(0, 300)).toBe(false) // pas d'économiseur : rien à prévenir
+  })
+})
+
+describe('légendes', () => {
+  it('une vidéo se nomme sans son extension', () => {
+    expect(videoTitle('Vue du matin.mp4')).toBe('Vue du matin')
+    expect(videoTitle('mer_du_nord.webm')).toBe('mer du nord')
+    expect(videoTitle('.mp4')).toBe('.mp4')
+  })
+  it('l’heure et la date sont en français', () => {
+    const { time, date } = clockText(new Date(2026, 10, 10, 14, 5))
+    expect(time).toMatch(/14[:h]05/)
+    expect(date).toBe('mardi 10 novembre')
+  })
+})
+
+describe('ce qui passe à l’écran', () => {
+  const videos = [video('a.mp4'), video('b.mp4')]
+  const none = new Set<string>()
+
+  it('les vidéos refusées par le navigateur sont écartées', () => {
+    expect(playable(videos, new Set(['a.mp4'])).map((v) => v.name)).toEqual(['b.mp4'])
+  })
+  it('« scènes » ne montre jamais de vidéo', () => {
+    for (let i = 0; i < 30; i++) expect(pickNext('scenes', videos, none, null, () => (i % 10) / 10).kind).toBe('scene')
+  })
+  it('« mes vidéos » ne montre que des vidéos, et retombe sur les scènes s’il n’y en a pas de lisible', () => {
+    for (let i = 0; i < 30; i++) expect(pickNext('videos', videos, none, null, () => (i % 10) / 10).kind).toBe('video')
+    expect(pickNext('videos', [], none, null, () => 0.2).kind).toBe('scene')
+    expect(pickNext('videos', videos, new Set(['a.mp4', 'b.mp4']), null, () => 0.2).kind).toBe('scene')
+  })
+  it('« tout » alterne : une vidéo quand le sort le veut, une scène sinon', () => {
+    expect(pickNext('all', videos, none, null, seq(0.1, 0)).kind).toBe('video')
+    expect(pickNext('all', videos, none, null, seq(0.9, 0)).kind).toBe('scene')
+    expect(pickNext('all', [], none, null, seq(0.1, 0)).kind).toBe('scene') // pas de vidéo : que des scènes
+  })
+  it('ne rejoue jamais deux fois de suite la même chose quand il y a le choix', () => {
+    const previous: SaverItem = { kind: 'scene', id: 'mountains' }
+    for (let i = 0; i < 50; i++) {
+      const item = pickNext('scenes', [], none, previous, () => i / 50)
+      expect(item).not.toEqual(previous)
+    }
+    const only = [video('seule.mp4')]
+    expect(pickNext('videos', only, none, { kind: 'video', name: 'seule.mp4' }, () => 0)).toEqual({ kind: 'video', name: 'seule.mp4' })
+  })
+  it('atteint chaque scène avec un tirage qui parcourt [0, 1[', () => {
+    const seen = new Set<string>()
+    for (let i = 0; i < 100; i++) {
+      const item = pickNext('scenes', [], none, null, () => i / 100)
+      if (item.kind === 'scene') seen.add(item.id)
+    }
+    expect([...seen].sort()).toEqual([...SCENE_IDS].sort())
+  })
+})

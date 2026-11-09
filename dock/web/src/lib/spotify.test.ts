@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import type { PlayerInfo, SpotifyAlbum, SpotifyArtist, SpotifyPlaylist, SpotifySearch, SpotifyStatus, SpotifyTrack } from './protocol'
+import type { PlayerInfo, SpotifyAlbum, SpotifyDevice, SpotifyArtist, SpotifyPlaylist, SpotifySearch, SpotifyStatus, SpotifyTrack } from './protocol'
 import {
   SECTIONS,
   accountView,
+  activeDevice,
+  canTransferTo,
+  deviceSubtitle,
+  deviceTitle,
+  deviceTypeLabel,
+  withActive,
+  withVolume,
   cleanQuery,
   contextFor,
   countText,
@@ -157,5 +164,54 @@ describe('bibliothèque et recherche', () => {
     expect(contextFor(track(), { kind: 'artist', uri: `spotify:artist:${'e'.repeat(22)}` })).toBe(`spotify:album:${'b'.repeat(22)}`)
     expect(contextFor(track(), null)).toBe(`spotify:album:${'b'.repeat(22)}`)
     expect(contextFor(track({ album_id: null }), null)).toBeUndefined()
+  })
+})
+
+const device = (extra: Partial<SpotifyDevice> = {}): SpotifyDevice => ({
+  id: 'd'.repeat(40),
+  name: 'Salon',
+  type: 'Speaker',
+  active: false,
+  restricted: false,
+  volume: 35,
+  can_volume: true,
+  this_pc: false,
+  ...extra,
+})
+
+describe('la sortie sonore', () => {
+  it('appelle « Ce PC » la machine du dock, et les autres par leur nom', () => {
+    expect(deviceTitle(device({ this_pc: true, name: 'pc-demo' }))).toBe('Ce PC')
+    expect(deviceTitle(device())).toBe('Salon')
+  })
+  it('dit le genre d’appareil et son volume sous le nom', () => {
+    expect(deviceSubtitle(device())).toBe('Enceinte · 35 %')
+    expect(deviceSubtitle(device({ this_pc: true, name: 'pc-demo', type: 'Computer', volume: 54 }))).toBe('pc-demo · 54 %')
+    expect(deviceSubtitle(device({ volume: null }))).toBe('Enceinte')
+    expect(deviceSubtitle(device({ can_volume: false }))).toBe('Enceinte')
+    expect(deviceSubtitle(device({ restricted: true }))).toBe('Enceinte · 35 % · commandes refusées')
+  })
+  it('traduit chaque type d’appareil, et un type inconnu reste lisible', () => {
+    expect(deviceTypeLabel('CastAudio')).toBe('Enceinte connectée')
+    expect(deviceTypeLabel('TV')).toBe('Télévision')
+    expect(deviceTypeLabel('Smartphone')).toBe('Téléphone')
+    expect(deviceTypeLabel('Hologramme' as never)).toBe('Appareil')
+  })
+  it('trouve l’appareil actif', () => {
+    expect(activeDevice([device(), device({ id: 'e'.repeat(40), active: true })])?.id).toBe('e'.repeat(40))
+    expect(activeDevice([device()])).toBeNull()
+    expect(activeDevice([])).toBeNull()
+    expect(activeDevice(null)).toBeNull()
+  })
+  it('ne propose pas de passer la musique à un appareil restreint', () => {
+    expect(canTransferTo(device())).toBe(true)
+    expect(canTransferTo(device({ restricted: true }))).toBe(false)
+  })
+  it('montre tout de suite le nouvel appareil actif ou le nouveau volume, sans toucher aux autres', () => {
+    const a = device({ id: 'a'.repeat(40), active: true })
+    const b = device({ id: 'b'.repeat(40) })
+    expect(withActive([a, b], b.id).map((d) => d.active)).toEqual([false, true])
+    expect(withVolume([a, b], b.id, 80).map((d) => d.volume)).toEqual([35, 80])
+    expect(a.active).toBe(true) // les listes d'origine ne sont pas modifiées
   })
 })

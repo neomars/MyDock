@@ -5,6 +5,7 @@
     ./scripts/dev-stack.py --dock-port 8099 --agent-port 18765
 
     ./scripts/dev-stack.py --unpaired           # un dock neuf : il affiche un code d'association
+    ./scripts/dev-stack.py --state-dir /tmp/x   # l'état du dock (réglages, vidéos de l'économiseur) dans ce dossier
 
 Le portail du dock (la page d'installation du PC) écoute sur un port libre de 127.0.0.1 et propose
 le paquet de l'agent construit à la volée (si dpkg-deb est là). La pile affiche son adresse.
@@ -154,7 +155,8 @@ class Stack:
             build_client_package(self.clients)
         command = [
             sys.executable, "-m", "mydock_dock", "init", "--config", str(config),
-            "--state-dir", str(self.tmp / "state"), "--web-dir", str(self.args.web_dir),
+            "--state-dir", str(self.args.state_dir or self.tmp / "state"),
+            "--web-dir", str(self.args.web_dir),
             "--clients-dir", str(self.clients), "--portal-port", str(self.portal_port),
         ]  # fmt: skip
         if not self.args.unpaired:  # un dock neuf n'a ni PC ni jeton : il montre un code
@@ -220,6 +222,11 @@ def main() -> int:
         "--unpaired",
         action="store_true",
         help="dock neuf : aucun PC, un code d'association s'affiche",
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        help="dossier d'état du dock : réglages, vidéos de l'économiseur (défaut : un dossier temporaire de la pile)",
     )
     args = parser.parse_args()
 

@@ -26,6 +26,25 @@ GENRES_SHOWN = 3
 ART_REMEMBERED = (
     800  # adresses de pochettes gardées en mémoire : les listes en montrent quelques dizaines
 )
+DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{8,128}$")
+#: Les types d'appareils que Spotify Connect annonce ; tout autre type devient « Unknown ».
+DEVICE_TYPES = frozenset(
+    {
+        "Computer",
+        "Tablet",
+        "Smartphone",
+        "Speaker",
+        "CastAudio",
+        "CastVideo",
+        "TV",
+        "AVR",
+        "STB",
+        "AudioDongle",
+        "GameConsole",
+        "Automobile",
+        "Unknown",
+    }
+)
 
 
 def parse_uri(uri: str) -> tuple[str, str] | None:
@@ -92,6 +111,10 @@ def artists_text(artists: Any) -> str | None:
 
 def valid_id(value: Any) -> str | None:
     return value if isinstance(value, str) and ID_RE.fullmatch(value) else None
+
+
+def valid_device_id(value: Any) -> str | None:
+    return value if isinstance(value, str) and DEVICE_ID_RE.fullmatch(value) else None
 
 
 # --- éléments ------------------------------------------------------------------------------------
@@ -185,6 +208,27 @@ def playlist_item(raw: Any, art: ArtRegistry) -> dict[str, Any] | None:
         "owner": text(owner.get("display_name")),
         "tracks": total if isinstance(total, int) and total >= 0 else None,
         "art": art.register(pick_image(raw.get("images"))),
+    }
+
+
+def device_item(raw: Any) -> dict[str, Any] | None:
+    """Un appareil Spotify Connect (ce PC, une enceinte, un téléphone…), ou None s'il est inutilisable."""
+    if not isinstance(raw, dict):
+        return None
+    ident = valid_device_id(raw.get("id"))
+    if ident is None:
+        return None
+    kind = raw.get("type")
+    volume = raw.get("volume_percent")
+    return {
+        "id": ident,
+        "name": text(raw.get("name")) or "Appareil sans nom",
+        "type": kind if kind in DEVICE_TYPES else "Unknown",
+        "active": raw.get("is_active") is True,
+        # Un appareil « restreint » n'accepte aucune commande à distance (enceinte d'un autre compte, par exemple).
+        "restricted": raw.get("is_restricted") is True,
+        "volume": volume if isinstance(volume, int) and 0 <= volume <= 100 else None,
+        "can_volume": raw.get("supports_volume") is not False,
     }
 
 

@@ -1,3 +1,22 @@
+mydock-agent (1.4.0) unstable; urgency=medium
+
+  * Spotify : choisir la sortie sonore. Nouvelles actions spotify.devices (les appareils Spotify Connect du
+    compte : ce PC, enceintes connectées, téléphones, télévisions), spotify.transfer (passe la lecture en
+    cours sur un appareil) et spotify.volume (volume de cet appareil). Chaque identifiant d'appareil est
+    validé (8 à 128 caractères parmi A-Za-z0-9_.:-) et doit être un appareil que l'agent a lui-même listé :
+    sinon il relit la liste une fois, puis refuse. Un appareil disparu ou qui refuse les commandes à
+    distance donne un message clair. Les droits déjà demandés à la connexion suffisent : pas de nouvelle
+    connexion à faire. Passer la musique sur un appareil demande un compte Premium, comme toute commande de
+    lecture.
+  * Lire un morceau tient compte de l'appareil actif : la musique repart là où elle sort déjà (une enceinte,
+    par exemple) au lieu de revenir de force sur le PC ; après le lancement de l'application du PC, c'est
+    ce PC qui est choisi, comme avant.
+  * Le mode démo propose des appareils fictifs (enceinte du salon, Echo, téléphone, télévision).
+  * La version suit celle du dock (1.4.0), qui gagne l'onglet « Sortie sonore » et l'économiseur d'écran
+    (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 09 Nov 2026 19:00:00 +0000
+
 mydock-agent (1.3.0) unstable; urgency=medium
 
   * Les applications lancées depuis le dock (Applis, Steam, Office, Spotify) ne sont plus des enfants de

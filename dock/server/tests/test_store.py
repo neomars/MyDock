@@ -14,6 +14,8 @@ def test_defaults(tmp_path):
         "hidden": [],
         "pinned_apps": [],
         "screen_sleep": 0,  # jamais : on ne coupe pas l'écran sans que ce soit demandé
+        "saver_after": 300,  # l'économiseur d'écran démarre après 5 minutes sans toucher
+        "saver_content": "all",
     }
     assert store.pc["interfaces"] == []
 
@@ -205,6 +207,8 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         "hidden": [],
         "pinned_apps": [],
         "screen_sleep": 0,
+        "saver_after": 300,
+        "saver_content": "all",
     }
     assert store.pc["hostname"] == "x"
 
@@ -243,3 +247,44 @@ def test_a_state_file_from_before_the_screen_setting_gets_the_default(tmp_path):
     (tmp_path / "state.json").write_text(json.dumps({"ui": {"last_page": "power"}}))
     store = StateStore(tmp_path)
     assert (store.ui["last_page"], store.ui["screen_sleep"]) == ("power", 0)
+
+
+# --- l'économiseur d'écran -------------------------------------------------------------------------------------
+
+
+def test_the_screensaver_delay_is_one_of_the_offered_values_and_persists(tmp_path):
+    from mydock_dock.store import SAVER_CHOICES
+
+    store = StateStore(tmp_path)
+    assert SAVER_CHOICES == (0, 60, 120, 300, 600, 900, 1800)
+    for seconds in SAVER_CHOICES:
+        assert store.update_ui({"saver_after": seconds})["saver_after"] == seconds
+    assert StateStore(tmp_path).ui["saver_after"] == SAVER_CHOICES[-1]
+
+
+@pytest.mark.parametrize("value", [-1, 30, 61, 301, 3600, "300", 300.0, True, None, [300]])
+def test_other_screensaver_delays_are_refused_and_change_nothing(tmp_path, value):
+    store = StateStore(tmp_path)
+    store.update_ui({"saver_after": 120})
+    with pytest.raises(ValidationFailure, match="économiseur"):
+        store.update_ui({"saver_after": value})
+    assert store.ui["saver_after"] == 120
+
+
+def test_the_screensaver_content_is_scenes_videos_or_both(tmp_path):
+    store = StateStore(tmp_path)
+    for content in ("scenes", "videos", "all"):
+        assert store.update_ui({"saver_content": content})["saver_content"] == content
+    for bad in ("tout", "", None, 3, ["all"]):
+        with pytest.raises(ValidationFailure, match="économiseur"):
+            store.update_ui({"saver_content": bad})
+    assert store.ui["saver_content"] == "all"
+
+
+@pytest.mark.parametrize("damaged", ["jamais", -5, 7, 1.5, None, [60], True])
+def test_a_damaged_screensaver_in_the_file_falls_back_to_the_defaults(tmp_path, damaged):
+    (tmp_path / "state.json").write_text(
+        json.dumps({"ui": {"saver_after": damaged, "saver_content": damaged}})
+    )
+    ui = StateStore(tmp_path).ui
+    assert (ui["saver_after"], ui["saver_content"]) == (300, "all")

@@ -2,11 +2,19 @@
   import { untrack } from 'svelte'
   import { screenSleep } from '../lib/screen.svelte'
   import { sock } from '../lib/socket.svelte'
+  import SaverStage from './SaverStage.svelte'
 
   const delay = $derived(sock.ui?.screen_sleep ?? 0)
   $effect(() => {
     const seconds = delay
     untrack(() => screenSleep.setDelay(seconds))
+  })
+
+  // L'économiseur d'écran démarre après son propre délai (« Réglages → Économiseur d'écran »).
+  const saverDelay = $derived(sock.ui?.saver_after ?? 0)
+  $effect(() => {
+    const seconds = saverDelay
+    untrack(() => screenSleep.setSaverDelay(seconds))
   })
 
   // Tout toucher, geste ou touche repousse la veille : on ne note que l'heure, sans rien déclencher.
@@ -20,7 +28,11 @@
   })
 </script>
 
-{#if screenSleep.phase !== 'awake'}
+{#if screenSleep.phase === 'saver'}
+  <SaverStage />
+{/if}
+
+{#if screenSleep.phase === 'asleep' || screenSleep.phase === 'waking'}
   <!-- Le voile noir, puis (doigt posé) le même voile invisible, le temps d'avaler le reste du geste. -->
   <div
     class="veil"

@@ -1674,3 +1674,93 @@ test('Spotify : fermé et agent trop ancien, la page explique la mise à jour au
   await expect(page.getByTestId('sp-agent-old')).toContainText('mets-le à jour')
   await expect(page.getByTestId('sp-launch')).toHaveCount(0)
 })
+
+// --- Spotify : la sortie sonore ----------------------------------------------------------------------------------
+
+const DEVICE = (letter: string, extra: Record<string, unknown> = {}) => ({
+  id: letter.repeat(40), name: `Appareil ${letter}`, type: 'Speaker', active: false, restricted: false, volume: 30, can_volume: true, this_pc: false, ...extra,
+}) // prettier-ignore
+const PC_DEVICE = DEVICE('p', { name: 'portable', type: 'Computer', this_pc: true, active: true, volume: 54 })
+
+/** Un faux dock où Spotify est connecté et liste ces appareils. */
+async function outputsDock(page: Page, devices: unknown[] | (() => unknown), extra?: (act: Mock['acts'][number]) => unknown) {
+  return mockDock(page, WITH_PLAYER, {
+    startPage: 'music',
+    onAct: (act) => {
+      if (act.a === 'spotify.status') return { r: STATUS_OK }
+      if (act.a === 'spotify.devices') {
+        const value = typeof devices === 'function' ? devices() : devices
+        return value instanceof Object && 'ok' in value ? value : { r: { devices: value } }
+      }
+      return extra?.(act)
+    },
+  })
+}
+
+test('Sortie sonore : une enceinte active ailleurs est dite sur le lecteur, avec son volume', async ({ page, stack }) => {
+  const mock = await outputsDock(page, [PC_DEVICE.this_pc ? { ...PC_DEVICE, active: false } : PC_DEVICE, DEVICE('s', { name: 'Salon', active: true, volume: 45 })])
+  await page.goto(stack.url)
+  await expect(page.getByTestId('music-output')).toContainText('Salon')
+  await expect(page.getByTestId('device-vol-value')).toHaveText('45 %')
+  await expect(page.getByTestId('music-vol-slider')).toHaveCount(0)
+  await page.getByTestId('music-output').tap() // le bouton mène à la liste
+  await expect(page.getByTestId('sp-devices-title')).toBeVisible()
+  await noPageScroll(page)
+  expect(mock.acts.filter((a) => a.a === 'spotify.devices').length).toBeGreaterThanOrEqual(1)
+})
+
+test('Sortie sonore : un compte gratuit voit le refus de Spotify, et rien ne change', async ({ page, stack }) => {
+  const message = 'Cette commande demande un compte Spotify Premium.'
+  const mock = await outputsDock(page, [PC_DEVICE, DEVICE('s', { name: 'Salon' })], (act) =>
+    act.a === 'spotify.transfer' ? failed('premium', message) : undefined,
+  )
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-devices').tap()
+  await page.locator('[data-testid^=sp-device-]', { hasText: 'Salon' }).tap()
+  await expect(page.getByTestId('toast')).toContainText(message)
+  await expect(page.locator('[data-testid^=sp-device-]', { hasText: 'Salon' })).not.toHaveAttribute('data-active', 'true')
+  expect(mock.acts.find((a) => a.a === 'spotify.transfer')!.p).toEqual({ device: 's'.repeat(40), play: true })
+  await shot(page, '11-sortie-refus-premium', 'j')
+})
+
+test('Sortie sonore : un appareil restreint est grisé, une liste vide ou en échec est expliquée', async ({ page, stack }) => {
+  let reply: unknown = [PC_DEVICE, DEVICE('r', { name: 'Enceinte du voisin', restricted: true })]
+  await outputsDock(page, () => reply)
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-devices').tap()
+  const locked = page.locator('[data-testid^=sp-device-]', { hasText: 'Enceinte du voisin' })
+  await expect(locked).toBeDisabled()
+  await expect(locked).toContainText('commandes refusées')
+  reply = []
+  await page.getByTestId('sp-devices-refresh').tap()
+  await expect(page.getByTestId('sp-devices-empty')).toContainText('Ouvre Spotify sur le PC')
+  reply = failed('busy', 'Spotify demande de patienter 5 s avant la prochaine requête.')
+  await page.getByTestId('sp-devices-refresh').tap()
+  await expect(page.getByTestId('sp-devices-error-message')).toContainText('patienter 5 s')
+  await noPageScroll(page)
+})
+
+test('Sortie sonore : un agent d’avant la 1.4.0 ne sait pas lister les appareils : la page demande la mise à jour', async ({ page, stack }) => {
+  await outputsDock(page, () => failed('unknown_action', 'Action inconnue'))
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-devices').tap()
+  await expect(page.getByTestId('sp-devices-error-message')).toContainText('plus ancien que le dock')
+  await expect(page.getByTestId('sp-devices-error-message')).toContainText('mydock-agent 1.4.0')
+  await page.getByTestId('sp-tab-player').tap() // le lecteur, lui, marche comme avant
+  await expect(page.getByRole('slider', { name: 'Position dans le morceau' })).toBeVisible()
+  await expect(page.getByTestId('music-output')).toHaveCount(0)
+})
+
+test('Sortie sonore : un appareil disparu pendant qu’on le touche relit la liste', async ({ page, stack }) => {
+  let listed = 0
+  const mock = await outputsDock(page, () => ((listed += 1), [PC_DEVICE, DEVICE('s', { name: 'Salon' })]), (act) =>
+    act.a === 'spotify.transfer' ? failed('unknown_device', 'Cet appareil n’est plus visible : ouvre la liste pour l’actualiser.') : undefined,
+  )
+  await page.goto(stack.url)
+  await page.getByTestId('sp-tab-devices').tap()
+  const before = listed
+  await page.locator('[data-testid^=sp-device-]', { hasText: 'Salon' }).tap()
+  await expect(page.getByTestId('toast')).toContainText('n’est plus visible')
+  await expect.poll(() => listed).toBeGreaterThan(before)
+  expect(mock.acts.filter((a) => a.a === 'spotify.transfer')).toHaveLength(1)
+})

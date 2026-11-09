@@ -113,10 +113,13 @@ test('Applis : toucher une application la lance, et un second appui pendant le l
   await pin(dock, FIREFOX)
   await dock.getByTestId('picker-done').tap()
   const tile = dock.getByTestId(`launch-${FIREFOX}`)
-  const height = (await tile.boundingBox())?.height
+  // La hauteur de mise en page (offsetHeight), pas celle du rectangle affiché : juste après un toucher, la tuile reste un
+  // instant « enfoncée » (scale 0,97) et son rectangle rétrécit sans que la grille ait bougé.
+  const layoutHeight = () => tile.evaluate((el: HTMLElement) => el.offsetHeight)
+  const height = await layoutHeight()
   await tile.tap()
   await expect(dock.getByTestId(`launching-${FIREFOX}`)).toHaveText('Lancement…')
-  expect((await tile.boundingBox())?.height).toBe(height) // la grille ne bouge pas pendant le lancement
+  expect(await layoutHeight()).toBe(height) // la grille ne bouge pas pendant le lancement
   await expect(dock.getByTestId('toast')).toContainText('« Firefox » se lance…') // nom donné par l'agent
   await shot(dock, '04-applis-lancement', 'd')
   await expect(dock.getByTestId(`launching-${FIREFOX}`)).toHaveCount(0, { timeout: 8_000 })

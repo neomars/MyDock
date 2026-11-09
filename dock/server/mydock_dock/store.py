@@ -33,6 +33,11 @@ ALWAYS_VISIBLE = "settings"  # on ne peut pas cacher Réglages : sinon plus moye
 MAX_PINNED_APPS = 24
 #: Délais d'inactivité (secondes) au bout desquels l'écran du dock s'éteint ; 0 = jamais.
 SCREEN_SLEEP_CHOICES = (0, 60, 300, 600, 1800)
+#: Délais d'inactivité (secondes) au bout desquels l'économiseur d'écran démarre ; 0 = jamais.
+SAVER_CHOICES = (0, 60, 120, 300, 600, 900, 1800)
+DEFAULT_SAVER_AFTER = 300
+#: Ce que l'économiseur montre : les scènes animées de l'interface, les vidéos du Pi, ou les deux.
+SAVER_CONTENT = ("all", "scenes", "videos")
 APP_ID_RE = re.compile(r"^[A-Za-z0-9_.+-]{1,200}\.desktop$")  # identifiant d'un fichier .desktop
 
 
@@ -45,6 +50,8 @@ def _default_state() -> dict[str, Any]:
             "hidden": [],
             "pinned_apps": [],
             "screen_sleep": 0,
+            "saver_after": DEFAULT_SAVER_AFTER,
+            "saver_content": "all",
         },
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
         "markets": {
@@ -83,6 +90,10 @@ class StateStore:
         ui = self._data["ui"]
         if not _is_screen_sleep(ui.get("screen_sleep")):
             ui["screen_sleep"] = 0  # une valeur abîmée ne doit pas atteindre l'écran
+        if not _is_saver_after(ui.get("saver_after")):
+            ui["saver_after"] = DEFAULT_SAVER_AFTER
+        if ui.get("saver_content") not in SAVER_CONTENT:
+            ui["saver_content"] = "all"
 
     def _save(self) -> None:
         try:
@@ -125,6 +136,14 @@ class StateStore:
             if not _is_screen_sleep(patch["screen_sleep"]):
                 raise ValidationFailure("Durée de veille de l'écran invalide.")
             new["screen_sleep"] = patch["screen_sleep"]
+        if "saver_after" in patch:
+            if not _is_saver_after(patch["saver_after"]):
+                raise ValidationFailure("Délai de l'économiseur d'écran invalide.")
+            new["saver_after"] = patch["saver_after"]
+        if "saver_content" in patch:
+            if patch["saver_content"] not in SAVER_CONTENT:
+                raise ValidationFailure("Contenu de l'économiseur d'écran inconnu.")
+            new["saver_content"] = patch["saver_content"]
         if new != ui:
             self._data["ui"] = new
             self._save()
@@ -172,6 +191,10 @@ class StateStore:
 
 def _is_screen_sleep(value: Any) -> bool:
     return type(value) is int and value in SCREEN_SLEEP_CHOICES
+
+
+def _is_saver_after(value: Any) -> bool:
+    return type(value) is int and value in SAVER_CHOICES
 
 
 def _page_list(value: Any, label: str) -> list[str]:

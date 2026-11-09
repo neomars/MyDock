@@ -1,3 +1,31 @@
+mydock (1.4.0) unstable; urgency=medium
+
+  * Spotify : nouvel onglet « Sortie sonore ». Il liste les appareils Spotify Connect du compte (ce PC
+    d'abord, puis les enceintes connectées en Wi-Fi, les téléphones, les télévisions…) avec leur genre et
+    leur volume ; un toucher y passe la lecture en cours. Le lecteur dit sur quel appareil la musique sort
+    et règle le volume de cet appareil (celui du PC quand la musique reste ici). Sous la liste, les sorties
+    du PC (haut-parleurs, casque, Bluetooth, HDMI). La liste se relit en ouvrant l'onglet, toutes les 15 s
+    tant qu'il est ouvert, et avec « Actualiser ».
+  * Économiseur d'écran : sans toucher pendant 5 minutes (réglable de 1 à 30 minutes dans Réglages, ou
+    jamais), l'écran montre une vue animée plein écran, comme les vues aériennes de l'Apple TV : montagnes
+    au lever du jour, fonds marins, ville de nuit vue du ciel, aurore boréale, voyage parmi les étoiles.
+    Ces scènes sont dessinées en direct par l'interface (aucun fichier, aucun téléchargement), avec l'heure,
+    le nom de la vue et le morceau en cours. Le premier toucher la ferme sans rien déclencher dessous. Les
+    vidéos d'Apple ne sont pas fournies (elles lui appartiennent) : on ajoute les siennes avec
+    « sudo mydock-dock screensaver add ADRESSE_HTTPS_OU_FICHIER » (MP4 H.264 ou WebM, dossier
+    /var/lib/mydock/screensaver, sans redémarrage) ; « Tout », « Scènes » ou « Mes vidéos » choisit ce qui
+    passe, et une vidéo illisible est écartée au profit d'une scène.
+  * Avec la veille de l'écran : l'économiseur passe en premier, puis l'écran s'éteint s'il est réglé plus
+    long. Réglé pareil ou plus court, la veille passe avant : Réglages le dit.
+  * Le serveur ne sert que les vidéos qu'il vient de lister dans son dossier (extensions MP4 et WebM, ni
+    sous-dossier ni lien symbolique, aucun chemin construit à partir de l'adresse) ; « screensaver add »
+    n'accepte que le https. « mydock-dock doctor » gagne une section « Économiseur d'écran ».
+  * Les réglages de l'économiseur (délai, contenu) sont gardés par le dock, avec ceux de la veille.
+  * Cette version demande aussi le nouveau paquet du PC (mydock-agent 1.4.0), proposé par la page du Pi :
+    avec un agent plus ancien, l'onglet « Sortie sonore » le dit et le reste continue de marcher.
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 09 Nov 2026 19:00:00 +0000
+
 mydock (1.3.0) unstable; urgency=medium
 
   * La page « Musique » devient « Spotify », au plus près de l'application officielle : trois onglets
