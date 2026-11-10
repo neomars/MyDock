@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import shutil
+import ssl
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from mydock_dock import screensaver
-from mydock_dock.net import build_opener
+from mydock_dock.net import build_opener, describe_presented
 
 log = logging.getLogger("mydock.aerial")
 
@@ -85,6 +86,15 @@ class AerialError(Exception):
     def __init__(self, message: str, *, fatal: bool = False) -> None:
         super().__init__(message)
         self.fatal = fatal
+
+
+def certificate_message(url: str, error: ssl.SSLCertVerificationError) -> str:
+    """Le refus d'un certificat, dit simplement : quel serveur, pourquoi, et ce qu'il présente (pour savoir quoi corriger)."""
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or "?"
+    shown = describe_presented(host, parts.port or 443)
+    detail = f" Il présente : {shown}." if shown else ""
+    return f"Certificat de {host} refusé par le Pi ({error.verify_message}).{detail}"
 
 
 def target_name(title: str) -> str:
@@ -393,9 +403,10 @@ class AerialFetcher:
         except urllib.error.HTTPError as exc:
             raise AerialError(f"Le serveur répond « {exc.code} {exc.reason} ».") from None
         except (OSError, ValueError) as exc:
-            raise AerialError(
-                f"Téléchargement impossible : {getattr(exc, 'reason', exc)}."
-            ) from None
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                raise AerialError(certificate_message(item.url, reason)) from None
+            raise AerialError(f"Téléchargement impossible : {reason}.") from None
         if written == 0:
             raise AerialError("Fichier vide.")
 
@@ -410,7 +421,10 @@ class AerialFetcher:
         except urllib.error.HTTPError as exc:
             raise AerialError(f"La liste ne répond pas : « {exc.code} {exc.reason} ».") from None
         except (OSError, ValueError) as exc:
-            raise AerialError(f"Liste injoignable : {getattr(exc, 'reason', exc)}.") from None
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                raise AerialError(certificate_message(url, reason)) from None
+            raise AerialError(f"Liste injoignable : {reason}.") from None
         if len(body) > MAX_LIST_BYTES:
             raise AerialError("La liste est trop longue (64 Ko au plus).")
         return body.decode("utf-8", "replace")

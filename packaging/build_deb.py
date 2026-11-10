@@ -66,6 +66,7 @@ PI_SYSTEM_DEPENDS = [
     "wlr-randr",
     "swayidle",
     "ffmpeg",
+    "ca-certificates",
     "fonts-noto-core",
     "fonts-noto-color-emoji",
     "libgl1-mesa-dri",

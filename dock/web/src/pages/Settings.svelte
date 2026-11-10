@@ -330,7 +330,7 @@
         {#if saver.videos.length > 0}
           {saver.videos.length} vidéo{saver.videos.length > 1 ? 's' : ''} du Pi en plus des scènes animées.
         {:else}
-          Aucune vidéo prête pour l'instant : les scènes animées passent. Pour ajouter les tiennes : <span class="mono">sudo mydock-dock screensaver add</span>.
+          Aucune vidéo prête pour l'instant : les scènes animées passent. Les films se téléchargent d'après les adresses de la fenêtre ci-dessous.
         {/if}
       </p>
       <p class="dim small" data-testid="saver-aerial">

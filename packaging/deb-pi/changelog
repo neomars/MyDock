@@ -1,3 +1,19 @@
+mydock (1.5.1) unstable; urgency=medium
+
+  * Économiseur d'écran : quand le Pi refuse le certificat d'un serveur (« certificate verify failed : unable to get
+    local issuer certificate », comme pour sylvan.apple.com), l'écran le dit en clair — « Certificat de … refusé par
+    le Pi » — et nomme ce que le serveur présente (« serveur ← intermédiaire ← autorité »), ce qui montre quelle
+    autorité le Pi ne connaît pas. Rien n'est téléchargé tant que la vérification échoue : le dock ne désactive jamais
+    la vérification des certificats. Le message d'une source se lit en entier dans la fenêtre des vidéos.
+  * Page Bourse, « Tester la connexion » : chaque serveur montre aussi sa poignée de main TLS (« certificat vérifié »
+    ou « certificat refusé … présenté : … »), et la phrase finale dit quoi faire quand le Pi refuse les certificats.
+  * Nouvelle dépendance : ca-certificates (la liste des autorités de confiance doit être présente sur le Pi).
+  * La carte des Réglages ne parle plus de ligne de commande : les vidéos se gèrent dans la fenêtre « Vidéos et
+    adresses de téléchargement… ».
+  * Nouvelle version : 1.5.0 -> 1.5.1 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Tue, 10 Nov 2026 12:00:00 +0000
+
 mydock (1.5.0) unstable; urgency=medium
 
   * Économiseur d'écran : on saisit enfin l'adresse des vidéos à l'écran. Réglages → Économiseur d'écran → « Vidéos

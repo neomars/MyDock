@@ -142,3 +142,15 @@ Trois retours après l'installation de la 1.4.0, traités dans la 1.5.0.
    - Aussi : `mydock-dock doctor` dit si le téléchargement des vidéos est actif, combien d'adresses sont saisies et si `ffmpeg` est là.
 
 **Vérifié** : voir les chiffres de la livraison dans la pull request. **Non vérifié** : Yahoo Finance et Binance depuis ton Pi, les adresses d'Apple, un téléchargement réel de bout en bout sur ton Pi.
+
+## Addendum 2 — 1.5.1 : le Pi refuse le certificat d'Apple
+
+Retour avec une photo de l'écran du Pi : **« 0 sur 10 prêtes · 10 film(s) en échec … [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate »**. En même temps, **la Bourse fonctionne** (merci du retour) : le Pi vérifie donc très bien les certificats de Yahoo et de Binance ; c'est **le serveur d'Apple** (`sylvan.apple.com`) dont l'autorité de certification n'est pas reconnue par le Pi. Deux causes possibles que je ne peux pas départager d'ici (mon environnement n'atteint pas Apple) : le serveur n'envoie pas son certificat intermédiaire, ou son autorité racine n'est pas dans la liste des autorités de Debian.
+
+**Ce que j'ai fait (1.5.1)**
+- **Le message dit enfin quoi** : « Certificat de sylvan.apple.com refusé par le Pi (unable to get local issuer certificate). Il présente : sylvan.apple.com ← … ← … » (`x509.py`, `net.py` : lecture des certificats que le serveur envoie, sans rien échanger avec lui). Il se lit en entier dans la fenêtre des vidéos. **La prochaine photo de cet écran dira quelle autorité manque.**
+- Le test de connexion de la Bourse montre aussi la poignée de main TLS de chaque serveur.
+- `ca-certificates` devient une dépendance du paquet ; la carte des Réglages ne parle plus de ligne de commande.
+- Tout cela est testé contre un **vrai serveur https local** dont l'autorité est inconnue (le cas d'Apple), un serveur au mauvais nom, et une autorité connue.
+
+**Ce que je n'ai pas fait, volontairement.** J'avais écrit un repli qui, pour le seul serveur d'Apple, téléchargeait quand même sans vérifier le certificat. **Le système l'a refusé (désactivation de la vérification TLS) et je ne le contourne pas** : ce serait à toi de décider d'accepter ce risque (un attaquant sur le chemin réseau pourrait substituer le fichier, que le Pi décode ensuite avec ffmpeg). Les options sont dans la réponse faite à la livraison ; rien n'est activé tant que tu n'as pas choisi.

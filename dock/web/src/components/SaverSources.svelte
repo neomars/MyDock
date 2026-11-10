@@ -205,7 +205,10 @@
     color: var(--text-3);
   }
   .who small.bad {
-    color: var(--warn, #e6a23c);
+    color: var(--warn);
+    white-space: normal; /* le message d'échec se lit en entier : il dit ce qui manque */
+    overflow: visible;
+    overflow-wrap: anywhere;
   }
   .step {
     flex: none;
