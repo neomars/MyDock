@@ -861,7 +861,22 @@ test('Bourse : aucun fournisseur ne répond et aucune cotation n’est connue', 
         ],
       }),
     },
-    { startPage: 'markets' },
+    {
+      startPage: 'markets',
+      onAct: (act) =>
+        act.a === 'dock.markets.diagnose'
+          ? {
+              r: {
+                checks: [
+                  { label: 'Heure du Pi', ok: true, detail: '09/11/2026 17:43 UTC' },
+                  { label: 'query2.finance.yahoo.com', ok: true, detail: 'IPv4 0,04 s · IPv6 : pas de réponse en 3 s' },
+                  { label: 'Yahoo Finance', ok: false, detail: 'Yahoo Finance refuse la demande (HTTP 429).' },
+                ],
+                verdict: 'Les serveurs répondent mais refusent les demandes : lis le message de chaque fournisseur.',
+              },
+            }
+          : undefined,
+    },
   )
   await page.goto(stack.url)
   await expect(page.getByTestId('markets-statustext')).toHaveText('Cotations indisponibles')
@@ -870,6 +885,17 @@ test('Bourse : aucun fournisseur ne répond et aucune cotation n’est connue', 
   await expect(page.getByTestId('markets-problem')).toContainText("pas d’accès à Internet")
   await expect(page.getByTestId('markets-problem')).not.toContainText('derniers connus') // il n'y en a pas
   await shot(page, '12-fournisseurs-en-panne', 'e')
+
+  // « Tester la connexion » dit où ça coince : heure, serveurs (IPv4 / IPv6), chaque fournisseur, et quoi faire.
+  await page.getByTestId('markets-diagnose').tap()
+  await expect(page.getByTestId('markets-diag-row')).toHaveCount(3)
+  await expect(page.getByTestId('markets-diag-row').nth(1)).toContainText('IPv6 : pas de réponse')
+  await expect(page.getByTestId('markets-diag-row').nth(2)).toContainText('HTTP 429')
+  await expect(page.getByTestId('markets-diag-verdict')).toContainText('refusent les demandes')
+  await page.getByTestId('markets-diag').scrollIntoViewIfNeeded()
+  await shot(page, '15-bourse-test-de-connexion', 'j')
+  await page.getByTestId('markets-diag-close').tap()
+  await expect(page.getByTestId('markets-diag')).toHaveCount(0)
 })
 
 test('Bourse : devise inconnue, variation absente, noms démesurés et vingt valeurs sans débordement', async ({ page, stack }) => {

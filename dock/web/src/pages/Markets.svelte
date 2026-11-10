@@ -2,11 +2,14 @@
   import ArrowDownRight from '@lucide/svelte/icons/arrow-down-right'
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right'
   import ChevronLeft from '@lucide/svelte/icons/chevron-left'
+  import CircleCheck from '@lucide/svelte/icons/circle-check'
+  import CircleX from '@lucide/svelte/icons/circle-x'
   import Clock from '@lucide/svelte/icons/clock'
   import Minus from '@lucide/svelte/icons/minus'
   import Pencil from '@lucide/svelte/icons/pencil'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import TrendingUp from '@lucide/svelte/icons/trending-up'
+  import Stethoscope from '@lucide/svelte/icons/stethoscope'
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import { onMount, untrack } from 'svelte'
   import PriceChart from '../components/PriceChart.svelte'
@@ -27,7 +30,7 @@
     tradeLag,
   } from '../lib/markets'
   import { history, marketsUi, ticker } from '../lib/markets.svelte'
-  import type { MarketItem, MarketRange, MarketsData } from '../lib/protocol'
+  import type { MarketItem, MarketRange, MarketsData, MarketsDiagnosis } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
@@ -89,6 +92,19 @@
           .join(' · ')
       : '',
   )
+
+  // « Tester la connexion » : ce que le Pi voit vraiment (heure, noms, IPv4/IPv6, chaque fournisseur).
+  let diagnosis = $state<MarketsDiagnosis | null>(null)
+  let diagnosing = $state(false)
+
+  async function diagnose(): Promise<void> {
+    if (diagnosing) return
+    diagnosing = true
+    const ack = await sock.act('dock.markets.diagnose', {}, { timeoutMs: 50_000 })
+    diagnosing = false
+    if (ack.ok && ack.r) diagnosis = ack.r as MarketsDiagnosis
+    else notify(ack.e?.msg ?? 'Le test n’a pas pu se faire.', 'bad', 6_000)
+  }
 
   async function refresh(): Promise<void> {
     if (refreshing) return
@@ -195,8 +211,24 @@
       <div>
         {#each problems as problem (problem)}<p>{problem}</p>{/each}
         {#if priced.length}<p class="dim">Les cours affichés sont les derniers connus.</p>{/if}
+        <button class="btn test" class:busy={diagnosing} data-testid="markets-diagnose" onclick={diagnose}>
+          <Stethoscope size={30} aria-hidden="true" />{diagnosing ? 'Test en cours…' : 'Tester la connexion'}
+        </button>
       </div>
     </div>
+  {/if}
+
+  {#if diagnosis}
+    <section class="diag" data-testid="markets-diag">
+      {#each diagnosis.checks as check, index (index)}
+        <div class="check" class:bad={!check.ok} data-testid="markets-diag-row">
+          {#if check.ok}<CircleCheck size={32} aria-hidden="true" />{:else}<CircleX size={32} aria-hidden="true" />{/if}
+          <span><strong>{check.label}</strong><small>{check.detail}</small></span>
+        </div>
+      {/each}
+      {#if diagnosis.verdict}<p class="verdict" data-testid="markets-diag-verdict">{diagnosis.verdict}</p>{/if}
+      <button class="btn" data-testid="markets-diag-close" onclick={() => (diagnosis = null)}>Fermer</button>
+    </section>
   {/if}
 
   {#if data && items.length === 0}
@@ -308,6 +340,50 @@
   }
   .problem .dim {
     color: var(--text-2);
+  }
+  .problem .test {
+    margin-top: 8px;
+  }
+  .diag {
+    margin-bottom: 12px;
+    padding: 8px 16px 12px;
+    border-radius: var(--radius-s);
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .check {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 6px 0;
+    color: var(--good, #4ade80);
+  }
+  .check.bad {
+    color: var(--bad);
+  }
+  .check :global(svg) {
+    flex: none;
+    margin-top: 2px;
+  }
+  .check span {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.15;
+  }
+  .check strong {
+    font-size: var(--fs-small);
+    color: var(--text);
+  }
+  .check small {
+    font-size: calc(13px * var(--ts));
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .verdict {
+    margin: 6px 0 10px;
+    font-size: var(--fs-small);
+    color: var(--warn);
   }
   .grid {
     display: grid;

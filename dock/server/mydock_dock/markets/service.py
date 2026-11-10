@@ -179,6 +179,10 @@ class MarketsService:
     # --- la liste suivie -------------------------------------------------------------------
 
     @property
+    def providers(self) -> list[QuoteProvider]:
+        return list(self._providers)
+
+    @property
     def currency(self) -> str:
         return str(self._store.markets["currency"])
 

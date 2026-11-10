@@ -233,7 +233,7 @@ def test_network_failures_are_explained(tmp_path):
 
 
 def test_a_redirect_to_a_page_that_is_not_https_is_refused():
-    handler = screensaver._HttpsOnly()
+    handler = screensaver.HttpsOnly()
     request = urllib.request.Request("https://exemple.org/x.mp4")
     with pytest.raises(SaverError, match="https"):
         handler.redirect_request(
@@ -394,6 +394,47 @@ async def test_the_settings_screen_sets_the_delay_and_the_content_and_the_dock_k
     assert StateStore(dock.config.state_dir).ui["saver_content"] == "scenes"
 
 
+async def test_the_screen_adds_an_address_then_forgets_it_with_its_films(tmp_path):
+    from mydock_dock.aerial import APPLE_ID, CATALOG, target_name
+    from mydock_dock.testing import call
+
+    url = "https://x.org/mer.mp4"
+    async with running_dock(tmp_path) as dock, dock.connect() as ws:
+        ack = await call(ws, "a1", "dock.ui.set", {"saver_sources": [url]})
+        assert ack["ok"] is True
+        assert ack["r"]["saver_sources"] == [url]
+        for bad in (
+            ["http://x.org/a.mp4"],
+            ["https://x.org/a b.mp4"],
+            [url, url],
+            "https://x.org/a.mp4",
+        ):
+            refused = await call(ws, "a2", "dock.ui.set", {"saver_sources": bad})
+            assert refused["ok"] is False
+
+        saver = dock.server.config.saver_dir
+        put(saver, "mer.mp4")
+        put(saver, "autre.mp4")
+        dock.server.aerial._remember({url})
+        forgot = await call(ws, "f1", "dock.saver.forget", {"source": url})
+        assert forgot["ok"] is True
+        assert forgot["r"] == {"removed": 1}
+        assert dock.server.store.ui["saver_sources"] == []
+        assert not (saver / "mer.mp4").exists()
+        assert (saver / "autre.mp4").exists()  # ce qui ne vient pas de cette adresse reste
+
+        unknown = await call(ws, "f2", "dock.saver.forget", {"source": "https://x.org/jamais.mp4"})
+        assert unknown["ok"] is False
+
+        for _, title in CATALOG:
+            put(saver, target_name(title))
+        gone = await call(ws, "f3", "dock.saver.forget", {"source": APPLE_ID})
+        assert gone["r"] == {"removed": 10}
+        assert dock.server.store.ui["saver_apple"] is False
+        again = await call(ws, "f4", "dock.ui.set", {"saver_apple": True})
+        assert again["r"]["saver_apple"] is True
+
+
 def test_the_diagnostic_reports_the_choice_and_the_videos(tmp_path):
     from mydock_common.report import Report
     from mydock_dock.doctor import check_saver
@@ -405,6 +446,9 @@ def test_the_diagnostic_reports_the_choice_and_the_videos(tmp_path):
     assert "Économiseur : après 5 min sans toucher, contenu : vidéos du Pi" in text
     assert "Aucune vidéo" in text
     assert "mydock-dock screensaver add" in text
+    assert (
+        "Téléchargement automatique : actif ; vues aériennes d'Apple : oui ; 0 adresse(s)" in text
+    )
     assert not report.failed
 
     put(config.saver_dir, "mer.mp4")

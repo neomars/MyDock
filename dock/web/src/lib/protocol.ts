@@ -501,6 +501,12 @@ export interface MarketProvider {
   retry_at: number | null
 }
 
+/** Le résultat de « Tester la connexion » de la Bourse. */
+export interface MarketsDiagnosis {
+  checks: { label: string; ok: boolean; detail: string }[]
+  verdict: string | null
+}
+
 export interface MarketsData {
   currency: 'EUR' | 'USD'
   refresh: MarketRefresh
@@ -562,6 +568,10 @@ export interface UiState {
   saver_content: 'all' | 'scenes' | 'videos'
   /** Le dock télécharge-t-il les vues aériennes ? */
   saver_aerial: boolean
+  /** Les vues aériennes d'Apple font-elles partie des vidéos téléchargées ? */
+  saver_apple: boolean
+  /** Adresses https de vidéos (ou de listes de vidéos) saisies dans Réglages. */
+  saver_sources: string[]
 }
 
 export interface Ack {

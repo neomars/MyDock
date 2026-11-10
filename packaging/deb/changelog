@@ -1,3 +1,11 @@
+mydock-agent (1.5.0) unstable; urgency=medium
+
+  * Aucun changement du côté du PC : la version suit celle du dock (1.5.0), qui gagne la saisie des adresses de
+    vidéos de l'économiseur d'écran et le test de connexion de la Bourse (voir le changelog du paquet « mydock »).
+    Installer ce paquet n'est pas nécessaire, mais la page du Pi propose désormais celui-ci.
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 09 Nov 2026 22:00:00 +0000
+
 mydock-agent (1.4.0) unstable; urgency=medium
 
   * Spotify : choisir la sortie sonore. Nouvelles actions spotify.devices (les appareils Spotify Connect du

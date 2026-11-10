@@ -1,3 +1,28 @@
+mydock (1.5.0) unstable; urgency=medium
+
+  * Économiseur d'écran : on saisit enfin l'adresse des vidéos à l'écran. Réglages → Économiseur d'écran → « Vidéos
+    et adresses de téléchargement… » ouvre une fenêtre où l'on ajoute, au clavier tactile (qui gagne un mode
+    « adresse » avec ? = & % ~), l'adresse https d'une vidéo (MP4, WebM, MOV, AVI…) ou d'un fichier texte (.txt,
+    .m3u, .list) qui en liste une par ligne. Le dock télécharge tout seul, examine chaque fichier avec ffprobe, ne
+    convertit en MP4 H.264 1024×600 que ce qui en a besoin (un MP4 H.264 ou un WebM léger est gardé tel quel) et
+    montre sur chaque ligne « 3 sur 10 prêtes » ou la raison de l'échec. Retirer une adresse (avec confirmation)
+    efface aussi ses films ; les vues aériennes d'Apple se retirent et se remettent de la même façon ; un bouton
+    suspend ou reprend le téléchargement.
+  * Un film en échec (adresse introuvable, fichier qui n'est pas une vidéo) n'arrête plus les suivants, et le dock
+    retente seul toutes les 30 minutes.
+  * Les connexions sortantes du dock (cotations, films) passent par un chemin qui n'attend plus le délai entier
+    sur une adresse IPv6 muette : IPv4 et IPv6 en alternance en commençant par l'IPv4, 3 s par adresse, quatre
+    essais au plus. Sur un réseau dont l'IPv6 est annoncé mais ne répond pas, la Bourse et les téléchargements
+    finissaient « délai dépassé ».
+  * Page Bourse : quand les cotations n'arrivent pas, un bouton « Tester la connexion » dit où ça coince (heure du
+    Pi fausse, nom introuvable, IPv4 ou IPv6 muet, fournisseur qui refuse) et ce qu'il faut faire.
+  * « mydock-dock doctor » (section « Économiseur d'écran ») dit si le téléchargement est actif, combien d'adresses
+    sont saisies et si ffmpeg est là.
+  * Un nouveau numéro de version à chaque livraison : 1.4.0 -> 1.5.0 (sans lui, « apt install » répond « déjà la
+    version la plus récente » et rien ne change sur le Pi).
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 09 Nov 2026 22:00:00 +0000
+
 mydock (1.4.0) unstable; urgency=medium
 
   * Spotify : nouvel onglet « Sortie sonore ». Il liste les appareils Spotify Connect du compte (ce PC

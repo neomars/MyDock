@@ -32,7 +32,7 @@ from mydock_common.actions import ActionContext, ActionError, ActionRegistry, No
 from mydock_common.config import ConfigError
 from mydock_common.outbox import Outbox
 from mydock_dock import __version__, screensaver
-from mydock_dock.aerial import AerialFetcher
+from mydock_dock.aerial import APPLE_ID, AerialFetcher
 from mydock_dock.agent_link import (
     AgentLink,
     LinkSettings,
@@ -43,6 +43,7 @@ from mydock_dock.agent_link import (
 )
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig
+from mydock_dock.markets.diagnose import diagnose
 from mydock_dock.markets.errors import NotFound, ProviderError
 from mydock_dock.markets.factory import build_providers
 from mydock_dock.markets.http import Fetcher
@@ -124,6 +125,14 @@ class UiSetParams(_Strict):
     saver_after: StrictInt | None = None
     saver_content: Literal["all", "scenes", "videos"] | None = None
     saver_aerial: StrictBool | None = None
+    saver_apple: StrictBool | None = None
+    saver_sources: list[str] | None = Field(default=None, max_length=20)
+
+
+class SaverForgetParams(_Strict):
+    """Retire une source de vidéos (« apple » ou son adresse) et efface les films qu'elle avait donnés."""
+
+    source: str = Field(min_length=5, max_length=500)
 
 
 class MarketsSetParams(_Strict):
@@ -225,7 +234,12 @@ class DockServer:
         self._pairing_task: asyncio.Task[None] | None = None
         self._aerial_task: asyncio.Task[None] | None = None
         # Les vues aériennes se téléchargent seules ; jamais en démonstration (aucun accès à Internet attendu).
-        self.aerial = AerialFetcher(config.saver_dir, lambda: bool(self.store.ui["saver_aerial"]))
+        self.aerial = AerialFetcher(
+            config.saver_dir,
+            lambda: bool(self.store.ui["saver_aerial"]),
+            apple=lambda: bool(self.store.ui["saver_apple"]),
+            sources=lambda: list(self.store.ui["saver_sources"]),
+        )
         self._register_actions()
 
     # --- cycle de vie --------------------------------------------------------------------
@@ -511,6 +525,9 @@ class DockServer:
         reg.register("dock.wol.send", self._act_wol_send, timeout=8.0)
         reg.register("dock.wol.set_mac", self._act_wol_set_mac, params=WolMacParams)
         reg.register("dock.ui.set", self._act_ui_set, params=UiSetParams)
+        reg.register(
+            "dock.saver.forget", self._act_saver_forget, params=SaverForgetParams, timeout=20.0
+        )
         reg.register("dock.pairing.open", self._act_pairing_open)
         reg.register("dock.pairing.close", self._act_pairing_close)
         reg.register("dock.markets.set", self._act_markets_set, params=MarketsSetParams)
@@ -518,6 +535,7 @@ class DockServer:
             "dock.markets.check", self._act_markets_check, params=MarketsCheckParams, timeout=45.0
         )
         reg.register("dock.markets.refresh", self._act_markets_refresh, timeout=45.0)
+        reg.register("dock.markets.diagnose", self._act_markets_diagnose, timeout=45.0)
         reg.register(
             "dock.markets.search",
             self._act_markets_search,
@@ -626,6 +644,24 @@ class DockServer:
         self.push_local("ui")
         return ui
 
+    async def _act_saver_forget(
+        self, _ctx: ActionContext, params: SaverForgetParams
+    ) -> dict[str, Any]:
+        source = params.source
+        ui = self.store.ui
+        if source == APPLE_ID:
+            patch: dict[str, Any] = {"saver_apple": False}
+        elif source in ui["saver_sources"]:
+            patch = {"saver_sources": [u for u in ui["saver_sources"] if u != source]}
+        else:
+            raise ActionError(proto.ErrorCode.BAD_PARAMS, "Cette source n'est pas dans la liste.")
+        self._persist(
+            lambda: self.store.update_ui(patch)
+        )  # d'abord les réglages : plus rien ne la retélécharge
+        self.push_local("ui")
+        removed = await asyncio.to_thread(self.aerial.forget, source)
+        return {"removed": removed}
+
     async def _act_markets_set(
         self, _ctx: ActionContext, params: MarketsSetParams
     ) -> dict[str, Any]:
@@ -664,6 +700,10 @@ class DockServer:
 
     async def _act_markets_refresh(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         return await self._provider_call(self.markets.refresh())
+
+    async def _act_markets_diagnose(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        """Teste la connexion de la Bourse (heure, noms, IPv4/IPv6, chaque fournisseur) et dit ce qui coince."""
+        return await diagnose(self.markets.providers, self.markets.currency)
 
     async def _act_markets_history(
         self, _ctx: ActionContext, params: MarketsHistoryParams

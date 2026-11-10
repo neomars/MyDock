@@ -18,7 +18,9 @@
   import { picker } from '../lib/picker.svelte'
   import { SLEEP_OPTIONS, sleepPhrase } from '../lib/screen'
   import { CONTENT_OPTIONS, SAVER_OPTIONS, saverNeverShows, saverPhrase, type SaverContent } from '../lib/saver'
+  import { aerialSummary } from '../lib/saver'
   import { saver } from '../lib/saver.svelte'
+  import { saverSources } from '../lib/saverSources.svelte'
   import { screenSleep } from '../lib/screen.svelte'
   import { onMount } from 'svelte'
   import type { Ack, MarketRefresh } from '../lib/protocol'
@@ -49,10 +51,9 @@
     if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
   }
 
-  async function setSaver(patch: { saver_after: number } | { saver_content: SaverContent } | { saver_aerial: boolean }): Promise<void> {
+  async function setSaver(patch: { saver_after: number } | { saver_content: SaverContent }): Promise<void> {
     const ack = await sock.act('dock.ui.set', patch)
     if (!ack.ok) notify(ack.e?.msg ?? 'La modification a échoué.', 'bad', 8_000)
-    else if ('saver_aerial' in patch) void saver.refresh()
   }
 
   // Les vidéos que le Pi garde pour l'économiseur : relues à l'ouverture des Réglages.
@@ -332,22 +333,10 @@
           Aucune vidéo prête pour l'instant : les scènes animées passent. Pour ajouter les tiennes : <span class="mono">sudo mydock-dock screensaver add</span>.
         {/if}
       </p>
-      {#if saver.aerial}
-        <p class="dim small" data-testid="saver-aerial">
-          {#if !saver.aerial.enabled}
-            Vues aériennes : téléchargement suspendu ({saver.aerial.done} sur {saver.aerial.total} prêtes).
-          {:else if saver.aerial.done >= saver.aerial.total}
-            Vues aériennes : {saver.aerial.total} films prêts.
-          {:else if saver.aerial.error}
-            <span class="warn">Vues aériennes : {saver.aerial.done} sur {saver.aerial.total} prêtes. {saver.aerial.error}</span>
-          {:else}
-            Vues aériennes : {saver.aerial.done} sur {saver.aerial.total} prêtes{saver.aerial.active ? ` (en cours : ${saver.aerial.current})` : ''}.
-          {/if}
-        </p>
-        <button class="btn trial" data-testid="saver-aerial-toggle" onclick={() => setSaver({ saver_aerial: !saver.aerial?.enabled })}>
-          {saver.aerial.enabled ? 'Suspendre le téléchargement' : 'Reprendre le téléchargement'}
-        </button>
-      {/if}
+      <p class="dim small" data-testid="saver-aerial">
+        {saver.aerial ? aerialSummary(saver.aerial) : 'Lecture de l’état des vidéos…'}
+      </p>
+      <button class="btn" data-testid="saver-videos-open" onclick={() => saverSources.show()}>Vidéos et adresses de téléchargement…</button>
       <button class="btn trial" data-testid="saver-now" onclick={() => screenSleep.saverNow()}>Essayer maintenant</button>
     </section>
   </div>

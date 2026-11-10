@@ -32,10 +32,11 @@ from mydock_dock.agent_link import (
 )
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig, default_config_path
+from mydock_dock.markets.diagnose import PROBES
 from mydock_dock.markets.errors import ProviderError
 from mydock_dock.markets.factory import build_providers
 from mydock_dock.markets.http import Fetcher
-from mydock_dock.markets.model import Instrument, Quote
+from mydock_dock.markets.model import Quote
 from mydock_dock.netinfo import local_address_towards, local_ipv4_addresses
 from mydock_dock.store import StateStore
 
@@ -377,13 +378,32 @@ def check_saver(report: Report, config: DockConfig) -> None:
             OK,
             f"Économiseur : après {after // 60} min sans toucher, contenu : {contents.get(content, content)}",
         )
+    sources = ui["saver_sources"]
+    wants_download = ui["saver_aerial"] and (ui["saver_apple"] or sources)
+    report.add(
+        INFO,
+        "Téléchargement automatique : "
+        + ("suspendu" if not ui["saver_aerial"] else "actif")
+        + f" ; vues aériennes d'Apple : {'oui' if ui['saver_apple'] else 'non'} ; "
+        + f"{len(sources)} adresse(s) saisie(s) dans Réglages",
+    )
+    if wants_download:
+        missing = [tool for tool in ("ffmpeg", "ffprobe") if not shutil.which(tool)]
+        if missing:
+            report.add(
+                WARN,
+                f"{', '.join(missing)} absent : aucun film ne peut être préparé (sudo apt install ffmpeg)",
+            )
+        else:
+            report.add(OK, "ffmpeg et ffprobe présents (conversion des films téléchargés)")
     directory = config.saver_dir
     found = screensaver.videos(directory)
     if not found:
         report.add(
             INFO,
-            f"Aucune vidéo dans {directory} : l'économiseur montre ses scènes animées. Pour ajouter des "
-            "vues aériennes : sudo mydock-dock screensaver add ADRESSE_HTTPS_OU_FICHIER",
+            f"Aucune vidéo dans {directory} : l'économiseur montre ses scènes animées. Les films se "
+            "téléchargent seuls (Réglages → Économiseur d'écran → Vidéos et adresses) ; "
+            "sinon : sudo mydock-dock screensaver add ADRESSE_HTTPS_OU_FICHIER",
         )
         return
     total = sum(v.size for v in found)
@@ -492,11 +512,7 @@ def check_portal(report: Report, config: DockConfig, *, port: int | None = None)
         report.add(INFO, "Aucun PC associé : l'écran du dock montre le code à taper sur le PC")
 
 
-MARKETS_PROBES = {
-    "binance": Instrument("crypto", "BTC"),
-    "yahoo": Instrument("stock", "AAPL"),
-    "finnhub": Instrument("stock", "AAPL"),
-}
+MARKETS_PROBES = PROBES
 MARKETS_TIMEOUT = 8.0
 
 
