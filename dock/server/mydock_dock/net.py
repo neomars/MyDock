@@ -8,12 +8,15 @@ en alternance en commençant par l'IPv4, quelques secondes par adresse, au plus 
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import socket
 import ssl
 import urllib.request
 from collections.abc import Callable
 from typing import Any
+
+from mydock_dock import x509
 
 ATTEMPT_TIMEOUT = 3.0  # par adresse
 MAX_ATTEMPTS = 4
@@ -79,3 +82,50 @@ def build_opener(
 ) -> urllib.request.OpenerDirector:
     """Un ouvreur urllib dont les connexions https passent par `connect_fast`."""
     return urllib.request.build_opener(FastHTTPSHandler(context=context), *handlers)
+
+
+def _inspection_context() -> ssl.SSLContext:
+    """Pour LIRE le certificat qu'un serveur présente, jamais pour échanger des données : la poignée de main seule, sans
+    aucune requête, puis on referme. Aucune connexion de travail du dock n'en dépend."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+def presented_chain(host: str, port: int = 443, timeout: float = 4.0) -> list[bytes]:
+    """Les certificats (DER) que le serveur envoie, sans les vérifier ; liste vide si on n'a pas pu les lire."""
+    try:
+        with (
+            contextlib.closing(connect_fast((host, port), timeout)) as raw,
+            _inspection_context().wrap_socket(raw, server_hostname=host) as tls,
+        ):
+            getter = getattr(
+                tls, "get_unverified_chain", None
+            )  # Python 3.13 et plus : toute la chaîne
+            chain = [bytes(c) for c in getter()] if getter else []
+            return chain or [c for c in [tls.getpeercert(binary_form=True)] if c]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def describe_presented(host: str, port: int = 443, timeout: float = 4.0) -> str:
+    """« serveur ← intermédiaire ← autorité » tel que le serveur le présente, ou une chaîne vide."""
+    return x509.chain_text(presented_chain(host, port, timeout))
+
+
+def check_tls(host: str, port: int = 443, timeout: float = 4.0) -> tuple[bool, str]:
+    """Une poignée de main TLS vérifiée avec les autorités du Pi : (réussie ?, ce qu'on peut en dire)."""
+    try:
+        with (
+            contextlib.closing(connect_fast((host, port), timeout)) as raw,
+            ssl.create_default_context().wrap_socket(raw, server_hostname=host),
+        ):
+            return True, "certificat vérifié"
+    except ssl.SSLCertVerificationError as exc:
+        shown = describe_presented(host, port, timeout)
+        return False, f"certificat refusé ({exc.verify_message})" + (
+            f" · présenté : {shown}" if shown else ""
+        )
+    except (OSError, ValueError) as exc:
+        return False, f"connexion TLS impossible ({getattr(exc, 'strerror', None) or exc})"

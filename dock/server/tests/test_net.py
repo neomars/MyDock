@@ -135,3 +135,63 @@ def test_the_opener_uses_the_fast_connection():
     assert len(handlers) == 1
     connection = net.FastHTTPSConnection("exemple.org")
     assert connection._create_connection is net.connect_fast
+
+
+# --- les certificats : ce que le serveur présente, et ce que le Pi en pense --------------------------------------------
+
+
+def test_the_certificate_a_server_presents_can_be_read_without_trusting_it(pki, tls_server):
+    from mydock_dock import x509
+
+    with tls_server(pki.leaf_pem, pki.leaf_key) as port:
+        chain = net.presented_chain("127.0.0.1", port)
+        assert len(chain) == 1
+        assert x509.names(chain[0]) == ("sylvan.test", "Apple Test Root (Test Org)")
+        assert (
+            net.describe_presented("127.0.0.1", port) == "sylvan.test ← Apple Test Root (Test Org)"
+        )
+
+
+def test_reading_a_certificate_from_nothing_gives_nothing():
+    free = socket.socket()
+    free.bind(("127.0.0.1", 0))
+    port = free.getsockname()[1]
+    free.close()
+    assert net.presented_chain("127.0.0.1", port, timeout=1.0) == []
+    assert net.describe_presented("127.0.0.1", port, timeout=1.0) == ""
+
+
+def test_an_unknown_authority_is_refused_and_named(pki, tls_server):
+    with tls_server(pki.leaf_pem, pki.leaf_key) as port:
+        ok, text = net.check_tls("localhost", port)
+    assert ok is False
+    assert "certificat refusé (unable to get local issuer certificate)" in text
+    assert "présenté : sylvan.test ← Apple Test Root (Test Org)" in text
+
+
+def test_a_known_authority_is_accepted(pki, monkeypatch, tls_server):
+    monkeypatch.setenv("SSL_CERT_FILE", str(pki.ca_pem))
+    with tls_server(pki.leaf_pem, pki.leaf_key) as port:
+        assert net.check_tls("localhost", port) == (True, "certificat vérifié")
+
+
+def test_a_certificate_for_another_name_is_refused_even_when_the_authority_is_known(
+    pki, monkeypatch, tls_server
+):
+    monkeypatch.setenv("SSL_CERT_FILE", str(pki.ca_pem))
+    with tls_server(pki.wrong_pem, pki.wrong_key) as port:
+        ok, text = net.check_tls("localhost", port)
+    assert ok is False
+    assert "certificat refusé" in text
+    assert "autre.test" in text
+
+
+def test_a_server_that_does_not_speak_tls_is_a_connection_problem():
+    plain = socket.socket()
+    plain.bind(("127.0.0.1", 0))
+    plain.listen(1)
+    threading.Thread(target=lambda: plain.accept()[0].close(), daemon=True).start()
+    ok, text = net.check_tls("127.0.0.1", plain.getsockname()[1], timeout=2.0)
+    plain.close()
+    assert ok is False
+    assert "certificat" not in text.replace("certificat vérifié", "") or "refusé" not in text

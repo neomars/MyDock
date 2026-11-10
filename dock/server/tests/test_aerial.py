@@ -582,3 +582,77 @@ async def test_real_errors_are_said_per_source(tmp_path, tls_site):
     assert "404" in absent
     assert clair  # la redirection vers du http est refusée : aucune connexion en clair
     assert not [p for p in f.directory.iterdir() if p.is_file() and not p.name.startswith(".")]
+
+
+# --- un certificat que le Pi ne reconnaît pas : refusé, et dit clairement -----------------------------------------------
+
+
+async def test_an_unknown_authority_is_refused_with_what_the_server_presents(
+    tmp_path, pki, tls_server
+):
+    routes = {"/mer.mp4": (200, {"Content-Type": "video/mp4"}, b"x" * 100)}
+    with tls_server(pki.leaf_pem, pki.leaf_key, routes) as port:
+        url = f"https://127.0.0.1:{port}/mer.mp4"
+        f = fetcher(tmp_path, apple=False, sources=[url])
+        with pytest.raises(AerialError, match="1 film"):
+            await f.fetch_missing()
+    message = f.status()["sources"][0]["error"] or ""
+    assert "Certificat de 127.0.0.1 refusé par le Pi" in message
+    assert "unable to get local issuer certificate" in message
+    assert (
+        "sylvan.test ← Apple Test Root (Test Org)" in message
+    )  # quelle autorité manque : de quoi corriger
+    assert not [p for p in f.directory.iterdir() if p.is_file() and not p.name.startswith(".")]
+
+
+async def test_the_apple_catalogue_gets_no_exception_to_the_certificate_check(
+    tmp_path, pki, tls_server, monkeypatch
+):
+    with tls_server(pki.leaf_pem, pki.leaf_key) as port:
+        monkeypatch.setattr(aerial, "BASE_URL", f"https://127.0.0.1:{port}/Aerials")
+        f = fetcher(tmp_path)  # Apple + ffmpeg « présent »
+        with pytest.raises(AerialError, match="10 film"):
+            await f.fetch_missing()
+    row = f.status()["sources"][0]
+    assert row["done"] == 0
+    assert "refusé par le Pi" in (row["error"] or "")
+
+
+async def test_a_list_behind_an_unknown_authority_says_so_on_its_line(tmp_path, pki, tls_server):
+    with tls_server(
+        pki.leaf_pem,
+        pki.leaf_key,
+        {"/liste.txt": (200, {"Content-Type": "text/plain"}, b"https://x.org/a.mp4\n")},
+    ) as port:
+        f = fetcher(tmp_path, apple=False, sources=[f"https://127.0.0.1:{port}/liste.txt"])
+        await f.fetch_missing()
+    assert "refusé par le Pi" in (f.status()["sources"][0]["error"] or "")
+
+
+async def test_a_known_authority_downloads_normally_and_a_wrong_name_does_not(
+    tmp_path, pki, tls_server, monkeypatch, clips
+):
+    if not clips:
+        pytest.skip("ffmpeg absent")
+    monkeypatch.setenv("SSL_CERT_FILE", str(pki.ca_pem))
+    routes = {"/mer.mp4": (200, {"Content-Type": "video/mp4"}, clips["small.mp4"])}
+    with tls_server(pki.leaf_pem, pki.leaf_key, routes) as port:
+        good = fetcher(
+            tmp_path / "bon",
+            apple=False,
+            sources=[f"https://localhost:{port}/mer.mp4"],
+            which=shutil.which,
+        )
+        await good.fetch_missing()
+        assert (good.directory / "mer.mp4").read_bytes() == clips["small.mp4"]
+    with tls_server(pki.wrong_pem, pki.wrong_key, routes) as port:
+        bad = fetcher(
+            tmp_path / "mauvais",
+            apple=False,
+            sources=[f"https://localhost:{port}/mer.mp4"],
+            which=shutil.which,
+        )
+        with pytest.raises(AerialError, match="1 film"):
+            await bad.fetch_missing()
+    assert "refusé par le Pi" in (bad.status()["sources"][0]["error"] or "")
+    assert not list(bad.directory.glob("*.mp4"))

@@ -47,9 +47,13 @@ def connector(dead=()):
     return connect
 
 
-async def run(providers, table, *, dead=(), now=GOOD_CLOCK):
+async def tls_ok(_host):
+    return True, "certificat vérifié"
+
+
+async def run(providers, table, *, dead=(), now=GOOD_CLOCK, tls=tls_ok):
     return await dg.diagnose(
-        providers, "EUR", now=lambda: now, resolve=resolver(table), connect=connector(dead)
+        providers, "EUR", now=lambda: now, resolve=resolver(table), connect=connector(dead), tls=tls
     )
 
 
@@ -70,7 +74,7 @@ async def test_everything_working_says_so_and_has_no_complaint():
     assert "api.binance.com" in labels
     assert "Binance" in labels
     hosts = {c["label"]: c["detail"] for c in result["checks"]}
-    assert hosts["api.binance.com"] == "IPv4 0,04 s · IPv6 0,04 s"
+    assert hosts["api.binance.com"] == "IPv4 0,04 s · IPv6 0,04 s · TLS : certificat vérifié"
     assert "BTC : 85000.5 EUR" in hosts["Binance"]
 
 
@@ -160,7 +164,7 @@ async def test_a_slow_provider_is_cut_at_the_timeout():
 
     result = await dg.diagnose(
         [Slow("yahoo", "Yahoo Finance", QUOTE)], "EUR", timeout=0.05, now=lambda: GOOD_CLOCK,
-        resolve=resolver({"query2.finance.yahoo.com": [V4]}), connect=connector(),
+        resolve=resolver({"query2.finance.yahoo.com": [V4]}), connect=connector(), tls=tls_ok,
     )  # fmt: skip
     assert (
         "délai dépassé"
@@ -178,3 +182,24 @@ def test_the_clock_check_threshold(year, ok):
     import calendar
 
     assert dg.clock_check(calendar.timegm((year, 6, 1, 12, 0, 0)))["ok"] is ok
+
+
+async def test_a_refused_certificate_is_named_with_what_the_server_presents():
+    async def tls_refused(_host):
+        return (
+            False,
+            "certificat refusé (unable to get local issuer certificate) · présenté : sylvan ← Une autorité",
+        )
+
+    providers = [
+        FakeProvider(
+            "yahoo", "Yahoo Finance", NetworkError("Connexion sécurisée refusée (certificat).")
+        )
+    ]
+    result = await run(providers, {"query2.finance.yahoo.com": [V4]}, tls=tls_refused)
+    host = next(c for c in result["checks"] if c["label"] == "query2.finance.yahoo.com")
+    assert host["ok"] is False
+    assert "TLS : certificat refusé" in host["detail"]
+    assert "présenté : sylvan" in host["detail"]
+    assert "certificat de ces serveurs" in result["verdict"]
+    assert "ca-certificates" in result["verdict"]

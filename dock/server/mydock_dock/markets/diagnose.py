@@ -34,6 +34,7 @@ MIN_YEAR = 2024  # avant : l'heure du Pi est celle de sa fabrication, pas la vra
 
 Resolver = Callable[[str], Awaitable[list[Any]]]
 Connector = Callable[[Any], Awaitable[float]]
+TlsCheck = Callable[[str], Awaitable[tuple[bool, str]]]
 
 
 async def _resolve(host: str) -> list[Any]:
@@ -56,6 +57,11 @@ async def _connect(info: Any) -> float:
     return await asyncio.to_thread(attempt)
 
 
+async def _tls(host: str) -> tuple[bool, str]:
+    """La poignée de main TLS vérifiée avec les autorités du Pi (c'est elle que refuse un « certificat non reconnu »)."""
+    return await asyncio.to_thread(net.check_tls, host)
+
+
 def _seconds(value: float) -> str:
     return f"{value:.2f} s".replace(".", ",")
 
@@ -72,7 +78,9 @@ def clock_check(now: float) -> dict[str, Any]:
     return {"label": "Heure du Pi", "ok": True, "detail": text}
 
 
-async def host_check(host: str, resolve: Resolver, connect: Connector) -> dict[str, Any]:
+async def host_check(
+    host: str, resolve: Resolver, connect: Connector, tls: TlsCheck = _tls
+) -> dict[str, Any]:
     try:
         infos = await resolve(host)
     except OSError:
@@ -97,7 +105,11 @@ async def host_check(host: str, resolve: Resolver, connect: Connector) -> dict[s
             parts.append(f"{name} : pas de réponse en {net.ATTEMPT_TIMEOUT:g} s")
         except OSError as exc:
             parts.append(f"{name} : {exc.strerror or 'refusée'}")
-    return {"label": host, "ok": reached, "detail": " · ".join(parts)}
+    secure = True
+    if reached:
+        secure, text = await tls(host)
+        parts.append(f"TLS : {text}")
+    return {"label": host, "ok": reached and secure, "detail": " · ".join(parts)}
 
 
 async def provider_check(provider: QuoteProvider, currency: str, timeout: float) -> dict[str, Any]:
@@ -134,6 +146,12 @@ def verdict(
     """Une phrase qui dit quoi faire, d'après ce que le test a vu."""
     if not checks[0]["ok"]:
         return "Corrige d'abord l'heure du Pi : tant qu'elle est fausse, aucune connexion sécurisée n'aboutit."
+    if any("TLS : certificat refusé" in h["detail"] for h in hosts):
+        return (
+            "Le Pi refuse le certificat de ces serveurs : vérifie l'heure du Pi, puis "
+            "`sudo apt install --reinstall ca-certificates`. Un routeur ou un filtre qui remplace les certificats "
+            "(contrôle parental, pare-feu) produit le même refus."
+        )
     if hosts and not any(h["ok"] for h in hosts):
         return "Le Pi n'atteint aucun serveur : vérifie son accès à Internet (câble ou Wi-Fi, DNS de la box)."
     if providers and not any(p["ok"] for p in providers):
@@ -151,6 +169,7 @@ async def diagnose(
     now: Callable[[], float] = time.time,
     resolve: Resolver = _resolve,
     connect: Connector = _connect,
+    tls: TlsCheck = _tls,
 ) -> dict[str, Any]:
     names: list[str] = []
     for provider in providers:
@@ -159,7 +178,7 @@ async def diagnose(
                 names.append(host)
     clock = clock_check(now())
     hosts, results = await asyncio.gather(
-        asyncio.gather(*(host_check(h, resolve, connect) for h in names)),
+        asyncio.gather(*(host_check(h, resolve, connect, tls) for h in names)),
         asyncio.gather(*(provider_check(p, currency, timeout) for p in providers)),
     )
     hosts, results = list(hosts), list(results)
