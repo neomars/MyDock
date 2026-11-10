@@ -57,6 +57,16 @@ export interface AerialSource {
   error: string | null
 }
 
+/** L'autorité racine d'Apple, quand le dock l'a ajoutée aux autorités du Pi pour le serveur des films seulement. */
+export interface AppleRoot {
+  /** Début et fin de l'empreinte SHA-256, à comparer avec la page d'Apple. */
+  sha256: string
+  /** `apple.com` : téléchargée à l'instant ; `cache` : gardée par le dock depuis une fois précédente. */
+  origin: 'apple.com' | 'cache'
+  /** `yes` : c'est l'empreinte que le dock connaît pour l'autorité d'Apple. */
+  known: 'yes' | 'no'
+}
+
 export interface AerialStatus {
   total: number
   done: number
@@ -64,19 +74,25 @@ export interface AerialStatus {
   current: string | null
   error: string | null
   enabled: boolean
+  /** Absent ou `null` : le serveur d'Apple est reconnu par les seules autorités du Pi (ou rien n'a encore été demandé). */
+  apple_root?: AppleRoot | null
   sources: AerialSource[]
 }
 
 const films = (n: number): string => `${n} film${n > 1 ? 's' : ''}`
 
-/** La phrase qui résume le téléchargement, sous le titre des Réglages et en tête de la fenêtre des vidéos. */
-export function aerialSummary(status: AerialStatus): string {
+/**
+ * La phrase qui résume le téléchargement, sous le titre des Réglages et en tête de la fenêtre des vidéos. Avec
+ * `detail: false` (la fenêtre), l'échec n'est dit qu'en gros : le détail du dernier film en échec est déjà sur la ligne
+ * de sa source, et le répéter mangerait la moitié de l'écran.
+ */
+export function aerialSummary(status: AerialStatus, { detail = true }: { detail?: boolean } = {}): string {
   if (status.sources.length === 0) return 'Aucune source de vidéos : ajoute une adresse.'
   if (!status.enabled) return `Téléchargement suspendu · ${status.done} sur ${status.total} prêtes.`
   if (status.total > 0 && status.done >= status.total) return `${films(status.total)} prêts.`
   const progress = `${status.done} sur ${status.total} prêtes`
   if (status.active && status.current) return `${progress} · en cours : ${status.current}`
-  if (status.error) return `${progress} · ${status.error}`
+  if (status.error) return detail ? `${progress} · ${status.error}` : `${progress} · ${status.error.split(' : ')[0]}.`
   return `${progress}.`
 }
 
@@ -85,6 +101,17 @@ export function sourceStatus(source: AerialSource): string {
   if (source.total === null) return source.error ?? 'Liste à lire…'
   const progress = source.total === 0 ? 'aucun film' : source.done >= source.total ? `${films(source.total)} prêts` : `${source.done} sur ${source.total} prêtes`
   return source.error ? `${progress} · ${source.error}` : progress
+}
+
+/**
+ * La phrase qui dit, sous la liste des sources, que le Pi a ajouté l'autorité racine d'Apple (et à quoi elle sert) :
+ * c'est la seule trace à l'écran, donc elle montre l'empreinte à comparer avec la page d'Apple. `null` : rien à dire.
+ */
+export function appleRootNote(root: AppleRoot | null | undefined): string | null {
+  if (!root) return null
+  const from = root.origin === 'cache' ? 'gardée par le dock' : 'téléchargée sur apple.com'
+  const check = root.known === 'yes' ? 'celle de l’autorité d’Apple' : 'à comparer avec apple.com/certificateauthority'
+  return `Le Pi ne connaissait pas l’autorité d’Apple : le dock l’a ajoutée pour le serveur des films seulement (${from}). Empreinte ${root.sha256} (${check}).`
 }
 
 /** Une adresse saisie au clavier tactile, nettoyée ; `null` si ce n'est pas une adresse https complète. */

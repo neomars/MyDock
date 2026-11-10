@@ -1,3 +1,10 @@
+mydock-agent (1.5.2) unstable; urgency=medium
+
+  * Aucun changement du côté du PC : la version suit celle du dock (1.5.2), qui sait désormais télécharger les vues
+    aériennes d'Apple malgré l'autorité privée de leur serveur (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Tue, 10 Nov 2026 15:30:00 +0000
+
 mydock-agent (1.5.1) unstable; urgency=medium
 
   * Aucun changement du côté du PC : la version suit celle du dock (1.5.1), qui dit désormais précisément pourquoi un

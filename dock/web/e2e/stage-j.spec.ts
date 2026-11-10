@@ -409,3 +409,62 @@ test('Vidéos : on retire les vues aériennes d’Apple, puis on les remet', asy
   await expect(dock.getByTestId('saver-src-0')).toContainText("Vues aériennes d'Apple")
   await expect(dock.getByTestId('saver-add-apple')).toHaveCount(0)
 })
+
+// --- ce que dit le Pi quand le serveur d'Apple pose problème (le dock de test n'a pas accès à Apple : on lui fait dire l'état) ---
+
+type Aerial = Record<string, unknown> & { sources: Record<string, unknown>[] }
+
+/** Fait répondre `/api/screensaver` comme le ferait un Pi dans tel état de téléchargement. */
+async function mockAerial(page: Page, change: (aerial: Aerial) => void): Promise<void> {
+  await page.route('**/api/screensaver', async (route) => {
+    const real = await route.fetch()
+    const body = (await real.json()) as { aerial: Aerial }
+    change(body.aerial)
+    await route.fulfill({ response: real, json: body })
+  })
+}
+
+test('Vidéos : sans rien à signaler, aucune note sur l’autorité d’Apple', async ({ dock }) => {
+  await openVideos(dock)
+  await expect(dock.getByTestId('saver-apple-root')).toHaveCount(0)
+})
+
+test('Vidéos : le refus du certificat d’Apple se lit en entier sur la ligne des vues aériennes', async ({ dock }) => {
+  // Le message de la photo du Pi, mot pour mot : il dit quel serveur, pourquoi, et la chaîne que le serveur présente.
+  const refus =
+    'Certificat de sylvan.apple.com refusé par le Pi (unable to get local issuer certificate). Il présente : sylvan.apple.com (Apple Inc.) ← Apple Server Authentication CA (Apple Inc.) ← Apple Root CA (Apple Inc.).'
+  await mockAerial(dock, (aerial) => {
+    aerial.error = `10 film(s) en échec, nouvel essai plus tard : Vue aérienne nuit 5 : ${refus}`
+    aerial.sources[0].error = `Vue aérienne nuit 5 : ${refus}`
+  })
+  await openVideos(dock)
+  await expect(dock.getByTestId('saver-sources-summary')).toHaveText('0 sur 10 prêtes · 10 film(s) en échec, nouvel essai plus tard.') // le détail est sur la ligne
+  const status = dock.getByTestId('saver-src-0-status')
+  await expect(status).toContainText('Apple Root CA (Apple Inc.).')
+  const fits = await status.evaluate((el) => ({ side: el.scrollWidth <= el.clientWidth + 1, lines: el.getBoundingClientRect().height }))
+  expect(fits.side).toBe(true) // le texte passe à la ligne, il ne se coupe pas
+  expect(fits.lines).toBeGreaterThan(60) // plusieurs lignes : on le lit en entier
+  const size = await dock.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
+  expect(size).toEqual({ w: 1024, h: 600 })
+  await dock.waitForTimeout(300)
+  await shot(dock, '16-videos-refus-du-certificat', 'j')
+})
+
+test('Vidéos : l’autorité d’Apple ajoutée par le dock est dite à l’écran, avec l’empreinte à comparer', async ({ dock }) => {
+  await mockAerial(dock, (aerial) => {
+    aerial.done = 3
+    aerial.active = true
+    aerial.current = 'Vue aérienne nuit 4'
+    aerial.apple_root = { sha256: 'B0B1730E…1001F024', origin: 'apple.com', known: 'yes' }
+    aerial.sources[0].done = 3
+  })
+  await openVideos(dock)
+  const note = dock.getByTestId('saver-apple-root')
+  await expect(note).toContainText('l’a ajoutée pour le serveur des films seulement (téléchargée sur apple.com)')
+  await expect(note).toContainText('Empreinte B0B1730E…1001F024 (celle de l’autorité d’Apple)')
+  await expect(dock.getByTestId('saver-sources-summary')).toContainText('3 sur 10 prêtes · en cours : Vue aérienne nuit 4')
+  await dock.getByTestId('saver-sources').locator('.card').evaluate((el) => el.scrollTo(0, el.scrollHeight)) // la note est sous la liste
+  await dock.waitForTimeout(300)
+  await expect(note).toBeInViewport()
+  await shot(dock, '17-videos-autorite-d-apple', 'j')
+})

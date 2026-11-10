@@ -239,6 +239,7 @@ class DockServer:
             lambda: bool(self.store.ui["saver_aerial"]),
             apple=lambda: bool(self.store.ui["saver_apple"]),
             sources=lambda: list(self.store.ui["saver_sources"]),
+            trust_dir=config.state_dir / "trust",
         )
         self._register_actions()
 

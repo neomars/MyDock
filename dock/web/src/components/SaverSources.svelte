@@ -5,7 +5,7 @@
   import Plus from '@lucide/svelte/icons/plus'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import { editText } from '../lib/keyboard.svelte'
-  import { aerialSummary, cleanSourceUrl, sourceStatus, type AerialSource } from '../lib/saver'
+  import { aerialSummary, appleRootNote, cleanSourceUrl, sourceStatus, type AerialSource } from '../lib/saver'
   import { saver } from '../lib/saver.svelte'
   import { saverSources } from '../lib/saverSources.svelte'
   import { sock } from '../lib/socket.svelte'
@@ -68,6 +68,7 @@
 
   const rows = $derived<AerialSource[]>(status?.sources ?? [])
   const nothing = $derived(!apple && addresses.length === 0)
+  const rootNote = $derived(appleRootNote(status?.apple_root))
 </script>
 
 {#if saverSources.open}
@@ -80,7 +81,7 @@
     </header>
 
     <section class="card">
-      <p class="summary" data-testid="saver-sources-summary">{status ? aerialSummary(status) : 'Lecture de l’état…'}</p>
+      <p class="summary" data-testid="saver-sources-summary">{status ? aerialSummary(status, { detail: false }) : 'Lecture de l’état…'}</p>
 
       <div class="list">
         {#each rows as row, index (row.id)}
@@ -128,6 +129,9 @@
         Une adresse https d'une vidéo, ou d'un fichier texte (.txt) qui en liste une par ligne. Le Pi télécharge, convertit si
         besoin puis range les films : l'économiseur les montre dès qu'ils sont prêts.
       </p>
+      {#if rootNote}
+        <p class="dim small hint" data-testid="saver-apple-root">{rootNote}</p>
+      {/if}
     </section>
   </div>
 {/if}

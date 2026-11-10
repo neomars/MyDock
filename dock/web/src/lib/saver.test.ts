@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CONTENT_OPTIONS,
   aerialSummary,
+  appleRootNote,
   cleanSourceUrl,
   sourceStatus,
   type AerialSource,
@@ -111,6 +112,14 @@ describe('le résumé du téléchargement', () => {
   it('dit pourquoi ça n’avance pas', () => {
     expect(aerialSummary(status({ error: '1 film(s) en échec' }))).toBe('4 sur 10 prêtes · 1 film(s) en échec')
   })
+  it('ne répète pas, dans la fenêtre, le détail que la ligne de la source donne déjà', () => {
+    const failed = status({ error: '10 film(s) en échec, nouvel essai plus tard : Vue aérienne nuit 5 : Certificat de sylvan.apple.com refusé par le Pi (x).' })
+    expect(aerialSummary(failed)).toContain('Certificat de sylvan.apple.com refusé') // Réglages : une seule ligne, tout y est
+    expect(aerialSummary(failed, { detail: false })).toBe('4 sur 10 prêtes · 10 film(s) en échec, nouvel essai plus tard.')
+    expect(aerialSummary(status({ error: 'Pas assez de place libre sur la carte du Pi.' }), { detail: false })).toBe(
+      '4 sur 10 prêtes · Pas assez de place libre sur la carte du Pi..', // un échec sans détail à couper garde son texte
+    )
+  })
   it('dit quand tout est prêt, au singulier comme au pluriel', () => {
     expect(aerialSummary(status({ total: 1, done: 1 }))).toBe('1 film prêts.')
     expect(aerialSummary(status({ total: 10, done: 10 }))).toBe('10 films prêts.')
@@ -131,6 +140,25 @@ describe('l’état d’une source', () => {
     expect(sourceStatus(source({ total: 3, done: 2, error: 'absent : introuvable' }))).toBe('2 sur 3 prêtes · absent : introuvable')
     expect(sourceStatus(source({ total: null }))).toBe('Liste à lire…')
     expect(sourceStatus(source({ total: null, error: 'Liste injoignable : timeout.' }))).toBe('Liste injoignable : timeout.')
+  })
+})
+
+describe('l’autorité d’Apple ajoutée par le dock', () => {
+  it('ne dit rien tant qu’elle n’a pas servi', () => {
+    expect(appleRootNote(null)).toBeNull()
+    expect(appleRootNote(undefined)).toBeNull()
+    expect(aerialSummary(status({ apple_root: null }))).toBe('4 sur 10 prêtes.') // elle n’encombre pas le résumé
+  })
+  it('dit d’où elle vient, pour quel serveur, et montre l’empreinte à comparer', () => {
+    const fresh = appleRootNote({ sha256: 'B0B1730E…1001F024', origin: 'apple.com', known: 'yes' })
+    expect(fresh).toContain('pour le serveur des films seulement (téléchargée sur apple.com)')
+    expect(fresh).toContain('Empreinte B0B1730E…1001F024 (celle de l’autorité d’Apple)')
+    expect(appleRootNote({ sha256: 'B0B1730E…1001F024', origin: 'cache', known: 'yes' })).toContain('(gardée par le dock)')
+  })
+  it('n’affirme rien quand l’empreinte n’est pas celle qu’on connaît : elle invite à la comparer', () => {
+    const unknown = appleRootNote({ sha256: '0123ABCD…89EF4567', origin: 'apple.com', known: 'no' })
+    expect(unknown).toContain('Empreinte 0123ABCD…89EF4567 (à comparer avec apple.com/certificateauthority)')
+    expect(unknown).not.toContain('celle de l’autorité d’Apple')
   })
 })
 

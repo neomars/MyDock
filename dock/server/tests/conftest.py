@@ -27,6 +27,66 @@ def _openssl(*args: str) -> None:
     subprocess.run(["openssl", *args], check=True, capture_output=True)
 
 
+@dataclass(frozen=True)
+class ApplePki:
+    """Comme la chaîne d'Apple : serveur ← « Apple Server Authentication CA » ← « Apple Root CA », racine non envoyée."""
+
+    root_pem: Path
+    root_der: bytes
+    inter_pem: Path
+    chain_pem: Path  # ce que le serveur envoie : son certificat, puis l'intermédiaire
+    leaf_key: Path
+
+
+@pytest.fixture(scope="session")
+def apple_pki(tmp_path_factory) -> ApplePki:
+    if not shutil.which("openssl"):
+        pytest.skip("openssl absent")
+    root = tmp_path_factory.mktemp("apple_pki")
+
+    def make(
+        name: str, subject: str, signer: tuple[Path, Path] | None, extensions: str
+    ) -> tuple[Path, Path]:
+        key, pem, ext = root / f"{name}.key", root / f"{name}.pem", root / f"{name}.cnf"
+        ext.write_text(extensions)
+        if signer is None:
+            _openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", subject,
+                     "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+                     "-keyout", str(key), "-out", str(pem))  # fmt: skip
+        else:
+            csr = root / f"{name}.csr"
+            _openssl(
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-subj",
+                subject,
+                "-keyout",
+                str(key),
+                "-out",
+                str(csr),
+            )
+            _openssl("x509", "-req", "-in", str(csr), "-CA", str(signer[0]), "-CAkey", str(signer[1]), "-CAcreateserial",
+                     "-days", "2", "-extfile", str(ext), "-out", str(pem))  # fmt: skip
+        return pem, key
+
+    root_pem, root_key = make("aroot", "/CN=Apple Root CA/O=Apple Inc.", None, "")
+    inter_pem, inter_key = make(
+        "ainter", "/CN=Apple Server Authentication CA/O=Apple Inc.", (root_pem, root_key),
+        "basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n",
+    )  # fmt: skip
+    leaf_pem, leaf_key = make(
+        "aleaf", "/CN=sylvan.apple.com/O=Apple Inc.", (inter_pem, inter_key),
+        "subjectAltName=DNS:localhost,IP:127.0.0.1\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n",
+    )  # fmt: skip
+    chain = root / "achain.pem"
+    chain.write_text(leaf_pem.read_text() + inter_pem.read_text())
+    return ApplePki(
+        root_pem, ssl.PEM_cert_to_DER_cert(root_pem.read_text()), inter_pem, chain, leaf_key
+    )
+
+
 @pytest.fixture(scope="session")
 def pki(tmp_path_factory) -> Pki:
     if not shutil.which("openssl"):
@@ -71,7 +131,9 @@ def _tls_server(
     cert: Path, key: Path, routes: dict[str, tuple[int, dict[str, str], bytes]] | None = None
 ):
     """Un serveur https local (127.0.0.1, port libre) qui n'envoie que son propre certificat ; rend son port."""
-    table = routes or {}
+    table = (
+        routes if routes is not None else {}
+    )  # le test peut y ajouter des routes une fois le serveur lancé
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -109,3 +171,29 @@ def _tls_server(
 def tls_server():
     """`with tls_server(cert, key, routes) as port:` : un serveur https local pour la durée du bloc."""
     return _tls_server
+
+
+HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
+@pytest.fixture(scope="session")
+def clips(tmp_path_factory):
+    """De vrais petits films : H.264 en MP4 léger, H.264 trop large, WebM VP8, MPEG-4 en AVI."""
+    if not HAVE_FFMPEG:
+        return {}
+    root = tmp_path_factory.mktemp("clips")
+
+    def make(name: str, size: str, *codec: str) -> bytes:
+        path = root / name
+        subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=12:duration=1", *codec, str(path)],
+            check=True,
+        )  # fmt: skip
+        return path.read_bytes()
+
+    return {
+        "small.mp4": make("small.mp4", "320x180", "-c:v", "libx264", "-pix_fmt", "yuv420p"),
+        "wide.mp4": make("wide.mp4", "1920x1080", "-c:v", "libx264", "-pix_fmt", "yuv420p"),
+        "small.webm": make("small.webm", "320x180", "-c:v", "libvpx"),
+        "old.avi": make("old.avi", "320x180", "-c:v", "mpeg4"),
+    }

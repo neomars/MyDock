@@ -314,6 +314,9 @@ def test_no_secret_is_packaged(extracted):
             line = re.sub(
                 r"[\w.\-]+\.mov", "", line
             )  # noms publics des films d'Apple (aerial.py), pas des jetons
+            line = re.sub(
+                r"[0-9A-Fa-f]{64}", "", line
+            )  # empreinte SHA-256 publique de la racine d'Apple (apple_ca.py) : 64 chiffres hexadécimaux, jamais un jeton (43 caractères)
             for match in pattern.findall(line):
                 # Les seuls mots de 43 caractères sont des identifiants, jamais un jeton
                 # (un jeton mêle chiffres et lettres sans séparateur lisible).

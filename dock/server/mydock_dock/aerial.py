@@ -31,13 +31,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mydock_dock import screensaver
-from mydock_dock.net import build_opener, describe_presented
+from mydock_dock import apple_ca, screensaver
+from mydock_dock.net import build_opener, context_with_roots, describe_presented
 
 log = logging.getLogger("mydock.aerial")
 
 APPLE_ID = "apple"
 APPLE_LABEL = "Vues aériennes d'Apple"
+#: Les seuls serveurs pour lesquels on ajoute l'autorité racine d'Apple aux autorités du Pi (voir apple_ca.py).
+APPLE_HOSTS = frozenset({"sylvan.apple.com"})
+#: Codes OpenSSL « autorité inconnue » : 19 (certificat auto-signé dans la chaîne), 20 (émetteur introuvable), 21 (premier
+#: certificat invérifiable). Un certificat expiré, au mauvais nom ou révoqué n'ouvre jamais cette porte.
+UNKNOWN_ISSUER = frozenset({19, 20, 21})
 BASE_URL = "https://sylvan.apple.com/Aerials/2x/Videos"
 #: (nom du fichier chez Apple, légende). Liste reprise de xscreensaver-aerial (atv4-2k.sh) : cinq films de jour, cinq de nuit.
 CATALOG: tuple[tuple[str, str], ...] = (
@@ -86,6 +91,29 @@ class AerialError(Exception):
     def __init__(self, message: str, *, fatal: bool = False) -> None:
         super().__init__(message)
         self.fatal = fatal
+
+
+class CertificateError(AerialError):
+    """Le Pi refuse le certificat d'un serveur ; `code` est le code OpenSSL, `url` l'adresse demandée."""
+
+    def __init__(self, message: str, *, code: int, url: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.url = url
+
+
+class _Redirects(screensaver.HttpsOnly):
+    """Les redirections vers du https seulement, qui retient la dernière adresse suivie : un refus de certificat doit
+    nommer le serveur réellement joint, pas celui d'où l'on vient."""
+
+    def __init__(self) -> None:
+        self.last: str | None = None
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if request is not None:
+            self.last = request.full_url
+        return request
 
 
 def certificate_message(url: str, error: ssl.SSLCertVerificationError) -> str:
@@ -155,6 +183,7 @@ class AerialFetcher:
         *,
         apple: Callable[[], bool] = lambda: True,
         sources: Callable[[], list[str]] = lambda: [],
+        trust_dir: Path | None = None,
         which: Callable[[str], str | None] = shutil.which,
         start_delay: float = START_DELAY,
         retry_delay: float = RETRY_DELAY,
@@ -163,6 +192,8 @@ class AerialFetcher:
         self._enabled = enabled
         self._apple = apple
         self._sources = sources
+        self._trust_dir = trust_dir
+        self._apple_root: tuple[bytes, str] | None = None  # (racine DER, d'où elle vient)
         self._which = which
         self._start_delay = start_delay
         self._retry_delay = retry_delay
@@ -205,6 +236,7 @@ class AerialFetcher:
             "current": self.current,
             "error": self.error,
             "enabled": self._enabled(),
+            "apple_root": self._apple_root_info(),
             "sources": rows,
         }
 
@@ -224,6 +256,17 @@ class AerialFetcher:
             "total": len(items) if items is not None else None,
             "done": done,
             "error": self._state(source).error,
+        }
+
+    def _apple_root_info(self) -> dict[str, str] | None:
+        """Si l'autorité racine d'Apple a été ajoutée pour son serveur : son empreinte et d'où elle vient."""
+        if self._apple_root is None or not self._apple():
+            return None
+        der, origin = self._apple_root
+        return {
+            "sha256": apple_ca.short_fingerprint(der),
+            "origin": origin,
+            "known": "yes" if apple_ca.fingerprint(der) == apple_ca.REMEMBERED_SHA256 else "no",
         }
 
     def missing(self) -> list[Item]:
@@ -338,7 +381,7 @@ class AerialFetcher:
             suffix = ""
         source_file = work / f"dl-{self._counter}{suffix}"
         try:
-            await asyncio.to_thread(self._download, item, source_file)
+            await self._fetch_file(item, source_file)
             info = await self._probe(source_file)
             keep = self._keep_extension(info, suffix)
             if not self._still_wanted(item):
@@ -353,6 +396,65 @@ class AerialFetcher:
             with contextlib.suppress(OSError):
                 source_file.unlink()
 
+    async def _fetch_file(self, item: Item, destination: Path) -> None:
+        """Télécharge un film. Si le serveur d'Apple présente une autorité que le Pi ne connaît pas, ajoute la racine
+        d'Apple (pour ce serveur seulement) et recommence une fois."""
+        roots = self._roots_for(item)
+        try:
+            await asyncio.to_thread(self._download, item, destination, roots)
+        except CertificateError as exc:
+            if roots:
+                raise self._despite_root(exc) from None
+            if not self._needs_apple_root(item, exc):
+                raise
+        else:
+            return
+        roots = await asyncio.to_thread(self._obtain_apple_root)
+        try:
+            await asyncio.to_thread(self._download, item, destination, roots)
+        except CertificateError as again:
+            raise self._despite_root(again) from None
+
+    @staticmethod
+    def _despite_root(error: CertificateError) -> AerialError:
+        """Une autorité encore inconnue d'un serveur d'Apple alors que sa racine est ajoutée : on le dit. Tout autre refus
+        (certificat périmé, mauvais nom) et celui d'un autre serveur atteint par une redirection restent tels quels."""
+        if (
+            urllib.parse.urlsplit(error.url).hostname in APPLE_HOSTS
+            and error.code in UNKNOWN_ISSUER
+        ):
+            return AerialError(f"{error} L'autorité racine d'Apple a pourtant été ajoutée.")
+        return error
+
+    def _roots_for(self, item: Item) -> tuple[str, ...]:
+        """Les racines à ajouter pour cette adresse : celle d'Apple, une fois obtenue, pour les serveurs d'Apple seulement."""
+        if self._apple_root is None or item.source != APPLE_ID:
+            return ()
+        if urllib.parse.urlsplit(item.url).hostname not in APPLE_HOSTS:
+            return ()
+        return (apple_ca.to_pem(self._apple_root[0]),)
+
+    @staticmethod
+    def _needs_apple_root(item: Item, error: CertificateError) -> bool:
+        """Le refus vient de l'autorité inconnue d'un serveur d'Apple de la liste : c'est la porte qui mène à sa racine."""
+        return (
+            item.source == APPLE_ID
+            and urllib.parse.urlsplit(error.url).hostname in APPLE_HOSTS
+            and error.code in UNKNOWN_ISSUER
+        )
+
+    def _obtain_apple_root(self) -> tuple[str, ...]:
+        try:
+            der, origin = apple_ca.obtain_root(self._trust_dir)
+        except apple_ca.AppleRootError as exc:
+            raise AerialError(str(exc)) from None
+        self._apple_root = (der, origin)
+        log.info(
+            "Autorité racine d'Apple ajoutée pour sylvan.apple.com (%s, empreinte %s)",
+            origin, apple_ca.short_fingerprint(der),
+        )  # fmt: skip
+        return (apple_ca.to_pem(der),)
+
     @staticmethod
     def _keep_extension(info: dict[str, Any], suffix: str) -> str | None:
         """L'extension sous laquelle garder le fichier tel quel, ou None s'il faut le convertir."""
@@ -364,7 +466,7 @@ class AerialFetcher:
             return ".mp4"
         return None
 
-    def _download(self, item: Item, destination: Path) -> None:
+    def _download(self, item: Item, destination: Path, roots: tuple[str, ...] = ()) -> None:
         work = destination.parent
         try:
             work.mkdir(parents=True, exist_ok=True)
@@ -375,7 +477,13 @@ class AerialFetcher:
         if shutil.disk_usage(work).free < screensaver.FREE_MARGIN + 2 * 400 * 1024**2:
             raise AerialError("Pas assez de place libre sur la carte du Pi.", fatal=True)
         request = urllib.request.Request(item.url, headers={"User-Agent": "mydock-dock"})
-        opener = build_opener(screensaver.HttpsOnly())
+        redirects = _Redirects()
+        # La racine d'Apple ne vérifie que les serveurs d'Apple de la liste : une redirection vers un autre serveur
+        # est vérifiée par les seules autorités du Pi.
+        trusted = context_with_roots(*roots) if roots else None
+        opener = build_opener(
+            redirects, host_contexts=dict.fromkeys(APPLE_HOSTS, trusted) if trusted else None
+        )
         written = 0
         try:
             with opener.open(request, timeout=screensaver.TIMEOUT) as response:
@@ -405,14 +513,20 @@ class AerialFetcher:
         except (OSError, ValueError) as exc:
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, ssl.SSLCertVerificationError):
-                raise AerialError(certificate_message(item.url, reason)) from None
+                refused = (
+                    redirects.last or item.url
+                )  # le serveur réellement joint, redirections suivies
+                raise CertificateError(
+                    certificate_message(refused, reason), code=reason.verify_code, url=refused
+                ) from None
             raise AerialError(f"Téléchargement impossible : {reason}.") from None
         if written == 0:
             raise AerialError("Fichier vide.")
 
     def _fetch_list(self, url: str) -> str:
         request = urllib.request.Request(url, headers={"User-Agent": "mydock-dock"})
-        opener = build_opener(screensaver.HttpsOnly())
+        redirects = _Redirects()
+        opener = build_opener(redirects)
         try:
             with opener.open(request, timeout=screensaver.TIMEOUT) as response:
                 body = response.read(MAX_LIST_BYTES + 1)
@@ -423,7 +537,7 @@ class AerialFetcher:
         except (OSError, ValueError) as exc:
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, ssl.SSLCertVerificationError):
-                raise AerialError(certificate_message(url, reason)) from None
+                raise AerialError(certificate_message(redirects.last or url, reason)) from None
             raise AerialError(f"Liste injoignable : {reason}.") from None
         if len(body) > MAX_LIST_BYTES:
             raise AerialError("La liste est trop longue (64 Ko au plus).")
