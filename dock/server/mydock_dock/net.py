@@ -12,6 +12,7 @@ import contextlib
 import http.client
 import socket
 import ssl
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from typing import Any
@@ -73,15 +74,46 @@ class FastHTTPSConnection(http.client.HTTPSConnection):
 
 
 class FastHTTPSHandler(urllib.request.HTTPSHandler):
+    """Les connexions https passent par `connect_fast`. `host_contexts` : un contexte TLS propre à certains serveurs
+    (nom exact) ; tous les autres, redirections comprises, sont vérifiés par `context` (par défaut, les autorités du Pi)."""
+
+    def __init__(
+        self,
+        context: ssl.SSLContext | None = None,
+        host_contexts: dict[str, ssl.SSLContext] | None = None,
+    ) -> None:
+        super().__init__(context=context)
+        self._host_contexts = {name.lower(): ctx for name, ctx in (host_contexts or {}).items()}
+
     def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
-        return self.do_open(FastHTTPSConnection, req, context=self._context)  # type: ignore[attr-defined,arg-type]
+        host = (urllib.parse.urlsplit(req.full_url).hostname or "").lower()
+        context = self._host_contexts.get(host, self._context)  # type: ignore[attr-defined]
+        return self.do_open(FastHTTPSConnection, req, context=context)  # type: ignore[arg-type]
 
 
 def build_opener(
-    *handlers: urllib.request.BaseHandler, context: ssl.SSLContext | None = None
+    *handlers: urllib.request.BaseHandler,
+    context: ssl.SSLContext | None = None,
+    host_contexts: dict[str, ssl.SSLContext] | None = None,
 ) -> urllib.request.OpenerDirector:
     """Un ouvreur urllib dont les connexions https passent par `connect_fast`."""
-    return urllib.request.build_opener(FastHTTPSHandler(context=context), *handlers)
+    return urllib.request.build_opener(
+        FastHTTPSHandler(context=context, host_contexts=host_contexts), *handlers
+    )
+
+
+def context_with_roots(*roots_pem: str) -> ssl.SSLContext:
+    """Les autorités du Pi, plus ces racines : pour un serveur précis dont l'autorité n'est pas dans la liste de Debian.
+
+    La chaîne, le nom du serveur et les dates restent vérifiés. Seules les vérifications pointilleuses de la RFC 5280
+    (`VERIFY_X509_STRICT`, que Python 3.13 active par défaut) sont assouplies : l'autorité privée d'Apple date de 2006
+    et ne les respecte pas toutes. Rien ici ne désactive la vérification.
+    """
+    context = ssl.create_default_context()
+    for pem in roots_pem:
+        context.load_verify_locations(cadata=pem)
+    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return context
 
 
 def _inspection_context() -> ssl.SSLContext:

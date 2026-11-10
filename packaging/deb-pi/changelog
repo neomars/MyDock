@@ -1,3 +1,22 @@
+mydock (1.5.2) unstable; urgency=medium
+
+  * Économiseur d'écran : les vues aériennes d'Apple se téléchargent enfin sur le Pi. Leur serveur (sylvan.apple.com)
+    présente une chaîne d'une autorité privée d'Apple — « Apple Server Authentication CA ← Apple Root CA » — dont la
+    racine n'est pas dans la liste des autorités de Debian : le Pi la refusait (« unable to get local issuer
+    certificate »). Le dock obtient lui-même cette racine, publique, sur www.apple.com (connexion vérifiée par les
+    autorités du Pi), contrôle que c'est un certificat racine auto-signé nommé « Apple Root CA », la garde dans son
+    dossier d'état et la donne à la vérification — pour le serveur des films d'Apple et aucun autre. Le nom du serveur,
+    la chaîne et les dates restent vérifiés : la vérification des certificats n'est jamais désactivée.
+  * Les adresses saisies à l'écran ne reçoivent jamais cette racine, une redirection vers un autre serveur est vérifiée
+    par les seules autorités du Pi, et un refus d'une autre nature (certificat périmé, mauvais nom de serveur) ne la
+    déclenche pas.
+  * La fenêtre des vidéos le dit : « Le Pi ne connaissait pas l'autorité d'Apple… Empreinte B0B1730E…1001F024 », à
+    comparer avec la page de l'autorité de certification d'Apple. Le résumé du haut ne répète plus le détail d'un
+    échec, qui se lit sur la ligne de la source.
+  * Nouvelle version : 1.5.1 -> 1.5.2 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Tue, 10 Nov 2026 15:30:00 +0000
+
 mydock (1.5.1) unstable; urgency=medium
 
   * Économiseur d'écran : quand le Pi refuse le certificat d'un serveur (« certificate verify failed : unable to get

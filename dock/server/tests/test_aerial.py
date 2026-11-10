@@ -71,29 +71,6 @@ def fetcher(tmp_path, *, enabled=True, apple=True, sources=(), which=lambda _n: 
     )
 
 
-@pytest.fixture(scope="module")
-def clips(tmp_path_factory):
-    """De vrais petits films : H.264 en MP4 léger, H.264 trop large, WebM VP8, MPEG-4 en AVI."""
-    if not HAVE_FFMPEG:
-        return {}
-    root = tmp_path_factory.mktemp("clips")
-
-    def make(name: str, size: str, *codec: str) -> bytes:
-        path = root / name
-        subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=12:duration=1", *codec, str(path)],
-            check=True,
-        )  # fmt: skip
-        return path.read_bytes()
-
-    return {
-        "small.mp4": make("small.mp4", "320x180", "-c:v", "libx264", "-pix_fmt", "yuv420p"),
-        "wide.mp4": make("wide.mp4", "1920x1080", "-c:v", "libx264", "-pix_fmt", "yuv420p"),
-        "small.webm": make("small.webm", "320x180", "-c:v", "libvpx"),
-        "old.avi": make("old.avi", "320x180", "-c:v", "mpeg4"),
-    }
-
-
 def _shape(path: Path) -> str:
     return subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height", "-of", "csv=p=0", str(path)],
