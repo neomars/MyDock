@@ -1418,18 +1418,18 @@ test('Pages : cacher, montrer, monter et descendre envoient la bonne liste au do
 
   await page.getByTestId('page-toggle-office').tap()
   await page.getByTestId('page-toggle-steam').tap()
-  await page.getByTestId('page-up-power').tap()
+  await page.getByTestId('page-up-media').tap()
   await page.getByTestId('page-down-music').tap()
   await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.ui.set').length).toBe(4)
   const sent = mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => a.p)
   expect(sent[0]).toEqual({ hidden: ['steam', 'office'] })
   expect(sent[1]).toEqual({ hidden: [] })
-  expect(sent[2]).toEqual({ order: ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'power', 'system', 'settings'] })
-  expect(sent[3]).toEqual({ order: ['sound', 'music', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings'] })
+  expect(sent[2]).toEqual({ order: ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'media', 'system', 'settings'] })
+  expect(sent[3]).toEqual({ order: ['sound', 'music', 'apps', 'steam', 'office', 'markets', 'system', 'media', 'settings'] })
 })
 
 test('Pages : « ordre d’origine » rétablit tout, et n’est proposé que s’il y a quelque chose à rétablir', async ({ page, stack }) => {
-  const mock = await mockDock(page, {}, { startPage: 'settings', ui: { order: ['power'] } })
+  const mock = await mockDock(page, {}, { startPage: 'settings', ui: { order: ['media'] } })
   await page.goto(stack.url)
   await page.getByTestId('choose-pages').tap()
   await page.getByTestId('pages-reset').tap()
@@ -1444,7 +1444,7 @@ test('Pages : l’accueil suit aussitôt ce que le dock enregistre', async ({ pa
   await page.goto(stack.url)
   expect(await tileOrder(page)).toEqual(TAB_IDS)
   mock.push('ui', { last_page: 'settings', order: ['system'], hidden: ['steam'], pinned_apps: [] })
-  await expect.poll(() => tileOrder(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'power', 'settings'])
+  await expect.poll(() => tileOrder(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'media', 'settings'])
 })
 
 test('Pages : une modification refusée par le dock est expliquée', async ({ page, stack }) => {

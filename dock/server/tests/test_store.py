@@ -19,6 +19,7 @@ def test_defaults(tmp_path):
         "saver_aerial": True,
         "saver_apple": True,
         "saver_sources": [],
+        "tv_hd": False,  # Freetv : la qualité standard d'abord
     }
     assert store.pc["interfaces"] == []
 
@@ -215,6 +216,7 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         "saver_aerial": True,
         "saver_apple": True,
         "saver_sources": [],
+        "tv_hd": False,  # Freetv : la qualité standard d'abord
     }
     assert store.pc["hostname"] == "x"
 
@@ -351,3 +353,50 @@ def test_a_damaged_sources_list_in_the_file_keeps_only_the_valid_ones(tmp_path):
     ui = StateStore(tmp_path).ui
     assert ui["saver_sources"] == ["https://x.org/a.mp4"]
     assert ui["saver_apple"] is True
+
+
+# --- 1.6.0 : « Alimentation » quitte l'accueil, « Divertissement » prend sa place --------------------------------------
+
+
+def _write_state(tmp_path, ui: dict) -> StateStore:
+    (tmp_path / "state.json").write_text(json.dumps({"version": 1, "ui": ui}))
+    return StateStore(tmp_path)
+
+
+def test_the_order_chosen_before_1_6_0_keeps_the_place_of_power_for_the_new_page(tmp_path):
+    store = _write_state(tmp_path, {"order": ["system", "power", "markets"], "hidden": []})
+    assert store.ui["order"] == ["system", "media", "markets"]
+
+
+def test_an_order_that_never_had_power_is_left_alone(tmp_path):
+    store = _write_state(tmp_path, {"order": ["markets", "system"], "hidden": []})
+    assert store.ui["order"] == ["markets", "system"]
+
+
+def test_hiding_the_old_power_button_does_not_hide_the_new_page(tmp_path):
+    store = _write_state(tmp_path, {"order": [], "hidden": ["power", "steam"]})
+    assert store.ui["hidden"] == ["steam"]
+
+
+def test_a_stored_order_with_both_pages_has_no_duplicate(tmp_path):
+    store = _write_state(tmp_path, {"order": ["media", "system", "power"], "hidden": []})
+    assert store.ui["order"] == ["media", "system"]
+
+
+def test_the_new_page_can_be_chosen_and_the_old_button_can_still_open_its_page(tmp_path):
+    store = StateStore(tmp_path)
+    assert store.update_ui({"order": ["media", "system"]})["order"] == ["media", "system"]
+    assert store.update_ui({"last_page": "media"})["last_page"] == "media"
+    assert (
+        store.update_ui({"last_page": "power"})["last_page"] == "power"
+    )  # la page existe toujours
+
+
+def test_the_freetv_quality_is_a_flag_that_survives_a_restart_and_refuses_other_values(tmp_path):
+    store = StateStore(tmp_path)
+    assert store.ui["tv_hd"] is False
+    assert store.update_ui({"tv_hd": True})["tv_hd"] is True
+    assert StateStore(tmp_path).ui["tv_hd"] is True
+    with pytest.raises(ValidationFailure):
+        store.update_ui({"tv_hd": "oui"})
+    assert _write_state(tmp_path, {"tv_hd": "peut-être"}).ui["tv_hd"] is False

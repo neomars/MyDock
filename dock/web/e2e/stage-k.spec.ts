@@ -219,8 +219,6 @@ test('Réglages : la carte Divertissement garde l’adresse, le serveur, l’ide
   await dock.getByTestId('keyboard-ok').tap()
   await expect(dock.getByTestId('media-password')).toHaveText('••••••••')
   await expect(card).not.toContainText('motdepasse') // jamais affiché
-  await dock.getByTestId('clear-media-password').tap()
-  await expect(dock.getByTestId('media-password')).toHaveText('aucun')
 
   await dock.getByTestId('media-test').tap()
   await expect(dock.getByTestId('media-results')).toBeVisible({ timeout: 20_000 })
@@ -228,8 +226,12 @@ test('Réglages : la carte Divertissement garde l’adresse, le serveur, l’ide
   await expect(dock.getByTestId('media-result-files')).toContainText('Partages : Disque dur, Enregistrements')
   await expect(dock.getByTestId('media-result-player')).toContainText('VLC est prêt')
   await card.scrollIntoViewIfNeeded()
+  await expect(dock.getByTestId('toast')).toHaveCount(0, { timeout: 8_000 }) // la photo sans bulle par-dessus
   await dock.waitForTimeout(300)
   await shot(dock, '10-reglages-divertissement', 'k')
+
+  await dock.getByTestId('clear-media-password').tap()
+  await expect(dock.getByTestId('media-password')).toHaveText('aucun')
 })
 
 test('Réglages : une adresse de liste invalide est refusée sans rien changer', async ({ dock }) => {
