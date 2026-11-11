@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlsplit
 
 from mydock_common.config import ConfigError
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
-from mydock_dock import __version__, screensaver
+from mydock_dock import __version__, player_session, screensaver
 from mydock_dock.agent_link import (
     UNREACHABLE_ERRNOS,
     LinkFailure,
@@ -32,12 +32,14 @@ from mydock_dock.agent_link import (
 )
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig, default_config_path
+from mydock_dock.freebox import ChannelList, FreeboxError
 from mydock_dock.markets.diagnose import PROBES
 from mydock_dock.markets.errors import ProviderError
 from mydock_dock.markets.factory import build_providers
 from mydock_dock.markets.http import Fetcher
 from mydock_dock.markets.model import Quote
 from mydock_dock.netinfo import local_address_towards, local_ipv4_addresses
+from mydock_dock.samba import SambaBrowser, SambaError
 from mydock_dock.store import StateStore
 
 TCP_TIMEOUT = 3.0
@@ -588,6 +590,128 @@ async def check_markets(
         )
 
 
+def player_session_running() -> bool:
+    """L'assistant de lecture (lancé avec le kiosque) tourne-t-il ? Il se reconnaît à sa ligne de commande."""
+    if not shutil.which("pgrep"):
+        return False
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "mydock-dock player-session"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def check_media(
+    report: Report,
+    config: DockConfig,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    running: Callable[[], bool] = player_session_running,
+    live555: Callable[[], bool] = player_session.has_live555,
+    flags: Callable[[], list[str]] = player_session.read_flags,
+) -> None:
+    """Divertissement : VLC et ce qu'il faut autour, et les réglages (jamais le mot de passe)."""
+    report.section("Divertissement (Freetv, Kiosque)")
+    vlc = which("vlc") or which("cvlc")
+    if vlc:
+        report.add(OK, f"VLC présent ({vlc})")
+        if live555():
+            report.add(OK, "VLC lit lui-même les chaînes de la Freebox (module RTSP présent)")
+        elif which("ffmpeg"):
+            report.add(
+                INFO,
+                "VLC n'a pas le module RTSP : les chaînes passent par ffmpeg (il recopie le flux vers VLC, sans le décoder)",
+            )
+        else:
+            report.add(
+                WARN,
+                "Ni module RTSP dans VLC ni ffmpeg : les chaînes ne pourront pas être lues (sudo apt install ffmpeg)",
+            )
+    else:
+        report.add(
+            WARN,
+            "VLC est absent : le Divertissement ne lira rien (sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output)",
+        )
+    switcher = "wlrctl" if which("wlrctl") else "xdotool" if which("xdotool") else None
+    if switcher:
+        report.add(OK, f"{switcher} présent (passer de la vidéo au dock)")
+    else:
+        report.add(
+            WARN,
+            "Ni wlrctl ni xdotool : impossible de passer de la vidéo au dock (sudo apt install wlrctl, ou xdotool)",
+        )
+    if which("swayidle"):
+        report.add(OK, "swayidle présent (un toucher pendant la vidéo ramène le dock)")
+    else:
+        report.add(
+            WARN,
+            "swayidle est absent : un toucher ne ramènera pas le dock (sudo apt install swayidle)",
+        )
+    if not (which("Xwayland") or which("xwayland")):
+        report.add(
+            INFO,
+            "XWayland est absent : VLC y affiche sa vidéo sur ce Pi (sudo apt install xwayland)",
+        )
+    if which("smbclient"):
+        report.add(OK, "smbclient présent (parcourir les partages Samba)")
+    else:
+        report.add(
+            WARN, "smbclient est absent : le Kiosque ne parcourra rien (sudo apt install smbclient)"
+        )
+    extra = flags()
+    if extra:
+        report.add(
+            INFO, f"Options de VLC ajoutées ({player_session.FLAGS_FILE}) : {' '.join(extra)}"
+        )
+    if running():
+        report.add(OK, "L'assistant de lecture tourne dans la session de l'écran")
+    else:
+        report.add(
+            INFO,
+            "L'assistant de lecture ne tourne pas : il démarre avec l'écran du dock (après une installation ou une mise à jour : sudo reboot)",
+        )
+    report.add(INFO, f"Liste des chaînes : {config.playlist_url}")
+    if config.smb_host:
+        user = f"identifiant « {config.smb_user} »" if config.smb_user else "accès sans identifiant"
+        password = (
+            "mot de passe configuré (non affiché)" if config.smb_password else "sans mot de passe"
+        )
+        report.add(INFO, f"Partages Samba : {config.smb_host} ({user}, {password})")
+    else:
+        report.add(INFO, "Partages Samba : aucun serveur (Réglages → Divertissement)")
+
+
+async def check_media_network(report: Report, config: DockConfig, *, online: bool = True) -> None:
+    """Divertissement : la Freebox répond-elle (liste des chaînes, partages Samba) ?"""
+    if not online:
+        report.add(INFO, "Test de la Freebox ignoré (--offline)")
+        return
+    try:
+        channels, _ = await ChannelList(lambda: config.playlist_url).get()
+        report.add(OK, f"La Freebox donne sa liste : {len(channels)} chaîne(s)")
+    except FreeboxError as exc:
+        report.add(
+            WARN,
+            f"Liste des chaînes : {exc} (la Freebox est-elle allumée, et le Pi sur le même réseau ?)",
+        )
+    if config.smb_host and shutil.which("smbclient"):
+        browser = SambaBrowser(
+            lambda: config.smb_host, lambda: config.smb_user, lambda: config.smb_password
+        )
+        try:
+            shares = await browser.shares()
+            names = ", ".join(shares[:6]) + ("…" if len(shares) > 6 else "")
+            report.add(OK, f"{config.smb_host} répond : {len(shares)} partage(s) ({names})")
+        except SambaError as exc:
+            report.add(WARN, f"Partages Samba : {exc}")
+
+
 def check_running(report: Report, config: DockConfig) -> None:
     report.section("Services")
     url = f"http://127.0.0.1:{config.port}/api/health"
@@ -635,6 +759,8 @@ def run_doctor(
         check_screen(report, config)
         check_saver(report, config)
         check_portal(report, config)
+        check_media(report, config)
+        asyncio.run(check_media_network(report, config, online=not offline))
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)
     print(report.render())

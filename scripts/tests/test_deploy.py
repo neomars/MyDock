@@ -86,7 +86,11 @@ def offline(wheels: Path) -> dict[str, str]:
 
 @pytest.mark.parametrize("script", ALL_SCRIPTS, ids=lambda p: str(p.relative_to(ROOT)))
 def test_scripts_are_valid_bash_and_executable(script):
-    shell = "sh" if script.name in ("kiosk-browser.sh", "screen-sleep.sh") else "bash"
+    shell = (
+        "sh"
+        if script.name in ("kiosk-browser.sh", "screen-sleep.sh", "player-session.sh")
+        else "bash"
+    )
     assert subprocess.run([shell, "-n", str(script)], check=False).returncode == 0
     if script.name != "lib.sh":
         assert os.access(script, os.X_OK), f"{script} n'est pas exécutable"
@@ -322,11 +326,17 @@ def test_pi_kiosk_configuration_is_readable_by_the_browser_user(pi_setup):
     autostart = (prefix / "etc/mydock-kiosk/labwc/autostart").read_text()
     assert "/usr/lib/mydock/kiosk-browser.sh &" in autostart
     assert "/usr/lib/mydock/screen-sleep.sh &" in autostart  # la veille de l'écran
+    assert (
+        "/usr/lib/mydock/player-session.sh &" in autostart
+    )  # l'assistant de lecture du Divertissement
     assert not re.findall(r"@[A-Z_]+@", autostart)
     assert (
         'MYDOCK_OUTPUT_MODE="1024x600@60"' in (prefix / "etc/mydock-kiosk/display.conf").read_text()
     )
     assert (prefix / "etc/mydock-kiosk/chromium.flags").is_file()
+    assert (
+        prefix / "etc/mydock-kiosk/vlc.flags"
+    ).is_file()  # options de VLC en plus (Divertissement)
     for path in (prefix / "etc/mydock-kiosk").rglob("*"):
         if path.is_file():
             # lisible par mydock-kiosk, jamais ce qui tient le jeton (dans /etc/mydock)
@@ -624,6 +634,63 @@ def test_kiosk_browser_launcher_explains_a_missing_chromium(tmp_path):
     assert "Chromium est introuvable" in result.stderr
 
 
+def test_player_launcher_starts_the_helper_on_the_local_dock_and_restarts_it(tmp_path):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    calls = tmp_path / "calls.log"
+    make_fake_bin(fake, "curl", "exit 0\n")  # le serveur du dock « répond » tout de suite
+    make_fake_bin(fake, "mydock-dock", f'echo "$@" >> "{calls}"\nexit 0\n')
+    env = {
+        "PATH": f"{fake}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "MYDOCK_DOCK_BIN": str(fake / "mydock-dock"),
+        "MYDOCK_PORT": "8081",
+    }
+    try:
+        subprocess.run(
+            ["sh", str(PI / "player-session.sh")],
+            env=env,
+            timeout=5,
+            capture_output=True,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pass  # normal : le lanceur boucle pour relancer l'assistant
+    lines = calls.read_text().splitlines()
+    assert lines[0] == "player-session --url ws://127.0.0.1:8081/ws/player"
+    assert len(lines) >= 2, "l'assistant doit être relancé quand il s'arrête"
+
+
+def test_player_launcher_only_talks_to_the_local_dock():
+    text = (PI / "player-session.sh").read_text()
+    assert "127.0.0.1" in text
+    assert (
+        "dock.toml" not in text
+    )  # jamais le jeton : il vit dans /etc/mydock, illisible du kiosque
+    assert "token" not in text.lower()
+
+
+def test_player_launcher_explains_a_missing_dock_program(tmp_path):
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    make_fake_bin(fake, "curl", "exit 0\n")
+    result = subprocess.run(
+        ["/bin/sh", str(PI / "player-session.sh")],
+        env={"PATH": str(fake), "HOME": str(tmp_path), "MYDOCK_DOCK_BIN": str(tmp_path / "absent")},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "mydock-dock est introuvable" in result.stderr
+
+
+def test_kiosk_user_can_use_the_sound_card():
+    setup = (PI / "setup.sh").read_text()
+    assert "usermod -aG video,render,input,audio mydock-kiosk" in setup
+
+
 def test_put_file_only_writes_when_content_or_mode_changes(tmp_path):
     target = tmp_path / "x" / "f.conf"
     script = f"""
@@ -679,8 +746,16 @@ class ScreenSleep:
                 f'if [ "$#" -eq 0 ]; then echo "HDMI-A-1 \\"écran\\""; echo "  1024x600"; echo "DSI-1"; '
                 f'else echo "wlr-randr $*" >> "{self.calls}"; fi\n',
             )
+        # Seulement les commandes courantes dont le script a besoin : un vrai swayidle, wlopm ou wlr-randr installé
+        # sur la machine (un Pi de développement, par exemple) ne doit pas fausser les essais « sans ».
+        basics = tmp_path / "basics"
+        basics.mkdir()
+        for name in ("sh", "readlink", "awk", "sed", "sleep", "cat", "kill"):
+            found = shutil.which(name)
+            if found:
+                (basics / name).symlink_to(found)
         self.env = {
-            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "PATH": f"{self.bin}:{basics}",
             "HOME": str(tmp_path),
             "MYDOCK_SCREEN_POLL": "0.2",
             "MYDOCK_PORT": "8081",
