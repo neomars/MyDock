@@ -24,6 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 DEFAULT_PLAYLIST_URL = "http://mafreebox.freebox.fr/freeboxtv/playlist.m3u"
+#: Le nom que Free donne à la box : il se résout vers une adresse **publique** de Free (212.27.38.253), que la
+#: Freebox elle-même sert à ceux qui sont chez elle. Ce nom-là est donc lu même s'il ne mène pas à une adresse privée.
+FREEBOX_NAMES = frozenset({"mafreebox.freebox.fr"})
 MAX_BYTES = 1024 * 1024
 TIMEOUT = 8.0
 CACHE_SECONDS = 600.0
@@ -161,9 +164,12 @@ def _check_local(hostname: str, port: int) -> None:
         raise FreeboxError(
             f"« {hostname} » est introuvable : la Freebox est-elle sur le même réseau que le dock ?"
         ) from None
+    if hostname.lower().rstrip(".") in FREEBOX_NAMES and infos:
+        return  # le nom officiel de la box : une adresse publique de Free que la box sert chez toi
     if not infos or not all(_is_local(info[4][0]) for info in infos):
         raise FreeboxError(
-            f"« {hostname} » n'est pas sur le réseau local : le dock ne lit la liste que chez toi."
+            f"« {hostname} » n'est pas sur le réseau local : le dock ne lit la liste que chez toi "
+            f"(ni « {next(iter(FREEBOX_NAMES))} » ni une adresse privée)."
         )
 
 

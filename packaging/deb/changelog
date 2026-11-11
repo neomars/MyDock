@@ -1,3 +1,10 @@
+mydock-agent (1.6.1) unstable; urgency=medium
+
+  * Aucun changement du côté du PC : la version suit celle du dock (1.6.1), qui lit enfin la liste des chaînes de la
+    Freebox sous son nom officiel et explique pourquoi une vidéo ne se lit pas (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 11 Nov 2026 20:00:00 +0000
+
 mydock-agent (1.6.0) unstable; urgency=medium
 
   * Aucun changement du côté du PC : la version suit celle du dock (1.6.0), qui gagne le Divertissement (Freetv et Kiosque,

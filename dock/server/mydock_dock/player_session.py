@@ -41,6 +41,7 @@ DEFAULT_URL = "ws://127.0.0.1:8080/ws/player"
 #: Options supplémentaires de VLC, une par ligne (# = commentaire) ; la variable donne un autre fichier (essais).
 FLAGS_FILE = "/etc/mydock-kiosk/vlc.flags"
 FLAGS_ENV = "MYDOCK_VLC_FLAGS"
+LOG_NAME = "mydock-player.log"  # dans le dossier d'exécution de la session : la dernière lecture qui a échoué
 POLL_SECONDS = 1.0
 RC_WAIT = 20.0  # temps laissé à VLC pour ouvrir son socket de commande
 #: Après être passé à la vidéo, un toucher n'est pas pris pour une demande de retour au dock (c'est celui qui l'a lancée).
@@ -62,6 +63,15 @@ def has_live555() -> bool:
     patterns = (
         "/usr/lib/*/vlc/plugins/access/liblive555_plugin.so",
         "/usr/lib/vlc/plugins/access/liblive555_plugin.so",
+    )
+    return any(glob.glob(p) for p in patterns)
+
+
+def has_vlc_plugin(name: str) -> bool:
+    """Ce VLC a-t-il le module `name` (le fichier `lib<name>_plugin.so`) ? Chaque module vient d'un paquet Debian."""
+    patterns = (
+        f"/usr/lib/*/vlc/plugins/*/lib{name}_plugin.so",
+        f"/usr/lib/vlc/plugins/*/lib{name}_plugin.so",
     )
     return any(glob.glob(p) for p in patterns)
 
@@ -106,6 +116,10 @@ def vlc_command(
         "--no-osd",
         "--mouse-hide-timeout=300",
         "--play-and-exit",
+        # Jamais de boîte de dialogue (VLC attendrait un mot de passe que personne ne peut taper : il échoue tout de
+        # suite, « Permission denied »), et pas de trousseau de clés (il cherche D-Bus, absent de la session du kiosque).
+        "--no-interact",
+        "--keystore=memory",
         "--no-snapshot-preview",
         f"--volume={round(volume * VLC_VOLUME_MAX / 100)}",
         *extra,
@@ -140,18 +154,90 @@ def parse_numbers(text: str) -> list[int]:
     return [int(m.group(1)) for line in text.splitlines() if (m := _NUMBER_LINE.match(line))]
 
 
-def explain_exit(played: bool, live: bool, tail: str) -> str | None:
-    """Pourquoi VLC s'est arrêté sans avoir jamais joué ; `None` : fin normale."""
+#: Les lignes de VLC qui n'apprennent rien sur un échec (son interface sans fenêtre, la fin de la liste de lecture…).
+_VLC_NOISE = (
+    "dummy interface",
+    "dbus",
+    "globalhotkeys",
+    "no suitable interface",
+    "end of playlist",
+    "your input can't be opened",
+    "check the log for details",
+)
+_VLC_PREFIX = re.compile(r"^\[[0-9a-fA-F]+\]\s*")
+
+
+def vlc_detail(tail: str, limit: int = 200) -> str:
+    """Les dernières lignes utiles de ce que VLC a écrit (sans l'adresse mémoire de tête ni le bruit habituel), en une phrase."""
+    lines: list[str] = []
+    for raw in tail.splitlines():
+        line = _VLC_PREFIX.sub("", raw).strip()
+        lowered = line.lower()
+        if line and not any(noise in lowered for noise in _VLC_NOISE) and line not in lines:
+            lines.append(line)
+    text = " ; ".join(lines[-2:])
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def explain_exit(played: bool, live: bool, tail: str, code: int | None = None) -> str | None:
+    """Pourquoi VLC s'est arrêté sans avoir jamais joué ; `None` : fin normale. `tail` : ce que VLC (et ffmpeg) ont écrit."""
     if played:
         return None
     lowered = tail.lower()
+    detail = vlc_detail(tail)
+    more = f" Détail : « {detail} »." if detail else ""
     if "permission denied" in lowered or "access denied" in lowered or "logon" in lowered:
-        return "Accès refusé au fichier : vérifie l'identifiant du partage (Réglages → Divertissement)."
+        return (
+            "Accès refusé au partage : vérifie l'identifiant et le mot de passe (Réglages → Divertissement)."
+            + more
+        )
     if "no such file" in lowered or "not found" in lowered:
-        return "Fichier introuvable sur le partage."
+        return (
+            "Fichier introuvable sur le partage (le nom, les droits d'accès, ou le serveur qui ne répond pas)."
+            + more
+        )
+    if "unable to open the mrl 'smb://" in lowered and "smb stream" not in lowered:
+        return (
+            "VLC ne sait pas lire le Samba : sudo apt install vlc-plugin-samba (puis redémarrer le Pi)."
+            + more
+        )
+    if (
+        "no suitable decoder" in lowered
+        or "codec not supported" in lowered
+        or "unsupported codec" in lowered
+    ):
+        return (
+            "VLC ne sait pas décoder cette vidéo (codec absent, ou trop lourd pour le Pi)." + more
+        )
+    if any(
+        word in lowered
+        for word in (
+            "no suitable vout",
+            "video output creation failed",
+            "cannot open display",
+            "unable to open display",
+            "failed to open display",
+        )
+    ):
+        return (
+            "VLC n'arrive pas à afficher la vidéo sur l'écran du dock : sudo apt install xwayland vlc-plugin-video-output, "
+            "puis redémarrer le Pi." + more
+        )
+    if code is not None and code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = f"signal {-code}"
+        return (
+            f"VLC s'est arrêté brutalement ({name}) : souvent le décodage matériel. Essaie --avcodec-hw=none dans "
+            "/etc/mydock-kiosk/vlc.flags." + more
+        )
     if live:
-        return "La chaîne ne répond pas (la Freebox est-elle allumée, et le Pi sur son réseau ?)."
-    return "VLC n'a pas pu lire cette vidéo (format, ou accès au partage)."
+        return (
+            "La chaîne ne répond pas (la Freebox est-elle allumée, et le Pi sur son réseau ?)."
+            + more
+        )
+    return "VLC n'a pas pu lire cette vidéo (format, ou accès au partage)." + more
 
 
 # --- VLC ---------------------------------------------------------------------------------------------------------------
@@ -235,7 +321,7 @@ class VlcPlayback:
         self._job = job
         self._procs: list[asyncio.subprocess.Process] = []
         self._rc: RcClient | None = None
-        self._rc_task: asyncio.Task[None] | None = None
+        self._drains: list[asyncio.Task[None]] = []
         self._stderr_tail = ""
         self._played = False
         self._paused = False
@@ -282,10 +368,11 @@ class VlcPlayback:
                     *ffmpeg_bridge_command(self._ffmpeg, self.url),
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=bridge_fd,
-                    stderr=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
                     start_new_session=True,
                 )
                 self._procs.append(bridge)
+                self._drains.append(asyncio.create_task(self._drain_stderr(bridge, "ffmpeg : ")))
             vlc = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=stdin if stdin is not None else asyncio.subprocess.DEVNULL,
@@ -299,13 +386,15 @@ class VlcPlayback:
             for fd in (stdin, bridge_fd):
                 if fd is not None:
                     os.close(fd)
-        self._rc_task = asyncio.create_task(self._drain_stderr(vlc))
+        self._drains.append(asyncio.create_task(self._drain_stderr(vlc)))
 
-    async def _drain_stderr(self, process: asyncio.subprocess.Process) -> None:
+    async def _drain_stderr(self, process: asyncio.subprocess.Process, label: str = "") -> None:
+        """Garde la fin de ce que le programme écrit : c'est elle qui dit pourquoi une lecture n'a pas démarré."""
         assert process.stderr is not None
         with contextlib.suppress(Exception):
             while line := await process.stderr.readline():
-                self._stderr_tail = (self._stderr_tail + line.decode("utf-8", "replace"))[-2000:]
+                text = line.decode("utf-8", "replace")
+                self._stderr_tail = (self._stderr_tail + (label + text if label else text))[-4000:]
 
     async def _connect_rc(self) -> RcClient | None:
         if self._rc is None and not self.finished:
@@ -388,19 +477,42 @@ class VlcPlayback:
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
-        if self._rc_task is not None:
-            self._rc_task.cancel()
+        for task in self._drains:
+            task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._rc_task
+                await task
         for path in (self._config, Path(self._socket)):
             if path is not None:
                 with contextlib.suppress(OSError):
                     path.unlink()
 
+    async def wait_output(self) -> None:
+        """Laisse finir la lecture de ce que VLC a écrit avant de s'arrêter (sans attendre un ffmpeg qui s'éterniserait)."""
+        pending = [task for task in self._drains if not task.done()]
+        if pending:
+            await asyncio.wait(pending, timeout=0.5)
+
     def error(self) -> str | None:
         if self._stopped:
             return None
-        return explain_exit(self._played, self.live, self._stderr_tail)
+        code = self._procs[-1].returncode if self._procs else None
+        message = explain_exit(self._played, self.live, self._stderr_tail, code)
+        if message is not None:
+            self._write_log(message, code)
+        return message
+
+    def _write_log(self, message: str, code: int | None) -> None:
+        """La dernière lecture ratée, en entier, pour qui voudrait comprendre : `cat $XDG_RUNTIME_DIR/mydock-player.log`."""
+        text = (
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')} : {message}\n"
+            f"Adresse : {self.url}\nCode de sortie de VLC : {code}\n\n{self._stderr_tail}\n"
+        )
+        try:
+            fd = os.open(self._dir / LOG_NAME, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        except OSError:
+            log.debug("Journal de la lecture illisible : %s", self._dir)
 
 
 class DemoPlayback:
@@ -709,6 +821,8 @@ class Session:
         try:
             while True:
                 if playback.finished:
+                    if (wait_output := getattr(playback, "wait_output", None)) is not None:
+                        await wait_output()
                     await self._ended(job, playback.error(), playback)
                     return
                 status = await playback.status()

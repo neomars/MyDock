@@ -615,6 +615,7 @@ def check_media(
     running: Callable[[], bool] = player_session_running,
     live555: Callable[[], bool] = player_session.has_live555,
     flags: Callable[[], list[str]] = player_session.read_flags,
+    plugin: Callable[[str], bool] = player_session.has_vlc_plugin,
 ) -> None:
     """Divertissement : VLC et ce qu'il faut autour, et les réglages (jamais le mot de passe)."""
     report.section("Divertissement (Freetv, Kiosque)")
@@ -638,6 +639,20 @@ def check_media(
             WARN,
             "VLC est absent : le Divertissement ne lira rien (sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output)",
         )
+    if vlc:
+        for name, why, package in (
+            ("smb", "lire les fichiers du Samba (Kiosque)", "vlc-plugin-samba"),
+            ("avcodec", "décoder les vidéos", "vlc-plugin-base"),
+        ):
+            if plugin(name):
+                report.add(OK, f"VLC sait {why}")
+            else:
+                report.add(WARN, f"VLC ne sait pas {why} : sudo apt install {package}")
+        if not any(plugin(name) for name in ("xcb_x11", "gl", "wl_shm", "xcb_xv")):
+            report.add(
+                WARN,
+                "VLC n'a aucun module d'affichage : sudo apt install vlc-plugin-video-output",
+            )
     switcher = "wlrctl" if which("wlrctl") else "xdotool" if which("xdotool") else None
     if switcher:
         report.add(OK, f"{switcher} présent (passer de la vidéo au dock)")

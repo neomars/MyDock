@@ -30,7 +30,10 @@ def config_for(tmp_path, **media) -> DockConfig:
 ALL = ("vlc", "ffmpeg", "wlrctl", "swayidle", "xwayland", "smbclient")
 
 
-def report_for(config, *, tools=ALL, running=True, live555=False, flags=()) -> str:
+PLUGINS = frozenset({"smb", "avcodec", "xcb_x11", "gl"})
+
+
+def report_for(config, *, tools=ALL, running=True, live555=False, flags=(), plugins=PLUGINS) -> str:
     report = Report()
     check_media(
         report,
@@ -39,6 +42,7 @@ def report_for(config, *, tools=ALL, running=True, live555=False, flags=()) -> s
         running=lambda: running,
         live555=lambda: live555,
         flags=lambda: list(flags),
+        plugin=lambda name: name in plugins,
     )
     return report.render()
 
@@ -55,6 +59,50 @@ def test_everything_in_place_is_green(tmp_path):
     assert "✔ L'assistant de lecture tourne" in out
     assert "⚠" not in out
     assert "XWayland est absent" not in out
+
+
+def test_vlc_modules_are_checked_one_by_one_with_the_package_that_brings_them(tmp_path):
+    out = report_for(config_for(tmp_path))
+    assert "✔ VLC sait lire les fichiers du Samba" in out
+    assert "✔ VLC sait décoder les vidéos" in out
+    assert "aucun module d'affichage" not in out
+    out = report_for(config_for(tmp_path), plugins=frozenset({"avcodec", "xcb_x11"}))
+    assert (
+        "⚠ VLC ne sait pas lire les fichiers du Samba (Kiosque) : sudo apt install vlc-plugin-samba"
+        in out
+    )
+    out = report_for(config_for(tmp_path), plugins=frozenset({"smb", "xcb_x11"}))
+    assert "⚠ VLC ne sait pas décoder les vidéos : sudo apt install vlc-plugin-base" in out
+    out = report_for(config_for(tmp_path), plugins=frozenset({"smb", "avcodec"}))
+    assert "⚠ VLC n'a aucun module d'affichage : sudo apt install vlc-plugin-video-output" in out
+
+
+def test_without_vlc_its_modules_are_not_blamed(tmp_path):
+    out = report_for(
+        config_for(tmp_path),
+        tools=("ffmpeg", "wlrctl", "swayidle", "smbclient"),
+        plugins=frozenset(),
+    )
+    assert "⚠ VLC est absent" in out
+    assert "VLC ne sait pas" not in out
+
+
+def test_the_modules_are_looked_for_in_the_plugin_directories(monkeypatch):
+    from mydock_dock import player_session
+
+    seen: list[str] = []
+    monkeypatch.setattr(player_session.glob, "glob", lambda pattern: seen.append(pattern) or [])
+    assert player_session.has_vlc_plugin("smb") is False
+    assert seen == [
+        "/usr/lib/*/vlc/plugins/*/libsmb_plugin.so",
+        "/usr/lib/vlc/plugins/*/libsmb_plugin.so",
+    ]
+    monkeypatch.setattr(
+        player_session.glob,
+        "glob",
+        lambda pattern: ["/usr/lib/x/vlc/plugins/access/libsmb_plugin.so"],
+    )
+    assert player_session.has_vlc_plugin("smb") is True
 
 
 def test_without_the_rtsp_module_the_channels_go_through_ffmpeg(tmp_path):

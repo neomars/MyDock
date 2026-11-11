@@ -8,7 +8,7 @@
   import MediaRemote from '../components/MediaRemote.svelte'
   import MediaTv from '../components/MediaTv.svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import { playerActive, type MediaView } from '../lib/media'
+  import { playerActive, splitFailure, type MediaView } from '../lib/media'
   import { media } from '../lib/media.svelte'
   import { sock } from '../lib/socket.svelte'
 
@@ -37,6 +37,7 @@
 
   const TITLES: Record<View, string> = { menu: 'Divertissement', tv: 'Freetv', files: 'Kiosque', remote: 'Lecture en cours' }
   const failed = $derived(player?.state === 'error' ? player.error : null)
+  const failure = $derived(failed ? splitFailure(failed) : null)
 </script>
 
 {#if view !== 'remote' || !active}
@@ -60,7 +61,8 @@
   {#if failed}
     <section class="card failed" data-testid="media-error">
       <h2>La lecture a échoué</h2>
-      <p>{failed}</p>
+      <p data-testid="media-error-text">{failure?.main}</p>
+      {#if failure?.detail}<p class="detail dim" data-testid="media-error-detail">{failure.detail}</p>{/if}
       <button class="btn" data-testid="media-error-ok" onclick={() => media.control('dismiss')}>Compris</button>
     </section>
   {/if}
@@ -150,5 +152,13 @@
   .failed h2 {
     color: var(--warn);
     margin: 0;
+  }
+  .failed p {
+    margin: 0;
+  }
+  .detail {
+    font-size: var(--fs-cap);
+    line-height: 1.25;
+    overflow-wrap: anywhere;
   }
 </style>

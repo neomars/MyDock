@@ -6,6 +6,7 @@ import contextlib
 import http.server
 import socket
 import threading
+import urllib.request
 
 import pytest
 
@@ -227,6 +228,82 @@ def test_an_address_outside_the_local_network_is_refused(monkeypatch):
     )
     with pytest.raises(FreeboxError, match="pas sur le réseau local"):
         freebox.fetch_playlist("http://exemple.test/playlist.m3u")
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self, limit: int = -1) -> bytes:
+        return self._body[:limit] if limit >= 0 else self._body
+
+
+def _answers_with(monkeypatch, address: str, body: bytes = PLAYLIST.encode()) -> list[str]:
+    """Le nom mène à `address` ; rien n'est contacté pour de vrai : la liste est « lue » depuis `body`."""
+    asked: list[str] = []
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 80))],
+    )
+
+    class Opener:
+        def open(self, request, timeout=None):
+            asked.append(request.full_url)
+            return _FakeResponse(body)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *a, **k: Opener())
+    return asked
+
+
+def test_the_official_freebox_name_is_read_although_it_resolves_to_a_public_address(monkeypatch):
+    """« mafreebox.freebox.fr » mène à 212.27.38.253 : une adresse publique, que la box sert chez toi."""
+    asked = _answers_with(monkeypatch, "212.27.38.253")
+    text = freebox.fetch_playlist(freebox.DEFAULT_PLAYLIST_URL)
+    assert "TF1" in text
+    assert asked == [freebox.DEFAULT_PLAYLIST_URL]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://MaFreeBox.Freebox.fr/freeboxtv/playlist.m3u",  # la casse ne compte pas
+        "http://mafreebox.freebox.fr./freeboxtv/playlist.m3u",  # ni le point final
+    ],
+)
+def test_the_official_name_is_recognised_whatever_its_spelling(monkeypatch, url):
+    _answers_with(monkeypatch, "212.27.38.253")
+    assert "TF1" in freebox.fetch_playlist(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://autre.freebox.fr/freeboxtv/playlist.m3u",  # seul le nom officiel est connu
+        "http://mafreebox.freebox.fr.exemple.test/playlist.m3u",  # un nom qui le contient n'est pas lui
+        "http://exemple.test/mafreebox.freebox.fr/playlist.m3u",
+    ],
+)
+def test_any_other_name_that_resolves_to_a_public_address_is_still_refused(monkeypatch, url):
+    asked = _answers_with(monkeypatch, "212.27.38.253")
+    with pytest.raises(FreeboxError, match="pas sur le réseau local"):
+        freebox.fetch_playlist(url)
+    assert asked == []
+
+
+def test_the_official_name_that_does_not_resolve_says_the_box_may_be_elsewhere(monkeypatch):
+    def refuse(*a, **k):
+        raise socket.gaierror("inconnu")
+
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    with pytest.raises(FreeboxError, match="même réseau"):
+        freebox.fetch_playlist(freebox.DEFAULT_PLAYLIST_URL)
 
 
 def test_a_name_with_one_public_address_among_local_ones_is_refused(monkeypatch):

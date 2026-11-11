@@ -12,6 +12,7 @@ import {
   playerActive,
   playerBlocker,
   progressRatio,
+  splitFailure,
   stateText,
   whereText,
 } from './media'
@@ -138,5 +139,24 @@ describe('ce qui empêche de lire', () => {
     expect(playerBlocker(player({ available: false, helper: null }))).toContain('assistant de lecture')
     expect(playerBlocker(player({ helper: { vlc: false, live555: false, ffmpeg: true, touch: true, demo: false } }))).toContain('VLC est absent')
     expect(playerBlocker(player({ helper: { vlc: true, live555: false, ffmpeg: true, touch: false, demo: false } }))).toContain('swayidle')
+  })
+})
+
+describe('l’échec d’une lecture', () => {
+  it('sépare la phrase du détail de VLC', () => {
+    expect(splitFailure("Accès refusé au partage : vérifie l'identifiant. Détail : « smb stream error: open failed (Permission denied) ».")).toEqual({
+      main: "Accès refusé au partage : vérifie l'identifiant.",
+      detail: 'smb stream error: open failed (Permission denied)',
+    })
+  })
+  it('garde un message sans détail tel quel', () => {
+    expect(splitFailure('La lecture n’a pas démarré.')).toEqual({ main: 'La lecture n’a pas démarré.', detail: null })
+    expect(splitFailure('')).toEqual({ main: '', detail: null })
+  })
+  it('supporte un détail tronqué par le dock (sans la fin « »)', () => {
+    expect(splitFailure('Phrase. Détail : « début de ligne').detail).toBeNull()
+  })
+  it('ne coupe pas un message où « Détail » apparaît ailleurs', () => {
+    expect(splitFailure('Le détail est dans Détail : le journal').detail).toBeNull()
   })
 })

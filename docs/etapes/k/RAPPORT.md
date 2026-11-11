@@ -89,3 +89,25 @@ Question que j'ai posée : **où la vidéo doit-elle s'afficher ?** Ta réponse 
 ## Pour aller plus loin
 
 Je n'ai pas inventé de fonction que tu n'as pas demandée. À toi de dire, après essai chez toi, si tu veux : un favori de chaînes, la reprise d'un film là où il s'est arrêté, les sous-titres, ou le choix de la piste audio.
+
+## Addendum 1 — version 1.6.1 : ce que tu as constaté sur ton Pi
+
+> « Les vidéos ne se lisent pas. On a bien accès aux répertoires partagés par la Freebox (login/pass). Le message d'erreur de lecture d'une vidéo : "VLC n'a pas pu lire cette vidéo (format, ou accès au partage)". Sur Freetv : "Les chaînes ne sont pas disponibles", alors que mon PC sur le même réseau accède au fichier http://mafreebox.freebox.fr/freeboxtv/playlist.m3u sans login/pass. »
+
+**1. Freetv — une cause trouvée et corrigée.** Le dock ne lisait la liste que depuis une adresse du réseau local. Or le nom que Free donne à la box, `mafreebox.freebox.fr`, se résout vers une adresse **publique** de Free (212.27.38.253), que la Freebox sert chez toi : le dock la prenait pour « hors du réseau local » et refusait de la lire. Mon banc n'avait aucun moyen de le voir (aucun accès à Internet, une liste d'essai sur 127.0.0.1). **Ce nom-là, et lui seul, est maintenant lu** ; une autre adresse doit toujours être privée, aucune redirection n'est suivie (7 tests). *Je n'ai pas pu vérifier que c'était bien le message que tu as eu* — tu n'as cité que le titre ; le texte sous le titre, ou le bouton « Tester Freetv et Kiosque » de Réglages, le dit précisément. Si l'écran affiche encore une erreur, dis-moi laquelle.
+
+**2. Kiosque — la cause n'est pas établie, mais l'écran va la dire.** Ce que j'ai vérifié sur le banc avec un **vrai Samba protégé par identifiant** et le vrai VLC : l'identifiant et le mot de passe arrivent bien à VLC (fichier de configuration en droits 600), un fichier au nom plein d'accents, de crochets, de parenthèses et de `#` se lit, et un identifiant erroné **faisait attendre VLC indéfiniment** (il attendait une saisie que personne ne peut faire) — corrigé. Le message que tu as reçu est celui de « VLC s'est arrêté sans avoir joué et n'a rien dit de reconnaissable » : ce n'est ni un accès refusé, ni un fichier introuvable (VLC les dit, et le dock les reconnaît). Je ne peux pas deviner la suite sans ton Pi : **ce que VLC a écrit était jeté**. Maintenant :
+
+- la phrase de l'écran nomme la cause quand VLC la donne : **accès refusé**, **fichier introuvable**, **module Samba absent** (`vlc-plugin-samba`), **codec qui manque ou trop lourd pour le Pi**, **affichage impossible** (`xwayland`), **plantage de VLC** avec le signal (souvent le décodage matériel : `--avcodec-hw=none` dans `/etc/mydock-kiosk/vlc.flags`) ;
+- **le dernier message de VLC s'affiche dessous, en petit** (pour une chaîne, celui de ffmpeg, qui était aussi jeté) ;
+- la dernière lecture ratée est gardée en entier dans `$XDG_RUNTIME_DIR/mydock-player.log` (droits 600, sans mot de passe) ;
+- `mydock-dock doctor` vérifie les modules de VLC (Samba, décodeurs, affichage) et dit quel paquet installer.
+
+**Ce que tu peux faire :** installer cette version, relancer une vidéo, et me copier **la ligne en petit sous la phrase** de l'écran. C'est elle qui dira si c'est le codec, le lecteur, l'affichage ou le partage.
+
+| Contrôle (1.6.1) | Résultat |
+|---|---|
+| Tests ajoutés | liste lue sous le nom officiel de la box et refusée sous un autre ; 11 explications d'échec ; détail de VLC sans adresse mémoire ni bruit ; journal en droits 600 sans mot de passe ; message de ffmpeg ; plantage par signal (vrai signal envoyé à un faux VLC) ; modules de VLC au diagnostic ; découpage phrase / détail à l'écran (Vitest) ; mise en page à 1024×600 (Playwright) |
+| Essais sur le banc (vrai VLC 3.0.20, vrai Samba) | identifiant juste : lit ; identifiant faux ou absent : échoue en moins d'une seconde (« Permission denied ») ; nom de fichier avec accents, crochets, `#` : lit |
+| Suites complètes | `ruff`, `shellcheck`, `svelte-check` propres ; Python **2 471 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 401 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : réussis ; Vitest **371 réussis** ; Playwright **279 réussis** |
+| Ce qui reste non vérifié | tout ce qui touche ton matériel : décodage, affichage et son sur le Pi, et ce que ton Samba de Freebox accepte |

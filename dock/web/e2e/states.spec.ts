@@ -1838,6 +1838,26 @@ test('Divertissement : une lecture qui échoue est dite dans le menu, et « Comp
   expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.dismiss' })
 })
 
+test('Divertissement : le détail que VLC a donné s’affiche à part, en plus petit, sans rien faire déborder', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  const detail = "smb stream error: open failed for 'Disque dur/Films/Un très long nom de film avec des accents (2020) [HD].mkv' (No such file or directory) ; main input error: VLC is unable to open"
+  mock.push('player', playerState({
+    state: 'error', front: 'dock', title: null, position: null, length: null,
+    error: `Fichier introuvable sur le partage (le nom, les droits d'accès, ou le serveur qui ne répond pas). Détail : « ${detail} ».`,
+  })) // prettier-ignore
+  await expect(page.getByTestId('media-error-text')).toHaveText("Fichier introuvable sur le partage (le nom, les droits d'accès, ou le serveur qui ne répond pas).")
+  await expect(page.getByTestId('media-error-detail')).toContainText('No such file or directory')
+  await noPageScroll(page) // 1024 × 600 : jamais de défilement de la page
+  await expect(page.getByTestId('media-error-ok')).toBeInViewport()
+  const sizes = await page.evaluate(() => ({
+    text: parseFloat(getComputedStyle(document.querySelector('[data-testid=media-error-text]')!).fontSize),
+    detail: parseFloat(getComputedStyle(document.querySelector('[data-testid=media-error-detail]')!).fontSize),
+  }))
+  expect(sizes.detail).toBeLessThan(sizes.text)
+  await shot(page, '11-lecture-echouee-detail-de-vlc', 'k')
+})
+
 test('Divertissement : sans assistant de lecture, les listes disent ce qui manque au lieu de proposer des boutons inutiles', async ({ page, stack }) => {
   const mock = await mockDock(page, {}, { startPage: 'media' })
   await page.goto(stack.url)
