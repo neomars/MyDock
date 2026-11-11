@@ -188,12 +188,14 @@ class Stack:
             build_client_package(self.clients)
         # Divertissement sans Freebox : sa liste de chaînes en local, et un faux « smbclient » (scripts/demo) en tête du PATH.
         freebox_port = free_port()
-        self.freebox = FakeFreebox(freebox_port, ROOT / "scripts" / "demo" / "freebox-playlist.m3u")
+        self.freebox = FakeFreebox(
+            freebox_port, self.args.playlist or ROOT / "scripts" / "demo" / "freebox-playlist.m3u"
+        )
         self.freebox.start()
         command = [
             sys.executable, "-m", "mydock_dock", "init", "--config", str(config),
             "--playlist-url", f"http://127.0.0.1:{freebox_port}/freeboxtv/playlist.m3u",
-            "--smb-host", "freebox.demo",
+            "--smb-host", self.args.smb_host,
             "--state-dir", str(self.args.state_dir or self.tmp / "state"),
             "--web-dir", str(self.args.web_dir),
             "--clients-dir", str(self.clients), "--portal-port", str(self.portal_port),
@@ -209,7 +211,8 @@ class Stack:
             config.read_text().replace('listen_host = "0.0.0.0"', 'listen_host = "127.0.0.1"')
         )
         env["MYDOCK_WOL_TARGETS"] = self.args.wol_target
-        env["PATH"] = f"{ROOT / 'scripts' / 'demo'}{os.pathsep}{env.get('PATH', '')}"
+        if not self.args.real_smbclient:
+            env["PATH"] = f"{ROOT / 'scripts' / 'demo'}{os.pathsep}{env.get('PATH', '')}"
         self.dock = subprocess.Popen(
             [
                 sys.executable,
@@ -283,6 +286,22 @@ def main() -> int:
         help="dock neuf : aucun PC, un code d'association s'affiche",
     )
     parser.add_argument(
+        "--playlist", type=Path, help="la liste M3U servie en local comme celle de la Freebox"
+    )
+    parser.add_argument(
+        "--smb-host", default="freebox.demo", help="le serveur de fichiers (défaut : un faux)"
+    )
+    parser.add_argument(
+        "--real-smbclient",
+        action="store_true",
+        help="le vrai smbclient (défaut : un faux, sans réseau)",
+    )
+    parser.add_argument(
+        "--no-player",
+        action="store_true",
+        help="pas d'assistant de lecture simulé (on lance le vrai)",
+    )
+    parser.add_argument(
         "--state-dir",
         type=Path,
         help="dossier d'état du dock : réglages, vidéos de l'économiseur (défaut : un dossier temporaire de la pile)",
@@ -311,7 +330,8 @@ def main() -> int:
     try:
         stack.start_agent()
         stack.start_dock()
-        stack.start_player()
+        if not args.no_player:
+            stack.start_player()
         url = f"http://127.0.0.1:{args.dock_port}"
         if not wait_http(f"{url}/api/health"):
             print("Le serveur dock n'a pas démarré.", file=sys.stderr)

@@ -205,7 +205,7 @@ class PlayerHub:
             )
         if not helper.info.get("touch", False):
             raise PlayerError(
-                "Il manque swayidle ou wlrctl pour revenir au dock d'un toucher : "
+                "Il manque swayidle, ou wlrctl (ou xdotool), pour revenir au dock d'un toucher : "
                 "sudo apt install swayidle wlrctl (la vidéo plein écran garderait l'écran)."
             )
         self.job += 1

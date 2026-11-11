@@ -373,6 +373,90 @@ async def test_a_vlc_that_gives_up_is_explained_from_what_it_said(fakes, monkeyp
     await pb.stop()
 
 
+# --- les fenêtres : wlrctl, ou xdotool à défaut ---------------------------------------------------------------------------
+
+
+def fake_tool(tmp_path, name, body):
+    """Un faux outil : il note ses arguments dans <nom>.log et répond comme dit `body` (du shell)."""
+    script = tmp_path / name
+    script.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {tmp_path}/{name}.log\n{body}\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script
+
+
+def calls(tmp_path, name):
+    log = tmp_path / f"{name}.log"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+@pytest.fixture
+def only_tools(tmp_path, monkeypatch):
+    """Rien d'autre que ces faux outils dans le PATH : on choisit ce qui existe sur le « Pi »."""
+    real = shutil.which
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name, *a, **k: str(tmp_path / name) if (tmp_path / name).exists() else None,
+    )
+    return real
+
+
+async def test_the_windows_are_ordered_with_wlrctl_by_the_exact_names_it_lists(
+    tmp_path, only_tools
+):
+    fake_tool(
+        tmp_path,
+        "wlrctl",
+        'case "$1 $2" in "toplevel list") printf "chromium: Dock\\nVlc: MyDock\\n";; esac',
+    )
+    windows = ps.Windows({})
+    assert windows.available
+    assert await windows.focus("dock")
+    assert await windows.focus("video")
+    focused = [c for c in calls(tmp_path, "wlrctl") if c.startswith("toplevel focus")]
+    assert focused == ["toplevel focus app_id:chromium", "toplevel focus app_id:Vlc"]
+
+
+async def test_a_dock_window_with_any_other_name_is_still_found(tmp_path, only_tools):
+    fake_tool(
+        tmp_path,
+        "wlrctl",
+        'case "$1 $2" in "toplevel list") printf "Vlc: v\\nsuper-kiosque: Dock\\n";; esac',
+    )
+    assert await ps.Windows({}).focus("dock")
+    assert calls(tmp_path, "wlrctl")[-1] == "toplevel focus app_id:super-kiosque"
+
+
+async def test_without_wlrctl_xdotool_hides_and_shows_the_video_window(tmp_path, only_tools):
+    fake_tool(tmp_path, "xdotool", 'case "$1" in search) printf "8388608\\n8388610\\n";; esac')
+    windows = ps.Windows({})
+    assert windows.available
+    assert await windows.focus("dock")  # le dock revient : la vidéo est réduite
+    assert await windows.focus("video")  # la vidéo revient : on l'active
+    assert calls(tmp_path, "xdotool") == [
+        "search --class vlc", "windowminimize 8388608", "windowminimize 8388610",
+        "search --class vlc", "windowactivate 8388608", "windowactivate 8388610",
+    ]  # fmt: skip
+
+
+async def test_xdotool_takes_over_when_wlrctl_does_not_see_the_window(tmp_path, only_tools):
+    fake_tool(tmp_path, "wlrctl", "exit 0")  # ne liste aucune fenêtre
+    fake_tool(tmp_path, "xdotool", 'case "$1" in search) printf "42\\n";; esac')
+    assert await ps.Windows({}).focus("dock")
+    assert calls(tmp_path, "xdotool")[-1] == "windowminimize 42"
+
+
+async def test_no_tool_means_no_way_back_and_it_is_said(tmp_path, only_tools):
+    windows = ps.Windows({})
+    assert not windows.available
+    assert not await windows.focus("dock")
+
+
+async def test_a_tool_that_fails_is_not_a_crash(tmp_path, only_tools):
+    fake_tool(tmp_path, "xdotool", "exit 3")
+    assert not await ps.Windows({}).focus("dock")
+
+
 # --- l'assistant entier, avec de faux VLC, fenêtres et toucher ------------------------------------------------------------
 
 

@@ -796,7 +796,7 @@ class DockServer:
         elif not info["touch"]:
             result["player"] = {
                 "ok": False,
-                "text": "swayidle ou wlrctl manque : sudo apt install swayidle wlrctl.",
+                "text": "swayidle, ou wlrctl (ou xdotool), manque : sudo apt install swayidle wlrctl.",
             }
         else:
             result["player"] = {

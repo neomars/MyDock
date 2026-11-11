@@ -118,7 +118,7 @@ export function playerBlocker(player: PlayerSnapshot | null | undefined): string
   if (!player) return null // un dock plus ancien : on essaie, le dock répondra
   if (!player.available) return "L'assistant de lecture de l'écran ne répond pas : il démarre avec l'écran du dock."
   if (player.helper && !player.helper.vlc) return 'VLC est absent du Pi : sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output.'
-  if (player.helper && !player.helper.touch) return 'swayidle ou wlrctl manque sur le Pi : sudo apt install swayidle wlrctl.'
+  if (player.helper && !player.helper.touch) return 'swayidle, ou wlrctl (ou xdotool), manque sur le Pi : sudo apt install swayidle wlrctl.'
   return null
 }
 

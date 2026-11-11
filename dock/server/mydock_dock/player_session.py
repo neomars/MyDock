@@ -38,9 +38,9 @@ from typing import Any, Protocol
 log = logging.getLogger("mydock.player")
 
 DEFAULT_URL = "ws://127.0.0.1:8080/ws/player"
-FLAGS_FILE = (
-    "/etc/mydock-kiosk/vlc.flags"  # options supplémentaires de VLC, une par ligne (# = commentaire)
-)
+#: Options supplémentaires de VLC, une par ligne (# = commentaire) ; la variable donne un autre fichier (essais).
+FLAGS_FILE = "/etc/mydock-kiosk/vlc.flags"
+FLAGS_ENV = "MYDOCK_VLC_FLAGS"
 POLL_SECONDS = 1.0
 RC_WAIT = 20.0  # temps laissé à VLC pour ouvrir son socket de commande
 #: Après être passé à la vidéo, un toucher n'est pas pris pour une demande de retour au dock (c'est celui qui l'a lancée).
@@ -71,7 +71,8 @@ def needs_bridge(url: str, live555: bool) -> bool:
     return url.lower().startswith("rtsp://") and not live555
 
 
-def read_flags(path: str = FLAGS_FILE) -> list[str]:
+def read_flags(path: str | None = None) -> list[str]:
+    path = path or os.environ.get(FLAGS_ENV) or FLAGS_FILE
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -458,22 +459,27 @@ class DemoPlayback:
 
 
 class Windows:
-    """Quelle fenêtre est devant : la vidéo (VLC) ou le dock (Chromium), par `wlrctl`."""
+    """Quelle fenêtre est devant : la vidéo (VLC) ou le dock (Chromium).
+
+    Par `wlrctl` (le protocole « foreign-toplevel » de labwc) ; à défaut, par `xdotool` sur la fenêtre de VLC, qui passe
+    par XWayland : le dock revient devant en la réduisant, la vidéo revient en l'activant.
+    """
 
     def __init__(self, env: dict[str, str]) -> None:
         self._env = env
         self._wlrctl = shutil.which("wlrctl")
+        self._xdotool = shutil.which("xdotool")
 
     @property
     def available(self) -> bool:
-        return self._wlrctl is not None
+        return self._wlrctl is not None or self._xdotool is not None
 
-    async def _run(self, *args: str) -> tuple[int, str]:
-        if self._wlrctl is None:
+    async def _run(self, tool: str | None, *args: str) -> tuple[int, str]:
+        if tool is None:
             return 1, ""
         try:
             process = await asyncio.create_subprocess_exec(
-                self._wlrctl, *args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+                tool, *args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, env=self._env,
             )  # fmt: skip
             out, _ = await asyncio.wait_for(process.communicate(), 4)
@@ -482,7 +488,7 @@ class Windows:
         return process.returncode or 0, out.decode("utf-8", "replace")
 
     async def toplevels(self) -> list[tuple[str, str]]:
-        code, out = await self._run("toplevel", "list")
+        code, out = await self._run(self._wlrctl, "toplevel", "list")
         found = []
         for line in out.splitlines():
             app_id, _, title = line.partition(": ")
@@ -492,6 +498,11 @@ class Windows:
 
     async def focus(self, which: str) -> bool:
         """`video` : la fenêtre de VLC ; `dock` : celle du navigateur du dock."""
+        if self._wlrctl is not None and await self._focus_wayland(which):
+            return True
+        return self._xdotool is not None and await self._focus_x11(which)
+
+    async def _focus_wayland(self, which: str) -> bool:
         windows = await self.toplevels()
         if which == "video":
             wanted = next((a for a, _ in windows if a.lower() in ("vlc", "org.videolan.vlc")), None)
@@ -501,8 +512,17 @@ class Windows:
             )
         if wanted is None:
             return False
-        code, _ = await self._run("toplevel", "focus", f"app_id:{wanted}")
+        code, _ = await self._run(self._wlrctl, "toplevel", "focus", f"app_id:{wanted}")
         return code == 0
+
+    async def _focus_x11(self, which: str) -> bool:
+        code, out = await self._run(self._xdotool, "search", "--class", "vlc")
+        ids = [i for i in out.split() if i.isdigit()]
+        if code != 0 or not ids:
+            return False
+        action = "windowactivate" if which == "video" else "windowminimize"
+        results = [await self._run(self._xdotool, action, i) for i in ids]
+        return all(c == 0 for c, _ in results)
 
 
 class TouchWatcher:
@@ -665,7 +685,7 @@ class Session:
             )
             playback = VlcPlayback(
                 url, live=live, volume=volume, vlc=self.vlc, ffmpeg=self.ffmpeg, live555=self.live555,
-                runtime_dir=self.runtime_dir, env=self.env, extra=self.extra, smb=smb, job=self._job,
+                runtime_dir=self.runtime_dir, env=session_environment(self.env), extra=self.extra, smb=smb, job=self._job,
             )  # fmt: skip
         try:
             await playback.start()
