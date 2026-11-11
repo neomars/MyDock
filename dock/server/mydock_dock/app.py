@@ -12,7 +12,10 @@ l'agent, qui reste seul juge (liste blanche, paramètres validés, confirmations
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import ipaddress
 import itertools
+import json
 import logging
 import socket
 import time
@@ -43,6 +46,7 @@ from mydock_dock.agent_link import (
 )
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig
+from mydock_dock.freebox import ChannelList, FreeboxError
 from mydock_dock.markets.diagnose import diagnose
 from mydock_dock.markets.errors import NotFound, ProviderError
 from mydock_dock.markets.factory import build_providers
@@ -50,7 +54,9 @@ from mydock_dock.markets.http import Fetcher
 from mydock_dock.markets.service import MarketsService, Timing
 from mydock_dock.netinfo import local_address_towards, local_ipv4_addresses
 from mydock_dock.pairing import Pairing, PairingRefused
+from mydock_dock.player import HelperConn, PlayerError, PlayerHub
 from mydock_dock.portal import Portal
+from mydock_dock.samba import SambaBrowser, SambaError, clean_path, clean_share, is_video, smb_url
 from mydock_dock.store import StateStore
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
 from mydock_dock.wol import send_magic_packet
@@ -127,6 +133,45 @@ class UiSetParams(_Strict):
     saver_aerial: StrictBool | None = None
     saver_apple: StrictBool | None = None
     saver_sources: list[str] | None = Field(default=None, max_length=20)
+    tv_hd: StrictBool | None = None
+
+
+class TvListParams(_Strict):
+    refresh: StrictBool = False
+
+
+class PlayParams(_Strict):
+    """Ce qu'on peut demander de lire : une chaîne que le dock a listée, ou un fichier d'un partage. Jamais une adresse."""
+
+    kind: Literal["tv", "file"]
+    id: str | None = Field(default=None, max_length=16)
+    hd: StrictBool | None = None
+    share: str | None = Field(default=None, max_length=255)
+    path: str | None = Field(default=None, max_length=1000)
+
+
+class PlayerSeekParams(_Strict):
+    delta: float = Field(strict=True, ge=-86_400, le=86_400)
+
+
+class PlayerVolumeParams(_Strict):
+    value: StrictInt = Field(ge=0, le=100)
+
+
+class PlayerFrontParams(_Strict):
+    to: Literal["video", "dock"]
+
+
+class MediaSetParams(_Strict):
+    playlist_url: str | None = Field(default=None, max_length=300)
+    smb_host: str | None = Field(default=None, max_length=253)
+    smb_user: str | None = Field(default=None, max_length=64)
+    smb_password: str | None = Field(default=None, max_length=128)
+
+
+class MediaBrowseParams(_Strict):
+    share: str = Field(max_length=255)
+    path: str = Field(default="", max_length=1000)
 
 
 class SaverForgetParams(_Strict):
@@ -217,6 +262,13 @@ class DockServer:
             timing=markets_timing,
             demo=config.demo_markets,
         )
+        self.channels = ChannelList(lambda: self.config.playlist_url)
+        self.samba = SambaBrowser(
+            lambda: self.config.smb_host,
+            lambda: self.config.smb_user,
+            lambda: self.config.smb_password,
+        )
+        self.player = PlayerHub(on_change=lambda: self.push_local("player"))
         self.link = AgentLink(
             self._link_settings,
             on_status=self._on_link_status,
@@ -274,6 +326,7 @@ class DockServer:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.portal.stop()
+        self.player.shutdown()
         self.markets.save()
         await self.link.close()
         for conn in tuple(self.browsers):
@@ -349,6 +402,17 @@ class DockServer:
             "demo": self.config.demo_markets,
         }
 
+    def media_info(self) -> dict[str, Any]:
+        """Divertissement, pour les Réglages : jamais le mot de passe, seulement s'il y en a un."""
+        cfg = self.config
+        return {
+            "playlist_url": cfg.playlist_url,
+            "smb_host": cfg.smb_host,
+            "smb_user": cfg.smb_user,
+            "smb_password_set": bool(cfg.smb_password),
+            "smbclient": self.samba.available(),
+        }
+
     def payload(self, topic: str) -> dict[str, Any]:
         if topic == "link":
             return self.link.status.to_dict()
@@ -368,9 +432,12 @@ class DockServer:
                 "markets": self.markets_info(),
                 "portal": self.portal_info(),
                 "pairing": self.pairing.info(),
+                "media": self.media_info(),
             }
         if topic == "ui":
             return self.store.ui
+        if topic == "player":
+            return self.player.snapshot()
         if topic == "markets":
             return self.markets.payload()
         raise KeyError(topic)
@@ -529,6 +596,20 @@ class DockServer:
         reg.register(
             "dock.saver.forget", self._act_saver_forget, params=SaverForgetParams, timeout=20.0
         )
+        reg.register("dock.tv.list", self._act_tv_list, params=TvListParams, timeout=20.0)
+        reg.register("dock.media.shares", self._act_media_shares, timeout=25.0)
+        reg.register(
+            "dock.media.browse", self._act_media_browse, params=MediaBrowseParams, timeout=25.0
+        )
+        reg.register("dock.media.set", self._act_media_set, params=MediaSetParams)
+        reg.register("dock.media.test", self._act_media_test, timeout=45.0)
+        reg.register("dock.player.play", self._act_player_play, params=PlayParams, timeout=20.0)
+        reg.register("dock.player.pause", self._act_player_pause)
+        reg.register("dock.player.stop", self._act_player_stop)
+        reg.register("dock.player.seek", self._act_player_seek, params=PlayerSeekParams)
+        reg.register("dock.player.volume", self._act_player_volume, params=PlayerVolumeParams)
+        reg.register("dock.player.front", self._act_player_front, params=PlayerFrontParams)
+        reg.register("dock.player.dismiss", self._act_player_dismiss)
         reg.register("dock.pairing.open", self._act_pairing_open)
         reg.register("dock.pairing.close", self._act_pairing_close)
         reg.register("dock.markets.set", self._act_markets_set, params=MarketsSetParams)
@@ -644,6 +725,176 @@ class DockServer:
         self._persist(apply)
         self.push_local("ui")
         return ui
+
+    # --- Divertissement : Freetv et Kiosque ---------------------------------------------------------
+
+    async def _act_tv_list(self, _ctx: ActionContext, params: TvListParams) -> dict[str, Any]:
+        """Les chaînes de la Freebox (sans leurs adresses de flux)."""
+        try:
+            channels, warning = await self.channels.get(refresh=params.refresh)
+        except FreeboxError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        return {"channels": [c.public() for c in channels], "warning": warning}
+
+    async def _act_media_shares(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        try:
+            shares = await self.samba.shares()
+        except SambaError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        return {"host": self.config.smb_host, "shares": shares}
+
+    async def _act_media_browse(
+        self, _ctx: ActionContext, params: MediaBrowseParams
+    ) -> dict[str, Any]:
+        try:
+            share, parts = clean_share(params.share), clean_path(params.path)
+            entries = await self.samba.listing(share, parts)
+        except SambaError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        return {"share": share, "path": "/".join(parts), "entries": [e.public() for e in entries]}
+
+    async def _act_media_set(self, _ctx: ActionContext, params: MediaSetParams) -> dict[str, Any]:
+        patch = params.model_dump(exclude_none=True)
+        self._persist(lambda: self.config.set_media(**patch))
+        self.push_local("dock")
+        return self.media_info()
+
+    async def _act_media_test(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        """Essaie chaque maillon (liste des chaînes, partages, lecteur) et dit en clair lequel ne va pas."""
+        result: dict[str, Any] = {}
+        try:
+            channels, warning = await self.channels.get(refresh=True)
+            result["tv"] = {
+                "ok": True,
+                "text": f"{len(channels)} chaînes lues.",
+                "warning": warning,
+            }
+        except FreeboxError as exc:
+            result["tv"] = {"ok": False, "text": str(exc)}
+        try:
+            shares = await self.samba.shares()
+            names = ", ".join(shares[:6]) + ("…" if len(shares) > 6 else "")
+            result["files"] = {
+                "ok": bool(shares),
+                "text": f"Partages : {names}."
+                if shares
+                else "Aucun partage visible (identifiant ?).",
+            }
+        except SambaError as exc:
+            result["files"] = {"ok": False, "text": str(exc)}
+        info = self.player.snapshot()["helper"]
+        if info is None:
+            result["player"] = {
+                "ok": False,
+                "text": "L'assistant de lecture ne répond pas (il démarre avec l'écran du dock).",
+            }
+        elif not info["vlc"]:
+            result["player"] = {
+                "ok": False,
+                "text": "VLC est absent : sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output.",
+            }
+        elif not info["touch"]:
+            result["player"] = {
+                "ok": False,
+                "text": "swayidle, ou wlrctl (ou xdotool), manque : sudo apt install swayidle wlrctl.",
+            }
+        else:
+            result["player"] = {
+                "ok": True,
+                "text": "VLC est prêt."
+                + (
+                    ""
+                    if info["live555"] or info["ffmpeg"]
+                    else " (ffmpeg manque : les chaînes ne passeront pas)"
+                ),
+            }
+        return result
+
+    async def _act_player_play(self, _ctx: ActionContext, params: PlayParams) -> dict[str, Any]:
+        try:
+            if params.kind == "tv":
+                media, url, secrets = await self._tv_request(params)
+            else:
+                media, url, secrets = self._file_request(params)
+            self.player.play(media, url, secrets=secrets)
+        except (PlayerError, SambaError, FreeboxError) as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        return {"started": media["title"]}
+
+    async def _tv_request(self, params: PlayParams) -> tuple[dict[str, Any], str, dict[str, str]]:
+        if not params.id:
+            raise PlayerError("Quelle chaîne ?")
+        channel = self.channels.find(params.id)
+        if channel is None:
+            await self.channels.get()
+            channel = self.channels.find(params.id)
+        if channel is None:
+            raise PlayerError("Cette chaîne n'est plus dans la liste de la Freebox.")
+        hd = self.store.ui["tv_hd"] if params.hd is None else params.hd
+        quality, url = channel.stream(hd=bool(hd))
+        number = f"{channel.number} · " if channel.number else ""
+        media = {
+            "kind": "tv",
+            "title": channel.name,
+            "subtitle": f"{number}{quality.upper() if quality != 'auto' else 'Direct'}",
+            "live": True,
+        }
+        return media, url, {}
+
+    def _file_request(self, params: PlayParams) -> tuple[dict[str, Any], str, dict[str, str]]:
+        if not params.share or not params.path:
+            raise PlayerError("Quel fichier ?")
+        share, parts = clean_share(params.share), clean_path(params.path)
+        if not parts or not is_video(parts[-1]):
+            raise PlayerError("Ce fichier n'est pas une vidéo.")
+        host = self.config.smb_host
+        if not host:
+            raise PlayerError(
+                "Aucun serveur de fichiers : renseigne-le dans Réglages → Divertissement."
+            )
+        stem = parts[-1].rsplit(".", 1)[0]
+        media = {
+            "kind": "file",
+            "title": stem,
+            "subtitle": "/".join([share, *parts[:-1]]),
+            "live": False,
+        }
+        secrets: dict[str, str] = {}
+        if self.config.smb_user:
+            secrets = {"smb_user": self.config.smb_user, "smb_password": self.config.smb_password}
+        return media, smb_url(host, share, parts), secrets
+
+    async def _player_command(self, name: str, **params: Any) -> dict[str, Any]:
+        try:
+            self.player.command(name, **params)
+        except PlayerError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        return {}
+
+    async def _act_player_pause(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        return await self._player_command("toggle")
+
+    async def _act_player_stop(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        return await self._player_command("stop")
+
+    async def _act_player_seek(
+        self, _ctx: ActionContext, params: PlayerSeekParams
+    ) -> dict[str, Any]:
+        return await self._player_command("seek", delta=params.delta)
+
+    async def _act_player_volume(
+        self, _ctx: ActionContext, params: PlayerVolumeParams
+    ) -> dict[str, Any]:
+        return await self._player_command("volume", value=params.value)
+
+    async def _act_player_front(
+        self, _ctx: ActionContext, params: PlayerFrontParams
+    ) -> dict[str, Any]:
+        return await self._player_command("front", to=params.to)
+
+    async def _act_player_dismiss(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        self.player.reset_error()
+        return {}
 
     async def _act_saver_forget(
         self, _ctx: ActionContext, params: SaverForgetParams
@@ -816,9 +1067,9 @@ def create_app(server: DockServer) -> FastAPI:
     @app.get("/api/screen")
     async def screen() -> JSONResponse:
         """La durée d'inactivité choisie dans les Réglages : le script de veille de l'écran la lit."""
-        return JSONResponse(
-            {"sleep_after": server.store.ui["screen_sleep"]}, headers={"Cache-Control": "no-store"}
-        )
+        # Pendant une lecture l'écran reste allumé : la veille attendrait que personne ne touche l'écran.
+        sleep_after = 0 if server.player.playing else server.store.ui["screen_sleep"]
+        return JSONResponse({"sleep_after": sleep_after}, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/screensaver")
     async def saver_list() -> JSONResponse:
@@ -847,6 +1098,20 @@ def create_app(server: DockServer) -> FastAPI:
         await ws.accept()
         await _serve_browser(server, ws)
 
+    @app.websocket("/ws/player")
+    async def ws_player(ws: WebSocket) -> None:
+        """L'assistant de lecture de l'écran (jamais un navigateur : ni Origin, ni autre adresse que locale)."""
+        host = ws.client.host if ws.client else ""
+        try:
+            local = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = False
+        if not local or "origin" in ws.headers:
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        await _serve_player(server, ws)
+
     web_dir = config.web_dir
     if web_dir is not None and (Path(web_dir) / "index.html").is_file():
         app.mount("/", WebFiles(directory=str(web_dir), html=True), name="web")
@@ -857,6 +1122,44 @@ def create_app(server: DockServer) -> FastAPI:
             return HTMLResponse(MISSING_WEB_PAGE.format(path=web_dir), status_code=503)
 
     return app
+
+
+MAX_PLAYER_MESSAGE = 16 * 1024
+
+
+async def _serve_player(server: DockServer, ws: WebSocket) -> None:
+    conn = HelperConn()
+    server.player.attach(conn)
+
+    async def write() -> None:
+        while (message := await conn.outbox.get()) is not None:
+            await ws.send_text(json.dumps(message, separators=(",", ":")))
+
+    async def read() -> None:
+        while True:
+            incoming = await ws.receive()
+            if incoming["type"] == "websocket.disconnect":
+                return
+            raw = incoming.get("text")
+            if not isinstance(raw, str) or len(raw) > MAX_PLAYER_MESSAGE:
+                continue
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(message, dict):
+                server.player.on_message(conn, message)
+
+    writer, reader = asyncio.create_task(write()), asyncio.create_task(read())
+    try:
+        await asyncio.wait({writer, reader}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in (reader, writer):
+            task.cancel()
+        await asyncio.gather(reader, writer, return_exceptions=True)
+        server.player.detach(conn)
+        with contextlib.suppress(Exception):
+            await ws.close()
 
 
 async def _serve_browser(server: DockServer, ws: WebSocket) -> None:

@@ -13,11 +13,14 @@ const PAGES: [id: string, label: string, shotName: string][] = [
   ['office', 'Office', '08-office'],
   ['markets', 'Bourse', '09-bourse'],
   ['system', 'Système', '10-systeme'],
-  ['power', 'Alimentation', '11-alimentation'],
+  ['media', 'Divertissement', '13-divertissement'],
   ['settings', 'Réglages', '12-reglages'],
 ]
 
 const DEFAULT_ORDER = PAGES.map(([id]) => id)
+
+/** L'alimentation n'a plus de gros bouton : on la parcourt à part, par le petit bouton de la barre du haut. */
+const POWER: [id: string, label: string, shotName: string] = ['power', 'Alimentation', '11-alimentation']
 
 type Box = { x: number; y: number; width: number; height: number }
 
@@ -130,7 +133,7 @@ test('Accueil : le bouton de la barre du haut n’apparaît que sur une page, et
 // --- le balayage de gauche à droite ----------------------------------------------------------------------------
 
 test('Balayage : de gauche à droite, chaque page revient à l’accueil', async ({ dock }) => {
-  for (const [id] of PAGES) {
+  for (const [id] of [...PAGES, POWER]) {
     await openPage(dock, id)
     await dock.waitForTimeout(450) // la page a fini de glisser, ses données sont arrivées
     const spot = await freeSpot(dock, 10) // le bord gauche de la page, hors de toute commande
@@ -260,7 +263,7 @@ test.describe('dock neuf', () => {
 // --- le texte doublé : chaque page tient dans l'écran ----------------------------------------------------------------
 
 test('Texte doublé : chaque page tient en largeur, sans défilement de l’écran, et se laisse photographier', async ({ dock }) => {
-  for (const [id, label, shotName] of PAGES) {
+  for (const [id, label, shotName] of [...PAGES, POWER]) {
     await openPage(dock, id)
     await dock.waitForTimeout(700) // pochettes et mesures arrivent
     expect(await overflowing(dock), `${label} : éléments coupés à droite`).toEqual([])

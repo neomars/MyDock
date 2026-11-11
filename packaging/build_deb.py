@@ -261,6 +261,7 @@ def stage_pi(root: Path, agent_deb: Path) -> None:
     pi = ROOT / "deploy" / "pi"
     _copy(pi / "kiosk-browser.sh", lib / "kiosk-browser.sh", 0o755)
     _copy(pi / "screen-sleep.sh", lib / "screen-sleep.sh", 0o755)
+    _copy(pi / "player-session.sh", lib / "player-session.sh", 0o755)
     _copy(pi / "setup.sh", lib / "setup", 0o755)
     _copy(pi / "mydock-kiosk.service", lib / "mydock-kiosk.service", 0o644)
     _copy(pi / "labwc" / "autostart", lib / "labwc" / "autostart", 0o644)

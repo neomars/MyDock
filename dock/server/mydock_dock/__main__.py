@@ -3,6 +3,7 @@
 mydock-dock run                 démarre le serveur (commande par défaut)
 mydock-dock init --pc ubuntu.local --token-stdin    crée ou met à jour la configuration
 mydock-dock doctor              diagnostic de l'installation
+mydock-dock player-session      l'assistant de lecture de l'écran (VLC), lancé par labwc
 """
 
 from __future__ import annotations
@@ -56,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--clients-dir", type=Path, help="dossier des paquets proposés au PC")
     init.add_argument("--state-dir", type=Path)
     init.add_argument("--web-dir", type=Path)
+    init.add_argument(
+        "--playlist-url", help="Divertissement : la liste M3U des chaînes de la Freebox"
+    )
+    init.add_argument(
+        "--smb-host", help="Divertissement : le serveur de fichiers Samba (la Freebox)"
+    )
     secret = init.add_mutually_exclusive_group()
     secret.add_argument(
         "--token-stdin", action="store_true", help="lit le jeton sur l'entrée standard"
@@ -83,6 +90,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     remove = saver_sub.add_parser("remove", help="retire une vidéo")
     remove.add_argument("name")
+
+    player = sub.add_parser(
+        "player-session",
+        help="l'assistant de lecture de l'écran du dock (lancé par labwc, pilote VLC)",
+        description="Tourne dans la session graphique du Pi : démarre VLC en plein écran quand le dock le demande.",
+    )
+    player.add_argument(
+        "--url", default=None, help="adresse du dock (ws://127.0.0.1:8080/ws/player)"
+    )
+    player.add_argument("--demo", action="store_true", help="lecture simulée, sans VLC (essais)")
+    player.add_argument("-v", "--verbose", action="store_true")
 
     doctor = sub.add_parser("doctor", help="diagnostic de l'installation")
     doctor.add_argument("--config", type=Path)
@@ -191,6 +209,8 @@ def cmd_init(args: argparse.Namespace) -> int:
             clients_dir=args.clients_dir,
             state_dir=args.state_dir,
             web_dir=args.web_dir,
+            playlist_url=args.playlist_url,
+            smb_host=args.smb_host,
         )
     except (ConfigError, ValidationFailure) as exc:
         print(f"Erreur : {exc}", file=sys.stderr)
@@ -212,6 +232,13 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_init(args)
     if args.command == "screensaver":
         return cmd_screensaver(args)
+    if args.command == "player-session":
+        from mydock_dock import player_session
+
+        forwarded = ["--url", args.url] if args.url else []
+        forwarded += ["--demo"] if args.demo else []
+        forwarded += ["-v"] if args.verbose else []
+        return player_session.main(forwarded)
     if args.command == "doctor":
         return run_doctor(args.config or default_config_path(), offline=args.offline)
     parser.error(f"commande inconnue : {args.command}")

@@ -1,3 +1,4 @@
-# Géré par MyDock : le navigateur du dock en kiosque, et la veille de son écran.
+# Géré par MyDock : le navigateur du dock en kiosque, la veille de son écran et l'assistant de lecture (Divertissement).
 @LIB@/kiosk-browser.sh &
 @LIB@/screen-sleep.sh &
+@LIB@/player-session.sh &

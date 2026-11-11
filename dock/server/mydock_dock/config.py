@@ -23,7 +23,13 @@
     [markets]
     finnhub_key = ""            # facultatif : clé gratuite finnhub.io, cotation de secours des actions
 
-Les clés d'API des fournisseurs de bourse vont dans la section [markets] de ce fichier (droits 600),
+    [media]                     # Divertissement : Freetv (chaînes de la Freebox) et Kiosque (partages Samba)
+    playlist_url = "http://mafreebox.freebox.fr/freeboxtv/playlist.m3u"
+    smb_host = "mafreebox.freebox.fr"
+    smb_user = ""               # vide = accès sans identifiant
+    smb_password = ""
+
+Les clés d'API des fournisseurs de bourse et le mot de passe du partage vont dans ce fichier (droits 600),
 jamais dans le dépôt, jamais dans un journal, jamais à l'écran. Yahoo Finance et Binance n'en
 demandent pas.
 """
@@ -40,6 +46,7 @@ from typing import Any
 
 from mydock_common.auth import is_valid_token_format
 from mydock_common.config import ConfigError, load_toml, write_toml_private
+from mydock_dock.freebox import DEFAULT_PLAYLIST_URL, valid_playlist_url
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
 
 DEFAULT_PORT = 8080
@@ -47,6 +54,7 @@ DEFAULT_PORTAL_PORT = 80
 DEFAULT_AGENT_PORT = 8765
 DEFAULT_STATE_DIR = Path("/var/lib/mydock")
 DEFAULT_CLIENTS_DIR = Path("/usr/share/mydock/clients")
+DEFAULT_SMB_HOST = "mafreebox.freebox.fr"
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 API_KEY_RE = re.compile(r"^[A-Za-z0-9_.~-]{8,128}$")
 
@@ -80,6 +88,10 @@ class DockConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     web_dir: Path | None = None
     finnhub_key: str = field(default="", repr=False)  # un secret : jamais dans un affichage
+    playlist_url: str = DEFAULT_PLAYLIST_URL
+    smb_host: str = DEFAULT_SMB_HOST
+    smb_user: str = ""
+    smb_password: str = field(default="", repr=False)  # un secret : jamais dans un affichage
     demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -101,6 +113,7 @@ class DockConfig:
         paths = _section(raw, "paths")
         portal = _section(raw, "portal")
         markets = _section(raw, "markets")
+        media = _section(raw, "media")
         try:
             listen_host = str(ipaddress.IPv4Address(str(server.get("listen_host", "127.0.0.1"))))
             port = validate_port(server.get("port", DEFAULT_PORT), "server.port")
@@ -125,6 +138,14 @@ class DockConfig:
             raise ConfigError(
                 "markets.finnhub_key est invalide (8 à 128 caractères : lettres, chiffres, . _ ~ -)."
             )
+        try:
+            playlist_url = valid_playlist_url(media.get("playlist_url") or DEFAULT_PLAYLIST_URL)
+            raw_smb_host = media.get("smb_host", DEFAULT_SMB_HOST)
+            smb_host = validate_host(raw_smb_host) if raw_smb_host else ""
+            smb_user = clean_smb_user(media.get("smb_user", ""))
+            smb_password = clean_smb_password(media.get("smb_password", ""))
+        except (ValueError, ValidationFailure) as exc:
+            raise ConfigError(f"[media] : {exc}") from None
         level = str(server.get("log_level", "INFO")).upper()
         if level not in LOG_LEVELS:
             raise ConfigError(f"server.log_level : « {level} » inconnu ({', '.join(LOG_LEVELS)}).")
@@ -145,6 +166,10 @@ class DockConfig:
             state_dir=Path(paths.get("state_dir", DEFAULT_STATE_DIR)),
             web_dir=Path(paths["web_dir"]) if paths.get("web_dir") else None,
             finnhub_key=finnhub_key,
+            playlist_url=playlist_url,
+            smb_host=smb_host,
+            smb_user=smb_user,
+            smb_password=smb_password,
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:
@@ -168,8 +193,8 @@ class DockConfig:
 
     def to_dict(self) -> dict[str, Any]:
         raw = copy.deepcopy(self._raw)
-        server, pc, paths, portal = (
-            raw.setdefault(name, {}) for name in ("server", "pc", "paths", "portal")
+        server, pc, paths, portal, media = (
+            raw.setdefault(name, {}) for name in ("server", "pc", "paths", "portal", "media")
         )
         server["listen_host"] = self.listen_host
         server["port"] = self.port
@@ -181,6 +206,10 @@ class DockConfig:
         pc["port"] = self.agent_port
         pc["token"] = self.token
         pc["wol_mac"] = self.wol_mac
+        media["playlist_url"] = self.playlist_url
+        media["smb_host"] = self.smb_host
+        media["smb_user"] = self.smb_user
+        media["smb_password"] = self.smb_password
         paths["state_dir"] = str(self.state_dir)
         if self.web_dir is not None:
             paths["web_dir"] = str(self.web_dir)
@@ -221,6 +250,65 @@ class DockConfig:
         self.wol_mac = normalize_mac(mac) if mac else ""
         self.save()
 
+    def set_media(
+        self,
+        *,
+        playlist_url: object = None,
+        smb_host: object = None,
+        smb_user: object = None,
+        smb_password: object = None,
+    ) -> None:
+        """Divertissement : l'adresse de la liste des chaînes, le serveur de fichiers et son identifiant (tout est
+        validé avant d'être gardé ; un champ absent (None) ne change pas)."""
+        try:
+            url = (
+                valid_playlist_url(playlist_url) if playlist_url is not None else self.playlist_url
+            )
+        except ValueError as exc:
+            raise ValidationFailure(str(exc)) from None
+        host = self.smb_host
+        if smb_host is not None:
+            host = validate_host(smb_host) if str(smb_host).strip() else ""
+        user = clean_smb_user(smb_user) if smb_user is not None else self.smb_user
+        password = (
+            clean_smb_password(smb_password) if smb_password is not None else self.smb_password
+        )
+        self.playlist_url, self.smb_host, self.smb_user, self.smb_password = (
+            url,
+            host,
+            user,
+            password,
+        )
+        self.save()
+
+
+def clean_smb_user(value: object) -> str:
+    """L'identifiant du partage : vide (accès libre) ou un nom sans « % » (séparateur du mot de passe) ni caractère de contrôle."""
+    if value is None or value == "":
+        return ""
+    if (
+        not isinstance(value, str)
+        or len(value.strip()) > 64
+        or "%" in value
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        raise ValidationFailure(
+            "L'identifiant du partage est invalide (64 caractères au plus, sans « % »)."
+        )
+    return value.strip()
+
+
+def clean_smb_password(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    if (
+        not isinstance(value, str)
+        or len(value) > 128
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        raise ValidationFailure("Le mot de passe du partage est invalide (128 caractères au plus).")
+    return value
+
 
 def _section(raw: dict[str, Any], name: str) -> dict[str, Any]:
     value = raw.get(name, {})
@@ -241,6 +329,8 @@ def init_config(
     clients_dir: Path | str | None = None,
     state_dir: Path | str | None = None,
     web_dir: Path | str | None = None,
+    playlist_url: str | None = None,
+    smb_host: str | None = None,
 ) -> DockConfig:
     """Crée ou met à jour la configuration (idempotent) ; ne change que ce qui est fourni."""
     path = Path(path) if path else default_config_path()
@@ -266,6 +356,11 @@ def init_config(
         config.state_dir = Path(state_dir)
     if web_dir is not None:
         config.web_dir = Path(web_dir)
+    if playlist_url is not None or smb_host is not None:
+        try:
+            config.set_media(playlist_url=playlist_url, smb_host=smb_host)
+        except ValidationFailure as exc:
+            raise ConfigError(f"Divertissement : {exc}") from None
     if config.portal_enabled and config.portal_port == config.port:
         raise ConfigError("Le port du portail doit différer de celui de l'interface.")
     config.save()

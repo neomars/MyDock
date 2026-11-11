@@ -22,6 +22,7 @@ Le Wake-on-LAN est aiguillé vers 127.0.0.1:9 (ou --wol-target) : aucun paquet n
 from __future__ import annotations
 
 import argparse
+import http.server
 import os
 import shutil
 import signal
@@ -98,6 +99,36 @@ class Blackhole(threading.Thread):
         self.join(timeout=2)
 
 
+class FakeFreebox(threading.Thread):
+    """La liste de chaînes de la Freebox (M3U), servie sur 127.0.0.1 : Freetv sans Freebox."""
+
+    def __init__(self, port: int, playlist: Path):
+        super().__init__(daemon=True)
+        body = playlist.read_bytes()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                found = self.path == "/freeboxtv/playlist.m3u"
+                self.send_response(200 if found else 404)
+                self.send_header("Content-Length", str(len(body) if found else 0))
+                self.end_headers()
+                if found:
+                    self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+
+    def run(self) -> None:
+        self.server.serve_forever()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.join(timeout=2)
+
+
 class Stack:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -105,6 +136,8 @@ class Stack:
         self.agent: subprocess.Popen[bytes] | None = None
         self.dock: subprocess.Popen[bytes] | None = None
         self.blackhole: Blackhole | None = None
+        self.freebox: FakeFreebox | None = None
+        self.player: subprocess.Popen[bytes] | None = None
         self.pending: set[str] = set()
         self.portal_port = args.portal_port or free_port()
         self.clients = Path(args.clients_dir) if args.clients_dir else self.tmp / "clients"
@@ -153,8 +186,16 @@ class Stack:
         if not self.args.clients_dir:
             self.clients.mkdir(parents=True, exist_ok=True)
             build_client_package(self.clients)
+        # Divertissement sans Freebox : sa liste de chaînes en local, et un faux « smbclient » (scripts/demo) en tête du PATH.
+        freebox_port = free_port()
+        self.freebox = FakeFreebox(
+            freebox_port, self.args.playlist or ROOT / "scripts" / "demo" / "freebox-playlist.m3u"
+        )
+        self.freebox.start()
         command = [
             sys.executable, "-m", "mydock_dock", "init", "--config", str(config),
+            "--playlist-url", f"http://127.0.0.1:{freebox_port}/freeboxtv/playlist.m3u",
+            "--smb-host", self.args.smb_host,
             "--state-dir", str(self.args.state_dir or self.tmp / "state"),
             "--web-dir", str(self.args.web_dir),
             "--clients-dir", str(self.clients), "--portal-port", str(self.portal_port),
@@ -170,6 +211,8 @@ class Stack:
             config.read_text().replace('listen_host = "0.0.0.0"', 'listen_host = "127.0.0.1"')
         )
         env["MYDOCK_WOL_TARGETS"] = self.args.wol_target
+        if not self.args.real_smbclient:
+            env["PATH"] = f"{ROOT / 'scripts' / 'demo'}{os.pathsep}{env.get('PATH', '')}"
         self.dock = subprocess.Popen(
             [
                 sys.executable,
@@ -187,8 +230,27 @@ class Stack:
             stderr=subprocess.STDOUT,
         )
 
+    def start_player(self) -> None:
+        """L'assistant de lecture de l'écran, en mode démonstration : une lecture simulée, sans VLC."""
+        self.player = subprocess.Popen(
+            [
+                sys.executable, "-m", "mydock_dock", "player-session", "--demo",
+                "--url", f"ws://127.0.0.1:{self.args.dock_port}/ws/player",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )  # fmt: skip
+
     def close(self) -> None:
         self.stop_agent()
+        if self.player and self.player.poll() is None:
+            self.player.terminate()
+            try:
+                self.player.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.player.kill()
+        if self.freebox:
+            self.freebox.close()
         if self.blackhole:
             self.blackhole.close()
         if self.dock and self.dock.poll() is None:
@@ -224,6 +286,22 @@ def main() -> int:
         help="dock neuf : aucun PC, un code d'association s'affiche",
     )
     parser.add_argument(
+        "--playlist", type=Path, help="la liste M3U servie en local comme celle de la Freebox"
+    )
+    parser.add_argument(
+        "--smb-host", default="freebox.demo", help="le serveur de fichiers (défaut : un faux)"
+    )
+    parser.add_argument(
+        "--real-smbclient",
+        action="store_true",
+        help="le vrai smbclient (défaut : un faux, sans réseau)",
+    )
+    parser.add_argument(
+        "--no-player",
+        action="store_true",
+        help="pas d'assistant de lecture simulé (on lance le vrai)",
+    )
+    parser.add_argument(
         "--state-dir",
         type=Path,
         help="dossier d'état du dock : réglages, vidéos de l'économiseur (défaut : un dossier temporaire de la pile)",
@@ -252,6 +330,8 @@ def main() -> int:
     try:
         stack.start_agent()
         stack.start_dock()
+        if not args.no_player:
+            stack.start_player()
         url = f"http://127.0.0.1:{args.dock_port}"
         if not wait_http(f"{url}/api/health"):
             print("Le serveur dock n'a pas démarré.", file=sys.stderr)

@@ -17,6 +17,14 @@
     untrack(() => screenSleep.setSaverDelay(seconds))
   })
 
+  // Une vidéo qui joue sur l'écran n'est pas un écran inactif : ni économiseur ni extinction tant qu'on regarde.
+  const watching = $derived(sock.player?.state === 'playing')
+  $effect(() => {
+    if (!watching) return
+    const timer = setInterval(() => screenSleep.activity(), 20_000)
+    return () => clearInterval(timer)
+  })
+
   // Tout toucher, geste ou touche repousse la veille : on ne note que l'heure, sans rien déclencher.
   $effect(() => {
     const used = () => screenSleep.activity()

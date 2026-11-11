@@ -155,6 +155,17 @@ export { expect }
  */
 export async function openPage(page: Page, id: string): Promise<void> {
   const home = page.getByTestId('home')
+  // L'alimentation n'a plus de gros bouton : c'est le petit bouton à droite de l'heure, présent sur toutes les pages.
+  if (id === 'power') {
+    if (await home.isVisible()) {
+      await page.getByTestId('topbar-power').tap()
+    } else if ((await page.getByTestId('page-power').count()) === 0) {
+      await page.getByTestId('topbar-power').tap()
+    }
+    await expect(page.getByTestId('page-power')).toBeVisible()
+    await expect(home).toHaveCount(0)
+    return
+  }
   if (!(await home.isVisible())) await goHome(page)
   await page.getByTestId(`tile-${id}`).tap()
   await expect(page.getByTestId(`page-${id}`)).toBeVisible()
@@ -221,7 +232,7 @@ export function rehashInterface(dir: string): void {
  * MYDOCK_SHOTS=j ne refait que les captures de l'étape j, MYDOCK_SHOTS=a, b, c, d, e, f, g, h ou i celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)

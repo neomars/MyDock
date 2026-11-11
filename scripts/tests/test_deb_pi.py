@@ -151,6 +151,24 @@ def test_optional_features_are_recommended_not_required(pi_deb):
     assert "wlopm" not in field(pi_deb, "Depends")
 
 
+def test_the_entertainment_programs_are_recommended(pi_deb):
+    """Divertissement : sans eux le reste du dock marche, et l'écran dit ce qui manque."""
+    recommends = field(pi_deb, "Recommends").split(", ")
+    for wanted in (
+        "vlc-bin",
+        "vlc-plugin-base",
+        "vlc-plugin-video-output",
+        "vlc-plugin-samba",
+        "smbclient",
+        "xwayland",
+    ):
+        assert wanted in recommends, wanted
+    assert "wlrctl | xdotool" in recommends  # changer de fenêtre : l'un ou l'autre
+    depends = field(pi_deb, "Depends")
+    assert "vlc" not in depends
+    assert "ffmpeg" in depends.split(", ")  # le pont vers VLC pour les chaînes
+
+
 def test_the_description_tells_where_to_go_next(pi_deb):
     description = field(pi_deb, "Description")
     assert "http://ADRESSE_DU_PI/" in description
@@ -199,6 +217,7 @@ EXPECTED = (
     "/usr/lib/mydock/lib.sh",
     "/usr/lib/mydock/kiosk-browser.sh",
     "/usr/lib/mydock/screen-sleep.sh",
+    "/usr/lib/mydock/player-session.sh",
     "/usr/lib/mydock/mydock-kiosk.service",
     "/usr/lib/mydock/labwc/autostart",
     "/usr/share/mydock/web/index.html",
@@ -212,6 +231,7 @@ EXECUTABLES = (
     "/usr/lib/mydock/setup",
     "/usr/lib/mydock/kiosk-browser.sh",
     "/usr/lib/mydock/screen-sleep.sh",
+    "/usr/lib/mydock/player-session.sh",
 )
 
 
@@ -270,11 +290,17 @@ def test_the_compiled_interface_is_the_one_of_the_repository(extracted):
 
 def test_the_kiosk_scripts_are_the_ones_of_the_repository(extracted):
     lib = extracted / "usr/lib/mydock"
-    for name in ("kiosk-browser.sh", "screen-sleep.sh", "mydock-kiosk.service"):
+    for name in (
+        "kiosk-browser.sh",
+        "screen-sleep.sh",
+        "player-session.sh",
+        "mydock-kiosk.service",
+    ):
         assert (lib / name).read_bytes() == (ROOT / "deploy/pi" / name).read_bytes(), name
     assert (lib / "setup").read_bytes() == (ROOT / "deploy/pi/setup.sh").read_bytes()
     assert (lib / "lib.sh").read_bytes() == (ROOT / "deploy/lib.sh").read_bytes()
     assert "@LIB@/kiosk-browser.sh" in (lib / "labwc/autostart").read_text()
+    assert "@LIB@/player-session.sh" in (lib / "labwc/autostart").read_text()
 
 
 def test_the_build_is_reproducible(tmp_path):

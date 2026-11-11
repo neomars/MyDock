@@ -138,7 +138,7 @@ async function mockDock(
     received,
     push(topic, payload) {
       data[topic] = payload
-      if (current && (['link', 'dock', 'ui'].includes(topic) || subscribed.has(topic))) snap(current, topic, payload)
+      if (current && (['link', 'dock', 'ui', 'player'].includes(topic) || subscribed.has(topic))) snap(current, topic, payload)
     },
   }
 }
@@ -1376,12 +1376,12 @@ test('Alimentation : le dock ne demande les droits au PC que page ouverte', asyn
 
 // --- Pages visibles et ordre (étape f) --------------------------------------------------------------------
 
-const TAB_IDS = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings']
+const TAB_IDS = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'media', 'settings']
 
 test('Pages : l’accueil suit l’ordre et les pages cachées du dock', async ({ page, stack }) => {
-  await mockDock(page, {}, { startPage: 'home', ui: { order: ['power', 'markets'], hidden: ['steam', 'office'] } })
+  await mockDock(page, {}, { startPage: 'home', ui: { order: ['media', 'markets'], hidden: ['steam', 'office'] } })
   await page.goto(stack.url)
-  expect(await tileOrder(page)).toEqual(['power', 'markets', 'music', 'sound', 'apps', 'system', 'settings'])
+  expect(await tileOrder(page)).toEqual(['media', 'markets', 'music', 'sound', 'apps', 'system', 'settings'])
   await openPage(page, 'settings')
   await expect(page.getByTestId('pages-count')).toHaveText('7 pages visibles sur 9 (cachées : Steam, Office).')
 })
@@ -1418,18 +1418,18 @@ test('Pages : cacher, montrer, monter et descendre envoient la bonne liste au do
 
   await page.getByTestId('page-toggle-office').tap()
   await page.getByTestId('page-toggle-steam').tap()
-  await page.getByTestId('page-up-power').tap()
+  await page.getByTestId('page-up-media').tap()
   await page.getByTestId('page-down-music').tap()
   await expect.poll(() => mock.acts.filter((a) => a.a === 'dock.ui.set').length).toBe(4)
   const sent = mock.acts.filter((a) => a.a === 'dock.ui.set').map((a) => a.p)
   expect(sent[0]).toEqual({ hidden: ['steam', 'office'] })
   expect(sent[1]).toEqual({ hidden: [] })
-  expect(sent[2]).toEqual({ order: ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'power', 'system', 'settings'] })
-  expect(sent[3]).toEqual({ order: ['sound', 'music', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings'] })
+  expect(sent[2]).toEqual({ order: ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'media', 'system', 'settings'] })
+  expect(sent[3]).toEqual({ order: ['sound', 'music', 'apps', 'steam', 'office', 'markets', 'system', 'media', 'settings'] })
 })
 
 test('Pages : « ordre d’origine » rétablit tout, et n’est proposé que s’il y a quelque chose à rétablir', async ({ page, stack }) => {
-  const mock = await mockDock(page, {}, { startPage: 'settings', ui: { order: ['power'] } })
+  const mock = await mockDock(page, {}, { startPage: 'settings', ui: { order: ['media'] } })
   await page.goto(stack.url)
   await page.getByTestId('choose-pages').tap()
   await page.getByTestId('pages-reset').tap()
@@ -1444,7 +1444,7 @@ test('Pages : l’accueil suit aussitôt ce que le dock enregistre', async ({ pa
   await page.goto(stack.url)
   expect(await tileOrder(page)).toEqual(TAB_IDS)
   mock.push('ui', { last_page: 'settings', order: ['system'], hidden: ['steam'], pinned_apps: [] })
-  await expect.poll(() => tileOrder(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'power', 'settings'])
+  await expect.poll(() => tileOrder(page)).toEqual(['system', 'music', 'sound', 'apps', 'office', 'markets', 'media', 'settings'])
 })
 
 test('Pages : une modification refusée par le dock est expliquée', async ({ page, stack }) => {
@@ -1789,4 +1789,64 @@ test('Sortie sonore : un appareil disparu pendant qu’on le touche relit la lis
   await expect(page.getByTestId('toast')).toContainText('n’est plus visible')
   await expect.poll(() => listed).toBeGreaterThan(before)
   expect(mock.acts.filter((a) => a.a === 'spotify.transfer')).toHaveLength(1)
+})
+
+// --- Divertissement : la télécommande et la lecture, avec un faux dock ----------------------------------------------------
+
+const PLAYER_HELPER = { vlc: true, live555: false, ffmpeg: true, touch: true, demo: false }
+const playerState = (extra: Record<string, unknown> = {}) => ({
+  available: true, state: 'playing', kind: 'file', title: 'Un film', subtitle: 'Disque dur/Films', live: false,
+  position: 120, length: 5400, volume: 70, front: 'video', error: null, helper: PLAYER_HELPER, ...extra,
+}) // prettier-ignore
+
+test('Divertissement : un toucher pendant la vidéo ramène la télécommande, quelle que soit la page affichée', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'home' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ front: 'video' })) // VLC joue en plein écran : le dock est derrière
+  await expect(page.getByTestId('tile-media-sub')).toHaveText('Un film')
+  await expect(page.getByTestId('home')).toBeVisible() // rien ne s'ouvre tant que la vidéo est devant
+
+  await openPage(page, 'settings') // le dock était sur une autre page quand on a touché l'écran
+  mock.push('player', playerState({ front: 'dock' })) // swayidle a vu le toucher : labwc remet le dock devant
+  await expect(page.getByTestId('remote')).toBeVisible()
+  await expect(page.getByTestId('page-media')).toBeVisible()
+  await expect(page.getByTestId('remote-title')).toHaveText('Un film')
+  await expect(page.getByTestId('remote-state')).toContainText('2:00 / 1:30:00')
+  await noPageScroll(page)
+
+  await page.getByTestId('remote-video').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.front', p: { to: 'video' } })
+  await page.getByTestId('remote-toggle').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.pause' })
+  await page.getByTestId('remote-fwd').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.seek', p: { delta: 30 } })
+  await page.getByTestId('remote-stop').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.stop' })
+
+  mock.push('player', playerState({ state: 'idle', title: null, subtitle: null, position: null, length: null, front: 'dock' }))
+  await expect(page.getByTestId('remote')).toHaveCount(0) // la lecture est finie : on retrouve le menu
+  await expect(page.getByTestId('media-tv')).toBeVisible()
+})
+
+test('Divertissement : une lecture qui échoue est dite dans le menu, et « Compris » l’efface', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ state: 'error', error: 'Accès refusé au fichier : vérifie l’identifiant du partage.', front: 'dock', title: null, position: null, length: null }))
+  await expect(page.getByTestId('media-error')).toContainText('Accès refusé au fichier')
+  await expect(page.getByTestId('remote')).toHaveCount(0)
+  await page.getByTestId('media-error-ok').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.dismiss' })
+})
+
+test('Divertissement : sans assistant de lecture, les listes disent ce qui manque au lieu de proposer des boutons inutiles', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock' }), available: false, helper: null })
+  await page.getByTestId('media-tv').tap()
+  await expect(page.getByTestId('tv-blocker')).toContainText('assistant de lecture')
+  await expect(page.getByTestId('tv-count')).toContainText('aucune chaîne') // le faux dock ne donne aucune chaîne : pas de plantage
+  await page.getByTestId('media-back').tap()
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock' }), helper: { ...PLAYER_HELPER, vlc: false } })
+  await page.getByTestId('media-files').tap()
+  await expect(page.getByTestId('files-blocker')).toContainText('VLC est absent')
 })

@@ -29,5 +29,5 @@ ignore = [
 known-first-party = ["mydock_agent", "mydock_common", "mydock_dock"]
 
 [tool.ruff.lint.per-file-ignores]
-"**/tests/**" = ["B011", "RUF012"]
+"**/tests/**" = ["B011", "RUF012", "ASYNC110", "ASYNC240"]  # les essais attendent et touchent des fichiers sans souci
 "**/testing.py" = ["ASYNC109", "ASYNC110"]  # aides de test : attente active assumée

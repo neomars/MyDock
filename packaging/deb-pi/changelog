@@ -1,3 +1,27 @@
+mydock (1.6.0) unstable; urgency=medium
+
+  * Divertissement : un nouveau bouton d'accueil à la place d'« Alimentation ». Il ouvre deux lecteurs, lus par VLC
+    sur l'écran du dock : « Freetv » (les chaînes de la Freebox, d'après sa liste http://mafreebox.freebox.fr/freeboxtv/
+    playlist.m3u : recherche par nom ou par numéro, qualité standard ou HD) et « Kiosque » (les partages Samba de la
+    Freebox : on parcourt les dossiers et on lance une vidéo). Pendant la lecture, un toucher ramène le dock avec sa
+    télécommande (pause, saut de 30 s ou 5 min, volume, « Revenir à la vidéo », « Arrêter ») ; la vidéo continue derrière.
+  * Alimentation : le bouton quitte l'accueil et devient un petit bouton à droite de l'heure, sur toutes les pages. L'ordre
+    des pages choisi dans Réglages est conservé (Divertissement prend la place d'Alimentation).
+  * Réglages → Divertissement : adresse de la liste des chaînes, serveur de fichiers, identifiant et mot de passe (saisi au
+    clavier tactile, gardé en droits 600 dans /etc/mydock/dock.toml, jamais affiché ni journalisé), bouton d'essai.
+  * Un assistant de lecture (player-session.sh) est lancé par le kiosque à côté du navigateur : VLC doit tourner dans la
+    session de l'écran. Il se connecte au dock en local seulement (127.0.0.1) et ne reçoit une adresse qu'au moment de
+    lire. Le dock ne lui donne jamais le jeton du PC. Le paquet recommande vlc-bin, vlc-plugin-base,
+    vlc-plugin-video-output, vlc-plugin-samba, smbclient, xwayland et wlrctl (ou xdotool) ; /etc/mydock-kiosk/vlc.flags
+    ajoute des options à VLC ; l'utilisateur du kiosque (mode systemd) rejoint le groupe audio.
+  * mydock-dock doctor : nouvelle section « Divertissement » (VLC, module RTSP ou pont ffmpeg, changement de fenêtre,
+    swayidle, smbclient, réglages sans le mot de passe, liste des chaînes et partages de la Freebox).
+  * Après une mise à jour depuis 1.5.x : redémarrer le Pi une fois, pour que l'assistant de lecture démarre avec
+    la session de l'écran.
+  * Nouvelle version : 1.5.2 -> 1.6.0 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 11 Nov 2026 12:00:00 +0000
+
 mydock (1.5.2) unstable; urgency=medium
 
   * Économiseur d'écran : les vues aériennes d'Apple se téléchargent enfin sur le Pi. Leur serveur (sylvan.apple.com)

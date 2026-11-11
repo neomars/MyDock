@@ -1,0 +1,127 @@
+#EXTM3U
+#EXTINF:0,1 - TF1
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=ld
+#EXTINF:0,1 - TF1 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=sd
+#EXTINF:0,2 - France 2
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=202&flavour=ld
+#EXTINF:0,2 - France 2 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=202&flavour=sd
+#EXTINF:0,3 - France 3
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=203&flavour=ld
+#EXTINF:0,3 - France 3 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=203&flavour=sd
+#EXTINF:0,3 - France 3 (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=203&flavour=hd
+#EXTINF:0,4 - Canal+
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=204&flavour=ld
+#EXTINF:0,4 - Canal+ (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=204&flavour=sd
+#EXTINF:0,5 - France 5
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=205&flavour=ld
+#EXTINF:0,5 - France 5 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=205&flavour=sd
+#EXTINF:0,6 - M6
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=206&flavour=ld
+#EXTINF:0,6 - M6 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=206&flavour=sd
+#EXTINF:0,6 - M6 (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=206&flavour=hd
+#EXTINF:0,7 - Arte
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=207&flavour=ld
+#EXTINF:0,7 - Arte (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=207&flavour=sd
+#EXTINF:0,8 - C8
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=208&flavour=ld
+#EXTINF:0,8 - C8 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=208&flavour=sd
+#EXTINF:0,9 - W9
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=209&flavour=ld
+#EXTINF:0,9 - W9 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=209&flavour=sd
+#EXTINF:0,9 - W9 (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=209&flavour=hd
+#EXTINF:0,10 - TMC
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=210&flavour=ld
+#EXTINF:0,10 - TMC (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=210&flavour=sd
+#EXTINF:0,11 - TFX
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=211&flavour=ld
+#EXTINF:0,11 - TFX (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=211&flavour=sd
+#EXTINF:0,12 - NRJ 12
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=212&flavour=ld
+#EXTINF:0,12 - NRJ 12 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=212&flavour=sd
+#EXTINF:0,12 - NRJ 12 (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=212&flavour=hd
+#EXTINF:0,13 - LCP
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=213&flavour=ld
+#EXTINF:0,13 - LCP (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=213&flavour=sd
+#EXTINF:0,14 - France 4
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=214&flavour=ld
+#EXTINF:0,14 - France 4 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=214&flavour=sd
+#EXTINF:0,15 - BFM TV
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=215&flavour=ld
+#EXTINF:0,15 - BFM TV (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=215&flavour=sd
+#EXTINF:0,15 - BFM TV (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=215&flavour=hd
+#EXTINF:0,16 - CNews
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=216&flavour=ld
+#EXTINF:0,16 - CNews (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=216&flavour=sd
+#EXTINF:0,17 - CStar
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=217&flavour=ld
+#EXTINF:0,17 - CStar (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=217&flavour=sd
+#EXTINF:0,18 - Gulli
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=218&flavour=ld
+#EXTINF:0,18 - Gulli (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=218&flavour=sd
+#EXTINF:0,18 - Gulli (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=218&flavour=hd
+#EXTINF:0,19 - France Ô
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=219&flavour=ld
+#EXTINF:0,19 - France Ô (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=219&flavour=sd
+#EXTINF:0,20 - TF1 Séries Films
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=220&flavour=ld
+#EXTINF:0,20 - TF1 Séries Films (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=220&flavour=sd
+#EXTINF:0,21 - L'Équipe
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=221&flavour=ld
+#EXTINF:0,21 - L'Équipe (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=221&flavour=sd
+#EXTINF:0,21 - L'Équipe (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=221&flavour=hd
+#EXTINF:0,22 - 6ter
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=222&flavour=ld
+#EXTINF:0,22 - 6ter (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=222&flavour=sd
+#EXTINF:0,23 - RMC Story
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=223&flavour=ld
+#EXTINF:0,23 - RMC Story (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=223&flavour=sd
+#EXTINF:0,24 - RMC Découverte
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=224&flavour=ld
+#EXTINF:0,24 - RMC Découverte (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=224&flavour=sd
+#EXTINF:0,24 - RMC Découverte (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=224&flavour=hd
+#EXTINF:0,25 - Chérie 25
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=225&flavour=ld
+#EXTINF:0,25 - Chérie 25 (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=225&flavour=sd
+#EXTINF:0,26 - LCI
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=226&flavour=ld
+#EXTINF:0,26 - LCI (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=226&flavour=sd
+#EXTINF:0,27 - franceinfo:
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=227&flavour=ld
+#EXTINF:0,27 - franceinfo: (SD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=227&flavour=sd
+#EXTINF:0,27 - franceinfo: (HD)
+rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=227&flavour=hd

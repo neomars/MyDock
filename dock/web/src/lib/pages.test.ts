@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PAGES, movePage, pageById, pageRows, pagesSummary, toggleHidden, visiblePages } from './pages'
+import { HOME_PAGES, PAGES, movePage, pageById, pageRows, pagesSummary, toggleHidden, visiblePages } from './pages'
 
 describe('pages', () => {
   it('suivent l’ordre du cahier des charges', () => {
@@ -11,13 +11,20 @@ describe('pages', () => {
       'office',
       'markets',
       'system',
+      'media',
       'power',
       'settings',
     ])
   })
 
-  it('seules la Bourse, l’Alimentation (Wake-on-LAN) et les Réglages servent PC éteint', () => {
-    expect(PAGES.filter((p) => !p.needsPc).map((p) => p.id)).toEqual(['markets', 'power', 'settings'])
+  it('l’Alimentation n’a plus de gros bouton : « Divertissement » prend sa place à l’accueil', () => {
+    expect(HOME_PAGES.map((p) => p.id)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'media', 'settings'])
+    expect(pageById('power').title).toBe('Alimentation') // la page existe toujours : la barre du haut l’ouvre
+    expect(pageById('media').tab).toBe('Divertissement')
+  })
+
+  it('seules la Bourse, le Divertissement, l’Alimentation (Wake-on-LAN) et les Réglages servent PC éteint', () => {
+    expect(PAGES.filter((p) => !p.needsPc).map((p) => p.id)).toEqual(['markets', 'media', 'power', 'settings'])
   })
 
   it('pageById retombe sur la première page pour un identifiant inconnu', () => {
@@ -28,7 +35,7 @@ describe('pages', () => {
   it('visiblePages applique l’ordre puis laisse les autres dans l’ordre par défaut', () => {
     const ids = visiblePages(['markets', 'system'], []).map((p) => p.id)
     expect(ids.slice(0, 2)).toEqual(['markets', 'system'])
-    expect(ids.slice(2)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'power', 'settings'])
+    expect(ids.slice(2)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'media', 'settings'])
   })
 
   it('on ne peut jamais cacher les Réglages', () => {
@@ -39,10 +46,11 @@ describe('pages', () => {
 })
 
 describe('pageRows', () => {
-  it('liste les neuf pages, cachées comprises, dans l’ordre effectif', () => {
-    const rows = pageRows(['power', 'music'], ['music', 'steam'])
-    expect(rows.map((r) => r.page.id).slice(0, 3)).toEqual(['power', 'music', 'sound'])
+  it('liste les neuf pages de l’accueil, cachées comprises, dans l’ordre effectif (jamais l’Alimentation)', () => {
+    const rows = pageRows(['media', 'music'], ['music', 'steam'])
+    expect(rows.map((r) => r.page.id).slice(0, 3)).toEqual(['media', 'music', 'sound'])
     expect(rows).toHaveLength(9)
+    expect(rows.map((r) => r.page.id)).not.toContain('power')
     expect(rows.filter((r) => !r.visible).map((r) => r.page.id)).toEqual(['music', 'steam'])
   })
 
@@ -59,10 +67,10 @@ describe('pageRows', () => {
 
 describe('movePage', () => {
   it('donne l’ordre complet des neuf pages après un déplacement', () => {
-    const next = movePage([], [], 'power', -1)
+    const next = movePage([], [], 'media', -1)
     expect(next).toHaveLength(9)
-    expect(next.slice(5, 9)).toEqual(['markets', 'power', 'system', 'settings'])
-    expect(movePage(next, [], 'power', 1).slice(5, 9)).toEqual(['markets', 'system', 'power', 'settings'])
+    expect(next.slice(5, 9)).toEqual(['markets', 'media', 'system', 'settings'])
+    expect(movePage(next, [], 'media', 1).slice(5, 9)).toEqual(['markets', 'system', 'media', 'settings'])
   })
 
   it('ne bouge pas une page au bord de la liste', () => {

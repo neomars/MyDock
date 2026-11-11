@@ -169,7 +169,8 @@ if [ "$KIOSK" = systemd ] && [ "$STAGING" != 1 ]; then
   if ! getent passwd mydock-kiosk >/dev/null; then
     run useradd --system --user-group --create-home --home-dir /var/lib/mydock-kiosk --shell /usr/sbin/nologin mydock-kiosk
   fi
-  run usermod -aG video,render,input mydock-kiosk
+  # « audio » : le son des vidéos du Divertissement (VLC) sort par la carte son du Pi (HDMI ou prise).
+  run usermod -aG video,render,input,audio mydock-kiosk
   ok "Utilisateur mydock-kiosk (navigateur, sans accès au jeton)"
 fi
 
@@ -185,6 +186,10 @@ if [ "$KIOSK" != none ]; then
   if [ ! -e "$KETC/chromium.flags" ]; then
     printf '# Options supplémentaires de Chromium, une par ligne (voir « dépannage » du README).\n# --use-gl=angle\n' |
       put_file "$KETC/chromium.flags" 644
+  fi
+  if [ ! -e "$KETC/vlc.flags" ]; then
+    printf '# Options supplémentaires de VLC pour le Divertissement, une par ligne (voir « dépannage » du README).\n# --aout=alsa\n# --avcodec-hw=none\n' |
+      put_file "$KETC/vlc.flags" 644
   fi
   subst "$HERE/labwc/autostart" "LIB=$R_LIB" | put_file "$KETC/labwc/autostart" 644
 fi
@@ -221,8 +226,10 @@ case "$KIOSK" in
     if [ "$STAGING" != 1 ] && [ "$DRY_RUN" != 1 ] && [ "$NO_START" = 0 ]; then
       # Mise à jour : le navigateur du kiosque se relance tout seul (le lanceur boucle) sur la nouvelle interface.
       pkill -u "$USER_NAME" -x chromium >/dev/null 2>&1 || true
+      # L'assistant de lecture aussi : son lanceur le relance sur la nouvelle version.
+      pkill -u "$USER_NAME" -f 'mydock-dock player-session' >/dev/null 2>&1 || true
     fi
-    ok "Le kiosque démarrera à la prochaine ouverture de session ($USER_NAME) : sudo reboot"
+    ok "Le kiosque et le Divertissement démarreront à la prochaine ouverture de session ($USER_NAME) : sudo reboot"
     ;;
   systemd)
     subst "$HERE/mydock-kiosk.service" "ETC=$R_KETC" | put_file "$UNIT_DIR/mydock-kiosk.service" 644

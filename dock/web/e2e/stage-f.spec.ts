@@ -101,7 +101,7 @@ async function openPagesEditor(dock: Page): Promise<void> {
   await expect(dock.getByTestId('pages-editor')).toBeVisible()
 }
 
-const DEFAULT_TILES = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power', 'settings']
+const DEFAULT_TILES = ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'media', 'settings']
 
 test('Réglages : cacher une page retire son bouton de l’accueil, et le dock s’en souvient après un rechargement', async ({ dock }) => {
   expect(await tilesShown(dock)).toEqual(DEFAULT_TILES)
@@ -114,19 +114,19 @@ test('Réglages : cacher une page retire son bouton de l’accueil, et le dock s
   await dock.getByTestId('pages-done').tap()
   await expect(dock.getByTestId('pages-count')).toHaveText('7 pages visibles sur 9 (cachées : Steam, Office).')
   await shot(dock, '10-reglages-pages', 'f')
-  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'power', 'settings'])
+  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'media', 'settings'])
 
   await dock.reload() // c'est le Pi qui garde le choix, pas le navigateur
   await expect(dock.getByTestId('tile-settings')).toBeVisible()
-  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'power', 'settings'])
+  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'markets', 'system', 'media', 'settings'])
 })
 
 test('Réglages : monter une page déplace son bouton, « ordre d’origine » remet tout', async ({ dock }) => {
   await openPagesEditor(dock)
-  await dock.getByTestId('page-up-power').tap()
-  await dock.getByTestId('page-up-power').tap()
+  await dock.getByTestId('page-up-media').tap()
+  await dock.getByTestId('page-up-media').tap()
   await expect(dock.getByTestId('page-row-markets')).toContainText('7') // Bourse est descendue d'un cran
-  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'power', 'markets', 'system', 'settings'])
+  expect(await tilesShown(dock)).toEqual(['music', 'sound', 'apps', 'steam', 'office', 'media', 'markets', 'system', 'settings'])
   await dock.getByTestId('pages-reset').tap()
   await expect.poll(() => tilesShown(dock)).toEqual(DEFAULT_TILES)
   await expect(dock.getByTestId('pages-reset')).toBeDisabled()
@@ -135,7 +135,7 @@ test('Réglages : monter une page déplace son bouton, « ordre d’origine » r
 test('Réglages : on ne peut pas cacher les Réglages, il n’y aurait plus de retour', async ({ dock }) => {
   await openPagesEditor(dock)
   await expect(dock.getByTestId('page-toggle-settings')).toBeDisabled()
-  for (const id of ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'power']) {
+  for (const id of ['music', 'sound', 'apps', 'steam', 'office', 'markets', 'system', 'media']) {
     await dock.getByTestId(`page-toggle-${id}`).tap()
   }
   await expect(dock.getByTestId('pages-summary')).toContainText('1 page visible sur 9')
