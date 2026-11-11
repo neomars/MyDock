@@ -28,7 +28,20 @@ from mydock_dock.validation import ValidationFailure
 
 log = logging.getLogger(__name__)
 
-PAGE_IDS = ("music", "sound", "apps", "steam", "office", "markets", "system", "power", "settings")
+PAGE_IDS = (
+    "music",
+    "sound",
+    "apps",
+    "steam",
+    "office",
+    "markets",
+    "system",
+    "media",
+    "power",
+    "settings",
+)
+#: Pages qui n'ont pas de gros bouton à l'accueil (l'alimentation est un petit bouton à droite de l'heure).
+OFF_HOME_PAGES = ("power",)
 DEFAULT_PAGE = "system"
 ALWAYS_VISIBLE = "settings"  # on ne peut pas cacher Réglages : sinon plus moyen de le réparer
 MAX_PINNED_APPS = 24
@@ -57,6 +70,7 @@ def _default_state() -> dict[str, Any]:
             "saver_aerial": True,
             "saver_apple": True,
             "saver_sources": [],
+            "tv_hd": False,
         },
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
         "markets": {
@@ -104,6 +118,24 @@ class StateStore:
         if type(ui.get("saver_apple")) is not bool:
             ui["saver_apple"] = True
         ui["saver_sources"] = _saver_sources_or_empty(ui.get("saver_sources"))
+        if type(ui.get("tv_hd")) is not bool:
+            ui["tv_hd"] = False
+        self._migrate_pages(ui)
+
+    @staticmethod
+    def _migrate_pages(ui: dict[str, Any]) -> None:
+        """1.6.0 : « Alimentation » n'est plus un bouton de l'accueil, « Divertissement » prend sa place (et son rang)."""
+        order = [p for p in ui.get("order") or [] if isinstance(p, str)]
+        if "power" in order:
+            order = ["media" if p == "power" else p for p in order]
+            ui["order"] = list(dict.fromkeys(order))
+        hidden = [p for p in ui.get("hidden") or [] if isinstance(p, str)]
+        if "power" in hidden:
+            ui["hidden"] = [
+                p for p in hidden if p != "power"
+            ]  # cacher l'ancien bouton ne cache pas le nouveau
+        if ui.get("last_page") not in PAGE_IDS:
+            ui["last_page"] = DEFAULT_PAGE
 
     def _save(self) -> None:
         try:
@@ -164,6 +196,10 @@ class StateStore:
             new["saver_apple"] = patch["saver_apple"]
         if "saver_sources" in patch:
             new["saver_sources"] = _saver_sources(patch["saver_sources"])
+        if "tv_hd" in patch:
+            if type(patch["tv_hd"]) is not bool:
+                raise ValidationFailure("Réglage de la qualité HD invalide.")
+            new["tv_hd"] = patch["tv_hd"]
         if new != ui:
             self._data["ui"] = new
             self._save()

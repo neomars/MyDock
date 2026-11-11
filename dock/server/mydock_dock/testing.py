@@ -46,6 +46,21 @@ class RunningDock:
         assert self.server.portal.port is not None, "le portail n'est pas démarré"
         return f"http://127.0.0.1:{self.server.portal.port}"
 
+    @property
+    def player_url(self) -> str:
+        return f"ws://127.0.0.1:{self.port}/ws/player"
+
+    def connect_player(self, *, origin: str | None = None) -> Any:
+        """L'assistant de lecture de l'écran, simulé (jamais un navigateur : sans Origin)."""
+        headers = {} if origin is None else {"Origin": origin}
+        return connect(
+            self.player_url,
+            additional_headers=headers,
+            open_timeout=3,
+            ping_interval=None,
+            proxy=None,
+        )
+
     def connect(self, *, origin: str | None = "same") -> Any:
         """Navigateur simulé. `origin=None` : sans en-tête Origin ; sinon l'origine à annoncer."""
         headers = {} if origin is None else {"Origin": self.origin if origin == "same" else origin}

@@ -51,7 +51,8 @@ AGENT_TOPICS: tuple[str, ...] = (
     "power",
 )
 # Thèmes locaux du serveur dock, poussés d'office aux navigateurs.
-DOCK_TOPICS: tuple[str, ...] = ("link", "dock", "ui")
+# « player » : ce que joue l'écran du dock (Freetv, Kiosque) et l'état de VLC.
+DOCK_TOPICS: tuple[str, ...] = ("link", "dock", "ui", "player")
 
 ACTION_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}$")
 _TOPIC_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
