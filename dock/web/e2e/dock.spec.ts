@@ -11,9 +11,12 @@ const TABS: [string, string][] = [
   ['office', 'Office'],
   ['markets', 'Bourse'],
   ['system', 'Système'],
-  ['power', 'Alimentation'],
+  ['media', 'Divertissement'],
   ['settings', 'Réglages'],
 ]
+
+/** Les pages à parcourir pour les cibles tactiles : les neuf de l'accueil, plus l'alimentation (petit bouton de la barre du haut). */
+const ALL_PAGES = [...TABS.map(([id]) => id), 'power']
 
 /** Éléments cliquables visibles dont le plus petit côté est sous 48 px. */
 async function smallTargets(page: Page): Promise<string[]> {
@@ -55,7 +58,7 @@ test('les neuf boutons de l’accueil ouvrent leur page, et le bouton de la barr
 
 test('toutes les cibles tactiles font au moins 48 px, clavier compris', async ({ dock }) => {
   expect(await smallTargets(dock), 'accueil').toEqual([])
-  for (const [id] of TABS) {
+  for (const id of ALL_PAGES) {
     await openPage(dock, id)
     await expect(dock.getByTestId(`page-${id}`)).toBeVisible()
     await dock.waitForTimeout(150)
@@ -283,7 +286,7 @@ test('navigation sans tâche longue sous ralentissement du processeur ×4 (indic
       entryTypes: ['longtask'],
     })
   })
-  for (const [id] of [...TABS, ...TABS]) {
+  for (const id of [...ALL_PAGES, ...ALL_PAGES]) {
     await openPage(dock, id)
     await expect(dock.getByTestId(`page-${id}`)).toBeVisible()
   }

@@ -9,10 +9,10 @@ import { reconnectDelay } from './backoff'
 import { refreshIfOutdated } from './build'
 import { askConfirmation } from './confirm.svelte'
 import { latencyStats, type LatencyStats } from './format'
-import type { Ack, DockInfo, HostData, LinkStatus, UiState } from './protocol'
+import type { Ack, DockInfo, HostData, LinkStatus, PlayerSnapshot, UiState } from './protocol'
 
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
-const LOCAL_TOPICS = new Set(['link', 'dock', 'ui'])
+const LOCAL_TOPICS = new Set(['link', 'dock', 'ui', 'player'])
 const ACT_TIMEOUT_MS = 10_000
 
 function failure(id: string, code: string, msg: string): Ack {
@@ -27,6 +27,8 @@ class DockSocket {
   problem = $state<LinkStatus | null>(null)
   dock = $state<DockInfo | null>(null)
   ui = $state<UiState | null>(null)
+  /** Ce que joue l'écran du dock (Divertissement) ; `null` d'un dock plus ancien. */
+  player = $state<PlayerSnapshot | null>(null)
   /** Derniers instantanés des thèmes du PC, par nom de thème. */
   topics = $state.raw<Record<string, unknown>>({})
   /** Heure (`performance.now()`) de réception du dernier instantané de chaque thème : la page
@@ -126,6 +128,7 @@ class DockSocket {
       this.link = next
     } else if (topic === 'dock') this.dock = data as DockInfo
     else if (topic === 'ui') this.ui = data as UiState
+    else if (topic === 'player') this.player = data as PlayerSnapshot
     else {
       this.topics = { ...this.topics, [topic]: data }
       this.stamps = { ...this.stamps, [topic]: performance.now() }

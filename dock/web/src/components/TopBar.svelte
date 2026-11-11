@@ -1,5 +1,6 @@
 <script lang="ts">
   import House from '@lucide/svelte/icons/house'
+  import Power from '@lucide/svelte/icons/power'
   import { clock } from '../lib/clock.svelte'
   import { formatClock } from '../lib/format'
   import { sock } from '../lib/socket.svelte'
@@ -10,7 +11,8 @@
     onOpenMusic,
     showHome = false,
     onHome,
-  }: { onOpenMusic: () => void; showHome?: boolean; onHome?: () => void } = $props()
+    onPower,
+  }: { onOpenMusic: () => void; showHome?: boolean; onHome?: () => void; onPower?: () => void } = $props()
 
   const state = $derived(sock.link?.state ?? null)
   const label = $derived.by(() => {
@@ -52,6 +54,12 @@
     {#if sock.connected}<MiniPlayer onOpen={onOpenMusic} />{/if}
   </div>
   <time class="clock" data-testid="clock">{formatClock(clock.now)}</time>
+  <!-- L'alimentation (verrouiller, redémarrer, éteindre, réveiller le PC) : un petit bouton, plus un gros bouton de l'accueil. -->
+  {#if onPower}
+    <button class="power" data-testid="topbar-power" aria-label="Alimentation" onclick={onPower}>
+      <Power size={30} aria-hidden="true" />
+    </button>
+  {/if}
 </header>
 
 <style>
@@ -110,5 +118,21 @@
     flex: none;
     font-size: calc(22px * var(--ts));
     font-weight: 600;
+  }
+  /* Petit : on ne veut pas l'effleurer en visant l'heure, mais il reste franchement touchable (56 px). */
+  .power {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 56px;
+    height: 56px;
+    margin-right: -6px;
+    border-radius: 14px;
+    background: var(--surface-3);
+    color: var(--text-2);
+  }
+  .power:active {
+    background: var(--line);
+    transform: scale(0.96);
   }
 </style>

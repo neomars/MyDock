@@ -1,5 +1,6 @@
 <script lang="ts">
   import { gridWidth, homeLayout } from '../lib/home'
+  import { nowPlayingTitle } from '../lib/media'
   import { music } from '../lib/music.svelte'
   import { visiblePages } from '../lib/pages'
   import type { PageId } from '../lib/protocol'
@@ -17,6 +18,7 @@
   const layout = $derived(homeLayout(pages.length, areaWidth, areaHeight))
 
   const player = $derived(music.active)
+  const watching = $derived(nowPlayingTitle(sock.player))
   const cover = $derived(player?.art ? (music.arts[player.art] ?? null) : null)
   $effect(() => {
     void music.ensureArt(player?.art ?? null)
@@ -43,7 +45,7 @@
           width={layout.width}
           height={layout.height}
           dim={page.needsPc && !sock.connected}
-          subtitle={page.id === 'music' && player ? (player.title ?? player.name) : null}
+          subtitle={page.id === 'music' && player ? (player.title ?? player.name) : page.id === 'media' ? watching : null}
           cover={page.id === 'music' && player ? cover : null}
           testid="tile-{page.id}"
           onTap={() => onOpen(page.id)}

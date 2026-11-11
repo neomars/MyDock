@@ -1,7 +1,9 @@
-// Les neuf pages du dock, dans l'ordre par défaut de l'écran d'accueil (un gros bouton chacune).
+// Les pages du dock. Neuf ont un gros bouton à l'accueil (dans l'ordre par défaut) ; « Alimentation » n'en a plus : c'est
+// un petit bouton à droite de l'heure, dans la barre du haut.
 
 import Cpu from '@lucide/svelte/icons/cpu'
 import FileText from '@lucide/svelte/icons/file-text'
+import Clapperboard from '@lucide/svelte/icons/clapperboard'
 import Gamepad2 from '@lucide/svelte/icons/gamepad-2'
 import LayoutGrid from '@lucide/svelte/icons/layout-grid'
 import Power from '@lucide/svelte/icons/power'
@@ -22,6 +24,8 @@ export interface PageInfo {
   icon: Component<any>
   /** Vrai : la page n'a de sens que PC allumé et connecté (sinon l'écran « PC hors ligne »). */
   needsPc: boolean
+  /** Faux : pas de gros bouton à l'accueil (la page s'ouvre autrement : l'alimentation, par la barre du haut). */
+  home?: boolean
   /** Les deux couleurs du bouton (du haut vers le bas) : une teinte par page, comme les touches d'un Stream Deck.
    *  Le bas, où se lit le libellé en blanc, offre un contraste d'au moins 4,5 : 1 ; le haut, où se dessine l'icône, d'au moins 3 : 1. */
   tone: { from: string; to: string }
@@ -35,7 +39,8 @@ export const PAGES: readonly PageInfo[] = [
   { id: 'office', tab: 'Office', title: 'LibreOffice', icon: FileText, needsPc: true, tone: { from: '#059669', to: '#065f46' } },
   { id: 'markets', tab: 'Bourse', title: 'Bourse', icon: TrendingUp, needsPc: false, tone: { from: '#d97706', to: '#92400e' } },
   { id: 'system', tab: 'Système', title: 'Système', icon: Cpu, needsPc: true, tone: { from: '#0891b2', to: '#155e75' } },
-  { id: 'power', tab: 'Alimentation', title: 'Alimentation', icon: Power, needsPc: false, tone: { from: '#ef4444', to: '#991b1b' } },
+  { id: 'media', tab: 'Divertissement', title: 'Divertissement', icon: Clapperboard, needsPc: false, tone: { from: '#a855f7', to: '#6b21a8' } },
+  { id: 'power', tab: 'Alimentation', title: 'Alimentation', icon: Power, needsPc: false, home: false, tone: { from: '#ef4444', to: '#991b1b' } },
   { id: 'settings', tab: 'Réglages', title: 'Réglages', icon: Settings, needsPc: false, tone: { from: '#64748b', to: '#334155' } },
 ]
 
@@ -46,13 +51,16 @@ export interface PageRow {
   visible: boolean
 }
 
-/** Toutes les pages dans l'ordre choisi, cachées comprises (les pages absentes de `order` suivent l'ordre par défaut). */
+/** Les pages qui ont un gros bouton à l'accueil. */
+export const HOME_PAGES: readonly PageInfo[] = PAGES.filter((p) => p.home !== false)
+
+/** Toutes les pages de l'accueil dans l'ordre choisi, cachées comprises (celles absentes de `order` suivent l'ordre par défaut). */
 export function pageRows(order: PageId[], hidden: PageId[]): PageRow[] {
   const rank = (id: PageId) => {
     const i = order.indexOf(id)
-    return i === -1 ? order.length + PAGES.findIndex((p) => p.id === id) : i
+    return i === -1 ? order.length + HOME_PAGES.findIndex((p) => p.id === id) : i
   }
-  return [...PAGES]
+  return [...HOME_PAGES]
     .sort((a, b) => rank(a.id) - rank(b.id))
     .map((page) => ({ page, visible: page.id === 'settings' || !hidden.includes(page.id) }))
 }
@@ -64,7 +72,7 @@ export function visiblePages(order: PageId[], hidden: PageId[]): PageInfo[] {
     .map((row) => row.page)
 }
 
-/** L'ordre complet des neuf pages après avoir déplacé `id` d'un rang (inchangé au bord de la liste). */
+/** L'ordre complet des pages de l'accueil après avoir déplacé `id` d'un rang (inchangé au bord de la liste). */
 export function movePage(order: PageId[], hidden: PageId[], id: PageId, delta: -1 | 1): PageId[] {
   const ids = pageRows(order, hidden).map((row) => row.page.id)
   const from = ids.indexOf(id)

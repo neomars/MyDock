@@ -551,6 +551,21 @@ class TouchWatcher:
 # --- l'assistant ---------------------------------------------------------------------------------------------------
 
 
+class _NoWindows:
+    available = True
+
+    async def focus(self, which: str) -> bool:
+        return True
+
+
+class _NoTouch:
+    available = True
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
 def session_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     """L'environnement de la session graphique : l'écran Wayland et, pour VLC (qui passe par XWayland), l'écran X11."""
     env = dict(os.environ if base is None else base)
@@ -585,8 +600,10 @@ class Session:
         self.vlc = vlc if vlc is not None else find_vlc()
         self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
         self.live555 = has_live555() if live555 is None else live555
-        self.windows = Windows(self.env)
-        self.touch = TouchWatcher(self.env, self._touched)
+        self.windows: Any = Windows(self.env)
+        self.touch: Any = TouchWatcher(self.env, self._touched)
+        if demo:  # pas d'écran réel : ni fenêtres à ordonner ni toucher à guetter
+            self.windows, self.touch = _NoWindows(), _NoTouch()
         self.front = "dock"
         self._front_since = 0.0
         self._playback: Playback | None = None

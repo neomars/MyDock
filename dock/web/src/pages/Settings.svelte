@@ -4,6 +4,7 @@
   import Gauge from '@lucide/svelte/icons/gauge'
   import Link2 from '@lucide/svelte/icons/link-2'
   import PlugZap from '@lucide/svelte/icons/plug-zap'
+  import MediaSettings from '../components/MediaSettings.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import PairingPanel from '../components/PairingPanel.svelte'
   import { editText } from '../lib/keyboard.svelte'
@@ -339,6 +340,8 @@
       <button class="btn" data-testid="saver-videos-open" onclick={() => saverSources.show()}>Vidéos et adresses de téléchargement…</button>
       <button class="btn trial" data-testid="saver-now" onclick={() => screenSleep.saverNow()}>Essayer maintenant</button>
     </section>
+
+    <MediaSettings />
   </div>
 
   <div class="col">

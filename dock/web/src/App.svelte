@@ -16,6 +16,7 @@
   import Toast from './components/Toast.svelte'
   import TopBar from './components/TopBar.svelte'
   import { takeReopen } from './lib/build'
+  import { playerActive } from './lib/media'
   import { PAGES, pageById } from './lib/pages'
   import { justPaired } from './lib/pairing'
   import type { PageId } from './lib/protocol'
@@ -35,6 +36,7 @@
     office: () => import('./pages/Office.svelte'),
     markets: () => import('./pages/Markets.svelte'),
     system: () => import('./pages/System.svelte'),
+    media: () => import('./pages/Media.svelte'),
     power: () => import('./pages/Power.svelte'),
     settings: () => import('./pages/Settings.svelte'),
   }
@@ -67,6 +69,16 @@
     return sock.subscribe(['host', 'music'])
   })
 
+  // Pendant une vidéo (VLC en plein écran), un toucher ramène le dock devant : on ouvre alors la télécommande, quelle que
+  // soit la page affichée, au lieu de montrer ce qui était là avant la vidéo.
+  let wasFront = sock.player?.front
+  $effect(() => {
+    const front = sock.player?.front
+    const active = playerActive(sock.player)
+    if (wasFront === 'video' && front === 'dock' && active) open('media')
+    wasFront = front
+  })
+
   // Quand le PC répond enfin, le « réveil en cours » est terminé.
   $effect(() => {
     if (sock.connected) wakeDone()
@@ -94,7 +106,7 @@
 </script>
 
 <div class="app">
-  <TopBar onOpenMusic={() => open('music')} showHome={view !== 'home'} onHome={goHome} />
+  <TopBar onOpenMusic={() => open('music')} showHome={view !== 'home'} onHome={goHome} onPower={() => open('power')} />
 
   <div class="stage">
     {#if dockLost}

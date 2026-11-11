@@ -329,6 +329,8 @@ def init_config(
     clients_dir: Path | str | None = None,
     state_dir: Path | str | None = None,
     web_dir: Path | str | None = None,
+    playlist_url: str | None = None,
+    smb_host: str | None = None,
 ) -> DockConfig:
     """Crée ou met à jour la configuration (idempotent) ; ne change que ce qui est fourni."""
     path = Path(path) if path else default_config_path()
@@ -354,6 +356,11 @@ def init_config(
         config.state_dir = Path(state_dir)
     if web_dir is not None:
         config.web_dir = Path(web_dir)
+    if playlist_url is not None or smb_host is not None:
+        try:
+            config.set_media(playlist_url=playlist_url, smb_host=smb_host)
+        except ValidationFailure as exc:
+            raise ConfigError(f"Divertissement : {exc}") from None
     if config.portal_enabled and config.portal_port == config.port:
         raise ConfigError("Le port du portail doit différer de celui de l'interface.")
     config.save()

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Faux « smbclient » de la pile de démonstration : un partage de Freebox fictif, sans aucun réseau.
+# (Les essais de bout en bout le mettent en tête du PATH du dock ; il n'est jamais installé.)
+case "$*" in
+  *-L*)
+    printf 'Disk|Disque dur|\nDisk|Enregistrements|Mes enregistrements\nIPC|IPC$|IPC Service\n'
+    exit 0 ;;
+esac
+share=""
+dir=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in -D) dir="$arg" ;; esac
+  case "$arg" in //*) share="$arg" ;; esac
+  prev="$arg"
+done
+line() { printf '  %-35s %s %9d  Wed Nov 11 11:46:01 2026\n' "$1" "$2" "$3"; }
+case "$share" in
+  *Disque\ dur) case "$dir" in
+      "")
+        line Films D 0; line Séries D 0; line "Documents" D 0; line "Photos de vacances.mkv" N 734003200 ;;
+      Films)
+        line "Dessins animés" D 0; line "Un film d'été (2020).mkv" N 1503238553
+        line "Les Vacances de M. Hulot.mp4" N 912261120; line "lisez-moi.txt" N 412 ;;
+      Films\\Dessins\ animés)
+        line "Le Roi Lion.mkv" N 2147483648; line "Bambi.avi" N 734003200 ;;
+      Séries) line "Saison 1" D 0 ;;
+      *) printf 'cd \\%s\\: NT_STATUS_OBJECT_NAME_NOT_FOUND\n' "$dir"; exit 1 ;;
+    esac ;;
+  *Enregistrements) line "Journal 20h.ts" N 3221225472; line "Match.ts" N 5368709120 ;;
+  *) printf 'tree connect failed: NT_STATUS_BAD_NETWORK_NAME\n'; exit 1 ;;
+esac
+printf '\n\t\t264212084 blocks of size 1024. 28395300 blocks available\n'

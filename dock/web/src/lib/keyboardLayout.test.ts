@@ -3,6 +3,7 @@ import {
   DIGITS,
   LETTER_ROWS,
   SYMBOLS,
+  PASSWORD_SYMBOLS,
   URL_SYMBOLS,
   supportsUppercase,
   symbolsFor,
@@ -110,5 +111,24 @@ describe('le clavier des adresses web', () => {
     let value = ''
     for (let i = 0; i < 520; i++) value = typeChar(value, 'a', 'url', false)
     expect(value).toHaveLength(500)
+  })
+})
+
+describe('le clavier des mots de passe', () => {
+  it('propose les symboles qu’on y met le plus, et accepte tout caractère visible', () => {
+    expect(symbolsFor('password')).toEqual(PASSWORD_SYMBOLS)
+    expect(typeChar('', '!', 'password', false)).toBe('!')
+    expect(typeChar('mot', '#', 'password', false)).toBe('mot#')
+    expect(typeChar('mot', 'é', 'password', false)).toBe('moté')
+  })
+  it('accepte les majuscules mais pas les espaces', () => {
+    expect(supportsUppercase('password')).toBe(true)
+    expect(typeChar('', 'a', 'password', true)).toBe('A')
+    expect(isKeyAllowed('password', ' ')).toBe(false)
+  })
+  it('s’arrête à 128 caractères', () => {
+    let value = ''
+    for (let i = 0; i < 140; i++) value = typeChar(value, 'a', 'password', false)
+    expect(value).toHaveLength(128)
   })
 })
