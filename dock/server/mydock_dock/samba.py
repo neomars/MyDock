@@ -19,7 +19,6 @@ import contextlib
 import os
 import re
 import shutil
-import signal
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any
@@ -161,55 +160,49 @@ def stream_command(
     ]
 
 
-async def check_file(
-    binary: str,
-    host: str,
-    share: str,
-    parts: list[str],
-    *,
-    user: str,
-    password: str,
-    port: int | None = None,
-    timeout: float = 15.0,
-) -> str | None:
-    """`None` si smbclient atteint le fichier ; sinon la phrase qui dit pourquoi.
+#: Ce que smbclient écrit sur sa sortie standard quand `get "nom" -` échoue : le texte arrive dans la vidéo elle-même.
+_STREAM_ERROR_MARKERS = (
+    "NT_STATUS_",
+    "tree connect failed",
+    "session setup failed",
+    "Anonymous login successful",
+    "protocol negotiation failed",
+    "do_connect",
+    "Connection to ",
+    "Unable to initialize messaging context",
+    "Can't load",
+)
 
-    Nécessaire avant de lire le fichier par un tube : smbclient écrit ses erreurs sur sa sortie standard, c'est-à-dire
-    dans la vidéo, où personne ne les lirait."""
-    if not stream_name_is_safe(parts):
-        return "Ce nom de fichier ne peut pas être lu par smbclient."
-    command = [
-        binary,
-        *smbclient_args(
-            host, share, parts, f'allinfo "{parts[-1]}"', anonymous=not user, port=port
-        ),
-        "-t",
-        str(int(timeout)),
-    ]
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=smbclient_env(user, password),
-            start_new_session=True,
+
+def output_is_error(first_block: bytes) -> bool:
+    """Le début de ce que smbclient écrit est-il un message d'erreur plutôt que les premiers octets d'une vidéo ?
+
+    Un fichier vidéo ne commence jamais par du texte comme « NT_STATUS_… » : smbclient, lui, écrit ses erreurs sur la
+    même sortie que le fichier, et c'est la seule façon de les voir avant de les donner à VLC."""
+    head = first_block[:600].decode("utf-8", "replace")
+    return any(marker in head for marker in _STREAM_ERROR_MARKERS)
+
+
+def explain_stream(text: str, host: str) -> str:
+    """La phrase qui dit pourquoi smbclient n'a pas donné le fichier, d'après ce qu'il a écrit."""
+    if any(
+        m in text
+        for m in (
+            "NT_STATUS_OBJECT_NAME_NOT_FOUND",
+            "NT_STATUS_NO_SUCH_FILE",
+            "NT_STATUS_OBJECT_PATH_NOT_FOUND",
         )
-    except OSError as exc:
-        return f"smbclient ne démarre pas ({exc.strerror})."
-    try:
-        out, _ = await asyncio.wait_for(process.communicate(), timeout + 4)
-    except TimeoutError:
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(
-                process.pid, signal.SIGKILL
-            )  # tout le groupe : rien ne garde la sortie ouverte
-        await process.wait()
-        return "Le serveur de fichiers ne répond pas."
-    text = out.decode("utf-8", "replace")
-    if "NT_STATUS_" in text or "create_time" not in text:
-        return explain(text, host)
-    return None
+    ):
+        return "Ce fichier n'existe plus sur le partage."
+    known = explain(text, host)
+    if known != _UNKNOWN:
+        return known
+    first = next((row.strip() for row in text.splitlines() if row.strip()), "")
+    return (
+        f"Le serveur de fichiers refuse la lecture : « {first[:120]} »."
+        if first
+        else "smbclient n'a rien lu du fichier."
+    )
 
 
 # --- ce que dit smbclient --------------------------------------------------------------------------------------------
@@ -252,6 +245,8 @@ def _natural(name: str) -> list[Any]:
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
+_UNKNOWN = "Le serveur de fichiers a répondu autrement que prévu."
+
 _ERRORS = (
     ("NT_STATUS_LOGON_FAILURE", "Identifiant ou mot de passe refusé par le partage."),
     (
@@ -289,7 +284,7 @@ def explain(output: str, host: str) -> str:
         "Can't load" in output and "NT_STATUS" not in output
     ):
         return "smbclient ne démarre pas : sudo apt install smbclient."
-    return "Le serveur de fichiers a répondu autrement que prévu."
+    return _UNKNOWN
 
 
 class SambaBrowser:

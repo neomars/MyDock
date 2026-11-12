@@ -25,10 +25,12 @@ import glob
 import json
 import logging
 import os
+import platform
 import re
 import shlex
 import shutil
 import signal
+import struct
 import sys
 import tempfile
 import time
@@ -219,6 +221,12 @@ def explain_exit(played: bool, live: bool, tail: str, code: int | None = None) -
             "Fichier introuvable sur le partage (le nom, les droits d'accès, ou le serveur qui ne répond pas)."
             + more
         )
+    if "smb stream error: read failed" in lowered:
+        return (
+            "Le module Samba de VLC n'arrive pas à lire ce fichier sur ce serveur (« read failed »). "
+            "Avec smbclient installé (sudo apt install smbclient), VLC le fait lire par lui à la place."
+            + more
+        )
     if "unable to open the mrl 'smb://" in lowered and "smb stream" not in lowered:
         return (
             "VLC ne sait pas lire le Samba : sudo apt install vlc-plugin-samba (puis redémarrer le Pi)."
@@ -377,6 +385,9 @@ _FFMPEG_ISSUE = re.compile(
     r"\b[45]\d\d\b",
     re.IGNORECASE,
 )
+SMB_FIRST_BLOCK_WAIT = (
+    30.0  # smbclient ouvre un gros fichier d'un disque qui se réveille : on lui laisse le temps
+)
 MAX_LOGGED_LINES = 4000  # par lecture : le journal ne doit pas grossir sans fin si VLC bavarde
 
 
@@ -424,7 +435,12 @@ class VlcPlayback:
         self._started = time.monotonic()
         self._socket = str(runtime_dir / f"vlc-{os.getpid()}-{job}.sock")
         self._config: Path | None = None
-        self._failed_precheck: str | None = None
+        self._smb_failure: str | None = (
+            None  # pourquoi smbclient n'a pas donné le fichier (avant même VLC)
+        )
+        self._history: list[
+            str
+        ] = []  # ce que les tentatives précédentes ont dit, pour la phrase finale
         if smb is not None:
             playerlog.add_secret(smb[1])
 
@@ -441,10 +457,13 @@ class VlcPlayback:
         """VLC s'est arrêté avant la première image : essayer la façon suivante, s'il en reste. `True` : relancé."""
         if self._played or self._stopped or self._attempt + 1 >= len(self._attempts):
             return False
+        said = self._summary()
         playerlog.event(
-            f"lecture {self._job} : la tentative « {self.mode} » a échoué ({self._summary() or 'sans message'}) ; "
+            f"lecture {self._job} : la tentative « {self.mode} » a échoué ({said or 'sans message'}) ; "
             f"on essaie « {self._attempts[self._attempt + 1]} »"
         )
+        if said:
+            self._history.append(f"{self.mode} : {said}")
         await self._terminate()
         try:
             await self._next_attempt()
@@ -483,27 +502,8 @@ class VlcPlayback:
             source = "fd://0"
             extra += ["--network-caching=1500"]
         elif mode == "smbclient":
-            assert self._smb_source is not None
-            assert self._smbclient is not None
-            src = self._smb_source
-            user, password = self._smb or ("", "")
-            problem = await samba.check_file(
-                self._smbclient, src.host, src.share, list(src.parts), user=user, password=password
-            )
-            if problem is not None:
-                self._failed_precheck = problem
-                self._issues.append(f"smbclient : {problem}")
-                playerlog.event(
-                    f"lecture {self._job} : smbclient n'atteint pas le fichier : {problem}"
-                )
-                raise RuntimeError(problem)
-            bridge = samba.stream_command(
-                self._smbclient, src.host, src.share, list(src.parts), user=user
-            )
-            bridge_label, bridge_env = "smbclient", samba.smbclient_env(user, password)
-            source = "fd://0"
-            extra += ["--file-caching=3000"]
-            self.seekable = False  # VLC ne revient pas en arrière dans un tube
+            await self._launch_smb_pipe([*extra, "--file-caching=3000"])
+            return
         elif self.live:
             extra += ["--network-caching=1500", "--live-caching=1500"]
         if mode == "direct" and self._smb is not None and self._config is None:
@@ -552,6 +552,117 @@ class VlcPlayback:
                 if fd is not None:
                     os.close(fd)
         self._drains.append(asyncio.create_task(self._drain_stderr(vlc, "vlc")))
+
+    async def _launch_smb_pipe(self, extra: list[str]) -> None:
+        """Le fichier est lu par smbclient et relayé vers VLC (`fd://0`), sans le module Samba de VLC.
+
+        smbclient écrit ses erreurs sur la même sortie que le fichier : on lit donc le premier bloc *avant* de lancer VLC
+        et, si c'est un message plutôt qu'une vidéo, on l'explique au lieu de le donner à VLC."""
+        assert self._smb_source is not None
+        assert self._smbclient is not None
+        src = self._smb_source
+        user, password = self._smb or ("", "")
+        bridge = samba.stream_command(
+            self._smbclient, src.host, src.share, list(src.parts), user=user
+        )
+        playerlog.event(f"lecture {self._job} : commande smbclient : {shlex.join(bridge)}")
+        reader = await asyncio.create_subprocess_exec(
+            *bridge,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=samba.smbclient_env(user, password),
+            start_new_session=True,
+        )
+        self._procs.append(reader)
+        self._drains.append(asyncio.create_task(self._drain_stderr(reader, "smbclient")))
+        assert reader.stdout is not None
+        first = b""
+        try:
+            first = await asyncio.wait_for(reader.stdout.read(65536), SMB_FIRST_BLOCK_WAIT)
+            while 0 < len(first) < 64:  # un message d'erreur court peut arriver en deux fois
+                try:
+                    more = await asyncio.wait_for(reader.stdout.read(65536), 3)
+                except TimeoutError:
+                    break  # rien de plus : ce premier bloc est tout ce qui est arrivé
+                if not more:
+                    break
+                first += more
+        except TimeoutError:
+            self._kill(reader)
+            self._smb_failure = "Le serveur de fichiers ne répond pas."
+            playerlog.event(
+                f"lecture {self._job} : smbclient n'a rien donné en {SMB_FIRST_BLOCK_WAIT:.0f} s"
+            )
+            raise RuntimeError(self._smb_failure) from None
+        if not first or samba.output_is_error(first):
+            text = first.decode("utf-8", "replace")
+            for row in text.splitlines():
+                playerlog.line("smbclient", row)
+                self._issues.append(f"smbclient : {row}")
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(reader.wait(), 3)
+            self._kill(reader)
+            self._smb_failure = samba.explain_stream(text, src.host)
+            playerlog.event(
+                f"lecture {self._job} : smbclient n'a pas donné le fichier "
+                f"(code {reader.returncode}, {len(first)} octet(s) reçus) : {self._smb_failure}"
+            )
+            raise RuntimeError(self._smb_failure)
+        playerlog.event(
+            f"lecture {self._job} : smbclient donne le fichier : premier bloc de {len(first)} octets, "
+            f"début {first[:8].hex()}"
+        )
+        self.seekable = False  # VLC ne revient pas en arrière dans un tube
+        command = vlc_command(
+            self._vlc, "fd://0", self._socket, volume=self.volume, config_file=None, extra=extra
+        )
+        playerlog.event(f"lecture {self._job} : commande VLC : {shlex.join(command)}")
+        # Un vrai tube (os.pipe), pas le « socketpair » qu'asyncio donne à un processus : VLC le prendrait pour autre
+        # chose qu'un tube (« prefetch stream error: cannot seek ») et ne lirait rien (constaté sur le banc).
+        read_fd, write_fd = os.pipe()
+        try:
+            vlc = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=read_fd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._env,
+                start_new_session=True,
+            )
+        except BaseException:
+            os.close(write_fd)
+            raise
+        finally:
+            os.close(read_fd)
+        self._procs.append(vlc)
+        self._drains.append(asyncio.create_task(self._drain_stderr(vlc, "vlc")))
+        writer = await _pipe_writer(write_fd)
+        self._drains.append(asyncio.create_task(self._pump(reader, writer, first)))
+
+    @staticmethod
+    async def _pump(
+        reader: asyncio.subprocess.Process, writer: asyncio.StreamWriter, first: bytes
+    ) -> None:
+        """Relaie ce que smbclient lit vers l'entrée de VLC, à la vitesse de VLC (le tube se remplit, on attend)."""
+        assert reader.stdout is not None
+        try:
+            writer.write(first)
+            await writer.drain()
+            while chunk := await reader.stdout.read(65536):
+                writer.write(chunk)
+                await writer.drain()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass  # VLC s'est arrêté : la fin de lecture le dira
+        finally:
+            with contextlib.suppress(Exception):
+                writer.close()
+
+    @staticmethod
+    def _kill(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
 
     async def _drain_stderr(self, process: asyncio.subprocess.Process, label: str) -> None:
         """Recopie dans le journal tout ce que le programme dit, et garde ce qui explique un échec (la phrase de l'écran)."""
@@ -689,11 +800,13 @@ class VlcPlayback:
         if self._stopped:
             return None
         code = self._procs[-1].returncode if self._procs else None
-        tail = "\n".join(self._issues)
+        tail = "\n".join([*self._history, *self._issues])
         message = explain_exit(self._played, self.live, tail, code)
-        if message is not None and self._failed_precheck and self.mode == "smbclient":
-            message = f"{self._failed_precheck} (VLC et smbclient ont tous deux essayé)." + (
-                f" Détail : « {self._summary()} »." if self._summary() else ""
+        if message is not None and self._smb_failure and self.mode == "smbclient":
+            summary = self._summary()
+            said = " ; ".join([*self._history, *([summary] if summary else [])])
+            message = f"{self._smb_failure} (VLC et smbclient ont tous deux essayé)." + (
+                f" Détail : « {said[:200]} »." if said else ""
             )
         playerlog.event(
             f"lecture {self._job} : fin, mode « {self.mode} », code de VLC : {code}, "
@@ -702,6 +815,15 @@ class VlcPlayback:
         if message is not None:
             playerlog.failure(self._job, message)
         return message
+
+
+async def _pipe_writer(fd: int) -> asyncio.StreamWriter:
+    """Écrit dans le tube `fd` sans bloquer la boucle : `drain()` attend que VLC ait lu de quoi reprendre."""
+    loop = asyncio.get_running_loop()
+    transport, protocol = await loop.connect_write_pipe(
+        asyncio.streams.FlowControlMixin, os.fdopen(fd, "wb", buffering=0)
+    )
+    return asyncio.StreamWriter(transport, protocol, None, loop)
 
 
 def _is_issue(label: str, text: str) -> bool:
@@ -1126,6 +1248,7 @@ class Session:
         from mydock_dock import __version__
 
         playerlog.event("=== assistant de lecture démarré ===")
+        playerlog.event(f"machine : {_machine_summary()}")
         playerlog.event(
             f"mydock_dock {__version__}, Python {sys.version.split()[0]}, uid {os.getuid()}, "
             f"journal {playerlog.current_path()}"
@@ -1227,6 +1350,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo", action="store_true", help="lecture simulée, sans VLC (essais)")
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
+
+
+def _machine_summary() -> str:
+    """Le Pi : processeur, 32 ou 64 bits, noyau, distribution (une lecture qui échoue sur de gros fichiers se joue ici)."""
+    system = "-"
+    with contextlib.suppress(OSError):
+        for row in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if row.startswith("PRETTY_NAME="):
+                system = row.split("=", 1)[1].strip().strip('"')
+    bits = struct.calcsize("P") * 8
+    return f"{platform.machine()}, Python en {bits} bits, noyau {platform.release()}, {system}"
 
 
 async def _version_of(binary: str, args: Sequence[str]) -> str:

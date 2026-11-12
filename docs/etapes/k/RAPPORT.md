@@ -142,3 +142,30 @@ Ils tournent (1,5 Mo, trois anciens gardés), sont créés par l'installation (d
 | Banc d'essai (vrai VLC 3.0.20, vrai smbclient, vrai Samba protégé) | repli : lecture démarrée (1 s / 30 s, sans avance rapide), journal complet ; un nom avec `;` jamais transmis à smbclient |
 | Suites complètes | `ruff`, `shellcheck`, `svelte-check` propres ; Python **2 515 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 444 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : réussis ; Vitest **371 réussis** ; Playwright **280 réussis** |
 | Ce qui reste non vérifié | tout ce qui touche ton Pi : pourquoi VLC n'ouvre pas ton fichier, pourquoi la chaîne ne démarre pas, et la fluidité du décodage |
+
+## Addendum 3 — version 1.6.3 : ce que dit le journal de ton Pi
+
+> `lecture 3 : la tentative « direct » a échoué (smb stream error: read failed (Invalid argument)) ; on essaie « smbclient » … smbclient n'atteint pas le fichier : Le serveur de fichiers a répondu autrement que prévu. … ÉCHEC lecture 3 : … (VLC et smbclient ont tous deux essayé).` — fichier `smb://mafreebox.freebox.fr/Freebox/Download/Coup de Tête/Coup.de.Tête…BDRip.1080p.x264…mkv`
+
+**Ce que ces lignes apprennent.**
+
+1. **VLC ouvre le fichier** (le chemin, les accents, l'identifiant sont bons : ce que le Kiosque listait était juste) **mais échoue à le lire** : `smb stream error: read failed (Invalid argument)`. C'est le module Samba de VLC et la Freebox qui ne s'entendent pas sur la lecture ; ce n'est ni un codec, ni l'écran. Je ne sais toujours pas *pourquoi* (la ligne `machine :` du journal, désormais écrite en tête, dira si ton Pi est en 32 ou 64 bits : une piste classique pour de gros fichiers).
+2. **Mon repli de 1.6.2 a échoué à cause de mon contrôle préalable, pas de ton partage.** Je vérifiais l'accès avec la commande `allinfo` de smbclient et je concluais « inaccessible » si sa réponse ne ressemblait pas à celle de Samba. La Freebox y répond autrement. Le contrôle est **supprimé** : c'était une hypothèse sur le format d'une réponse que je n'avais jamais vue.
+
+**Ce qui change.** smbclient lit le fichier (`get "nom" -`) et l'assistant **lit le premier bloc avant de lancer VLC** : un fichier vidéo ne commence jamais par `NT_STATUS_…` ou `tree connect failed` (smbclient écrit ses erreurs sur la même sortie que le fichier : vérifié), donc un texte d'erreur est reconnu et expliqué, et sinon le bloc et la suite sont relayés à VLC. Une erreur inconnue est **citée** (« Le serveur de fichiers refuse la lecture : « … » ») au lieu de « répondu autrement que prévu », et la phrase finale ajoute ce que VLC avait dit d'abord.
+
+**Un défaut que seul le vrai VLC a montré.** Mon premier relais donnait à VLC l'entrée standard d'asyncio : une **socketpair**, pas un tube. VLC ne lisait alors rien (`prefetch stream error: cannot seek`), alors que les faux programmes du test disaient « ça marche ». Le relais crée maintenant un vrai tube ; le test vérifie que l'entrée de VLC en est un.
+
+**Essayé sur le banc (vrai VLC 3.0.20, vrai smbclient, vrai Samba protégé), trois cas :**
+
+| Cas | Résultat |
+|---|---|
+| VLC échoue, smbclient lit le fichier | **la lecture démarre** (sans avance rapide) |
+| Mauvais mot de passe | « Accès refusé : ce partage demande un identifiant » (VLC et smbclient ont tous deux essayé), avec ce que chacun a dit |
+| Fichier absent | « Ce fichier n'existe plus sur le partage », avec le détail |
+
+**Ce qui reste non vérifié** : que `smbclient get` lise tes gros fichiers de la Freebox jusqu'au bout (il se peut qu'elle le refuse aussi : le journal le dira, et la phrase le citera), et Freetv, dont tu n'as pas envoyé de lignes.
+
+| Contrôle (1.6.3) | Résultat |
+|---|---|
+| Suites | `ruff`, `shellcheck` propres ; Python **2 534 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 463 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : **15 réussis** ; l'interface n'a pas changé depuis 1.6.2 (Vitest 371, Playwright 280 alors) et ses parcours liés au Divertissement (stage k, 9, et les 5 du dock simulé) ont été rejoués : réussis |
