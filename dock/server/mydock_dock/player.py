@@ -173,7 +173,7 @@ class PlayerHub:
         self._cancel_watchdog()
         self.front = "dock"
         if isinstance(reason, str) and reason:
-            self.state, self.error = "error", reason[:300]
+            self.state, self.error = "error", reason[:420]
         else:
             self.state, self.error, self.media = "idle", None, None
             self.position = self.length = None

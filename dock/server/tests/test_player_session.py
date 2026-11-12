@@ -99,6 +99,76 @@ def test_a_playback_that_never_started_is_explained(played, live, tail, expected
         assert expected in message
 
 
+@pytest.mark.parametrize(
+    ("live", "tail", "code", "expected"),
+    [
+        (
+            False,
+            "main input error: VLC is unable to open the MRL 'smb://nas/Films/a.mkv'. Check the log for details.",
+            None,
+            "vlc-plugin-samba",
+        ),
+        (
+            False,
+            "main input error: VLC is unable to open the MRL 'smb://nas/a.mkv'. Check the log for details.\nsmb stream error: open failed for 'nas/a.mkv' (Invalid argument)",
+            None,
+            "Détail : « smb stream error: open failed",
+        ),
+        (
+            False,
+            "avcodec decoder error: no suitable decoder module for fourcc `hev1'",
+            None,
+            "ne sait pas décoder",
+        ),
+        (False, "main decoder error: Codec not supported", None, "ne sait pas décoder"),
+        (False, "main video output error: video output creation failed", None, "afficher la vidéo"),
+        (False, "xcb window error: cannot open display :0", None, "xwayland"),
+        (False, "", -11, "arrêté brutalement (SIGSEGV)"),
+        (False, "", -9, "arrêté brutalement (SIGKILL)"),
+        (False, "", -250, "arrêté brutalement (signal 250)"),
+        (True, "ffmpeg : Connection refused", None, "Détail : « ffmpeg : Connection refused »"),
+        (False, "", 0, "n'a pas pu lire cette vidéo"),
+    ],
+)
+def test_the_real_reason_is_given_when_vlc_says_it(live, tail, code, expected):
+    assert expected in ps.explain_exit(False, live, tail, code)
+
+
+def test_vlc_details_leave_out_the_memory_address_and_the_usual_noise():
+    tail = (
+        "[0000563ecf14def0] dummy interface: using the dummy interface module...\n"
+        "[00007f65f00015a0] smb stream error: open failed for 'nas/x' (Connection refused)\n"
+        "[00007f65f8000c90] main input error: Your input can't be opened\n"
+        "[00007f65f8000c90] main input error: VLC is unable to open the MRL 'smb://nas/x'. Check the log for details.\n"
+        "[0000563ecf149440] main playlist: end of playlist, exiting\n"
+        "[0000563ecf14def0] dbus interface error: Failed to connect to the D-Bus session daemon\n"
+    )
+    detail = ps.vlc_detail(tail)
+    assert detail == "smb stream error: open failed for 'nas/x' (Connection refused)"
+    assert "0000" not in detail
+    assert "dbus" not in detail.lower()
+    assert "dummy" not in detail
+    assert ps.vlc_detail("") == ""
+
+
+def test_vlc_details_are_short_and_keep_the_last_lines_only():
+    tail = "\n".join(f"main error: ligne {i} " + "x" * 80 for i in range(10))
+    detail = ps.vlc_detail(tail)
+    assert len(detail) <= 200
+    assert "ligne 9" in detail or detail.endswith("…")  # le bout de ce que VLC a dit en dernier
+    assert "ligne 0" not in detail
+    assert "ligne 7" not in detail  # seulement les deux dernières lignes
+
+
+def test_vlc_never_asks_questions_nor_looks_for_a_keyring():
+    command = ps.vlc_command("vlc", "x", "s", volume=0)
+    assert (
+        "--no-interact" in command
+    )  # un mot de passe refusé : VLC échoue tout de suite au lieu d'attendre une saisie
+    assert "--keystore=memory" in command  # pas de D-Bus dans la session du kiosque
+    assert command.index("--no-interact") < command.index("--")
+
+
 def test_extra_flags_are_read_without_comments(tmp_path):
     flags = tmp_path / "vlc.flags"
     flags.write_text("# commentaire\n--avcodec-hw=any\n\n  --deinterlace=1  \n")
@@ -138,8 +208,11 @@ if args[-1] == "fd://0":
     record["stdin"] = os.read(0, 1000).decode("latin-1")
 json.dump(record, open(os.environ["FAKE_LOG"], "w"))
 if os.environ.get("FAKE_VLC_FAIL"):
-    sys.stderr.write("smb stream error: open failed for 'nas/x.mkv' (Permission denied)\\n")
-    sys.exit(0)
+    sys.stderr.write(os.environ.get("FAKE_VLC_STDERR") or "smb stream error: open failed for 'nas/x.mkv' (Permission denied)\\n")
+    if os.environ.get("FAKE_VLC_SIGNAL"):
+        os.kill(os.getpid(), int(os.environ["FAKE_VLC_SIGNAL"]))
+        time.sleep(5)
+    sys.exit(int(os.environ.get("FAKE_VLC_EXIT", "0")))
 live = os.environ.get("FAKE_LIVE") == "1"
 state = {{"playing": 1, "base": 0.0, "since": time.monotonic(), "volume": volume}}
 def now():
@@ -180,6 +253,10 @@ while True:
 FAKE_FFMPEG = """\
 #!/bin/sh
 printf '%s\\n' "$@" > "$FAKE_LOG.ffmpeg"
+if [ -n "$FAKE_FFMPEG_ERROR" ]; then
+  printf '%s\\n' "$FAKE_FFMPEG_ERROR" >&2
+  exit 1
+fi
 printf 'TSDATA'
 exec sleep 30
 """
@@ -644,6 +721,76 @@ async def test_a_refused_file_is_reported_as_an_error_not_an_end(fakes, fast, mo
     )
     await box.wait(lambda m: m["t"] == "ended")
     assert "Accès refusé" in box.of("ended")[0]["error"]
+
+
+async def test_the_reason_vlc_gives_is_shown_and_kept_in_a_private_log(fakes, fast, monkeypatch):
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv(
+        "FAKE_VLC_STDERR",
+        "[0000aa] avcodec decoder error: no suitable decoder module for fourcc `hev1'\n",
+    )
+    s, box = session(fakes), Mailbox()
+    await s.handle(
+        {
+            "t": "cmd",
+            "name": "play",
+            "job": 5,
+            "url": "smb://nas/Films/a.mkv",
+            "volume": 70,
+            "smb_user": "ligon",
+            "smb_password": "mot-de-passe-secret",
+        },
+        box,
+    )
+    await box.wait(lambda m: m["t"] == "ended")
+    error = box.of("ended")[0]["error"]
+    assert "ne sait pas décoder" in error
+    assert "no suitable decoder module" in error  # le message de VLC lui-même, pour comprendre
+    log = fakes.run / ps.LOG_NAME
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    text = log.read_text(encoding="utf-8")
+    assert "no suitable decoder module" in text
+    assert "smb://nas/Films/a.mkv" in text
+    assert "mot-de-passe-secret" not in text  # jamais dans le journal
+    assert "mot-de-passe-secret" not in error
+
+
+async def test_a_crash_of_vlc_names_the_signal(fakes, fast, monkeypatch):
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_STDERR", "main libvlc error: plantage\n")
+    monkeypatch.setenv("FAKE_VLC_SIGNAL", "9")  # tué par un signal : le code de sortie est négatif
+    s, box = session(fakes), Mailbox()
+    await s.handle(
+        {"t": "cmd", "name": "play", "job": 6, "url": "smb://nas/Films/a.mkv", "volume": 70}, box
+    )
+    await box.wait(lambda m: m["t"] == "ended")
+    error = box.of("ended")[0]["error"]
+    assert "arrêté brutalement (SIGKILL)" in error
+    assert "--avcodec-hw=none" in error
+
+
+async def test_what_ffmpeg_says_when_the_channel_does_not_answer_is_shown(fakes, fast, monkeypatch):
+    monkeypatch.setenv(
+        "FAKE_FFMPEG_ERROR", "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream: Connection timed out"
+    )
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_STDERR", "main input error: Your input can't be opened\n")
+    s, box = session(fakes), Mailbox()
+    await s.handle(
+        {
+            "t": "cmd",
+            "name": "play",
+            "job": 7,
+            "url": "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201",
+            "live": True,
+            "volume": 70,
+        },
+        box,
+    )
+    await box.wait(lambda m: m["t"] == "ended")
+    error = box.of("ended")[0]["error"]
+    assert "La chaîne ne répond pas" in error
+    assert "ffmpeg : rtsp://mafreebox.freebox.fr/fbxtv_pub/stream: Connection timed out" in error
 
 
 async def test_a_new_play_replaces_the_current_one(fakes, fast):

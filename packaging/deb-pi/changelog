@@ -1,3 +1,24 @@
+mydock (1.6.1) unstable; urgency=medium
+
+  * Freetv : « Les chaînes ne sont pas disponibles » alors que la liste s'ouvre depuis un PC du même réseau. Le nom que
+    Free donne à la box, mafreebox.freebox.fr, se résout vers une adresse publique de Free (212.27.38.253) que la Freebox
+    elle-même sert chez toi : le dock, qui ne lisait la liste que depuis une adresse privée, la refusait. Ce nom-là
+    (et lui seul) est désormais lu ; toute autre adresse saisie doit toujours être sur le réseau local, et aucune
+    redirection n'est suivie.
+  * Kiosque et Freetv : quand VLC ne lit pas, l'écran dit pourquoi au lieu de « format, ou accès au partage ». La phrase
+    distingue un accès refusé, un fichier introuvable, un module Samba manquant (vlc-plugin-samba), un codec qui manque
+    ou que le Pi ne tient pas, un affichage impossible (xwayland) et un plantage de VLC (avec le signal), et le dernier
+    message de VLC — ou de ffmpeg, pour une chaîne — s'affiche dessous, en petit. La dernière lecture ratée est
+    gardée en entier dans $XDG_RUNTIME_DIR/mydock-player.log (droits 600, sans le mot de passe).
+  * VLC ne pose plus de question : un identifiant refusé échoue tout de suite (« Accès refusé ») au lieu d'attendre
+    une saisie que personne ne peut faire (essayé sur le banc : sans cette option VLC attendait indéfiniment, avec elle il échoue en moins d'une seconde), et il ne cherche plus
+    de trousseau de clés (pas de D-Bus dans la session du kiosque).
+  * mydock-dock doctor : la section « Divertissement » vérifie aussi les modules de VLC (Samba, décodeurs, affichage)
+    et dit quel paquet installer s'il en manque un.
+  * Nouvelle version : 1.6.0 -> 1.6.1 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Wed, 11 Nov 2026 20:00:00 +0000
+
 mydock (1.6.0) unstable; urgency=medium
 
   * Divertissement : un nouveau bouton d'accueil à la place d'« Alimentation ». Il ouvre deux lecteurs, lus par VLC

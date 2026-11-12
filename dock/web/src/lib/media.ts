@@ -124,3 +124,12 @@ export function playerBlocker(player: PlayerSnapshot | null | undefined): string
 
 /** Combien de secondes sautent les boutons « avancer » et « reculer ». */
 export const SEEK_SECONDS = 30
+
+/**
+ * Un échec de lecture en deux parties : la phrase, et ce que VLC (ou ffmpeg) a écrit (« Détail : « … ». ») : le détail
+ * s'affiche en plus petit, car il sert à comprendre, pas à lire.
+ */
+export function splitFailure(text: string): { main: string; detail: string | null } {
+  const match = /^(.*?)\s*Détail : «\s*(.*?)\s*»\.?\s*$/s.exec(text)
+  return match ? { main: match[1], detail: match[2] || null } : { main: text, detail: null }
+}
