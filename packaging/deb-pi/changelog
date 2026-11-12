@@ -1,3 +1,20 @@
+mydock (1.6.3) unstable; urgency=medium
+
+  * Kiosque : la lecture de secours par smbclient n'est plus bloquée à tort. Le journal envoyé par l'utilisateur a montré
+    que le module Samba de VLC ouvre le fichier mais échoue à le lire (« smb stream error: read failed (Invalid argument) »)
+    et que le contrôle préalable de 1.6.2 (la commande « allinfo » de smbclient) était refusé à tort : la Freebox n'y
+    répond pas comme Samba. Il n'y a plus de contrôle préalable : smbclient lit le fichier, l'assistant examine le premier
+    bloc qu'il écrit (un fichier vidéo ne commence jamais par « NT_STATUS_… » ; smbclient écrit ses erreurs sur la même
+    sortie que le fichier) puis relaie le tout à VLC. Une erreur est expliquée par ce que le serveur a dit, entre guillemets
+    quand elle est inconnue (plus de « a répondu autrement que prévu »), avec ce que VLC avait dit d'abord.
+  * Le relais donne à VLC un vrai tube (et non la « socketpair » qu'asyncio fournit) : avec elle VLC ne lisait rien
+    (« prefetch stream error: cannot seek »), défaut trouvé en essayant avec le vrai VLC, que les faux programmes ne montraient pas.
+  * Journal : la machine (processeur, 32 ou 64 bits, noyau, distribution) est écrite en tête de /var/log/mydock/player.log ;
+    un « read failed » qui n'a pas de repli explique qu'il faut smbclient.
+  * Nouvelle version : 1.6.2 -> 1.6.3 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 13:00:00 +0000
+
 mydock (1.6.2) unstable; urgency=medium
 
   * Les vidéos ne se lançaient pas sur le Pi (Kiosque comme Freetv). Cause trouvée sur la photo de l'écran : VLC y parle

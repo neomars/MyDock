@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -125,6 +126,12 @@ def test_a_playback_that_never_started_is_explained(played, live, tail, expected
         (False, "main video output error: video output creation failed", None, "afficher la vidéo"),
         (False, "xcb window error: cannot open display :0", None, "xwayland"),
         (False, "", -11, "arrêté brutalement (SIGSEGV)"),
+        (
+            False,
+            "[00aa] smb stream error: read failed (Invalid argument)",
+            None,
+            "sudo apt install smbclient",
+        ),
         (False, "", -9, "arrêté brutalement (SIGKILL)"),
         (False, "", -250, "arrêté brutalement (signal 250)"),
         (True, "ffmpeg : Connection refused", None, "Détail : « ffmpeg : Connection refused »"),
@@ -224,6 +231,8 @@ volume = next((int(a.split("=")[1]) for a in args if a.startswith("--volume=")),
 config = args[args.index("--config") + 1] if "--config" in args else None
 record = {{"args": args, "display": os.environ.get("DISPLAY"), "lc_all": os.environ.get("LC_ALL"), "language": os.environ.get("LANGUAGE"), "config": open(config).read() if config else None}}
 if args[-1] == "fd://0":
+    import stat
+    record["stdin_is_pipe"] = stat.S_ISFIFO(os.fstat(0).st_mode)  # un vrai tube, pas une prise (VLC ne le lirait pas)
     record["stdin"] = os.read(0, 1000).decode("latin-1")
 json.dump(record, open(os.environ["FAKE_LOG"], "w"))
 if os.environ.get("FAKE_VLC_FAIL") and args[-1].startswith(os.environ.get("FAKE_VLC_FAIL_ON", "")):
@@ -284,14 +293,13 @@ exec sleep 30
 FAKE_SMBCLIENT = """\
 #!/bin/sh
 # Un faux smbclient (il n'hérite que d'un environnement minimal, comme le vrai : le journal est à un chemin fixe).
-# « allinfo » dit si le fichier existe, « get "nom" - » écrit des données sur sa sortie standard.
+# Comme le vrai, il écrit ses erreurs sur la sortie standard, c'est-à-dire dans la « vidéo ».
 printf '%s\\n' "$@" >> "@LOG@.smbclient"
 printf 'USER=%s\\n' "$USER" >> "@LOG@.smbclient.env"
-case "$*" in
-  *allinfo*)
-    if [ -f "@LOG@.smberror" ]; then cat "@LOG@.smberror"; exit 0; fi
-    printf 'altname: X\\ncreate_time: Thu Nov 12 08:28:37 2026 UTC\\n'; exit 0 ;;
-esac
+if [ -f "@LOG@.smbslow" ]; then sleep 30; fi
+if [ -f "@LOG@.smberror" ]; then cat "@LOG@.smberror"; exit 1; fi
+if [ -f "@LOG@.smbsilent" ]; then exit 1; fi
+if [ -f "@LOG@.smbbig" ]; then head -c 200000 /dev/zero | tr '\\0' 'A'; exec sleep 30; fi
 printf 'SMBDATA'
 exec sleep 30
 """
@@ -948,6 +956,9 @@ async def test_when_vlc_cannot_open_a_share_file_smbclient_gives_it_to_vlc_throu
     record = json.loads(fakes.log.read_text())
     assert record["args"][-2:] == ["--", "fd://0"]
     assert record["stdin"].startswith("SMBDATA")
+    assert (
+        record["stdin_is_pipe"] is True
+    )  # asyncio donnerait une « socketpair » : VLC n'y lirait rien (constaté)
     assert "--file-caching=3000" in record["args"]
     assert "--config" not in record["args"]  # le mot de passe n'a plus à passer par VLC
 
@@ -957,6 +968,9 @@ async def test_when_vlc_cannot_open_a_share_file_smbclient_gives_it_to_vlc_throu
     assert 'get "Un film d\'été.mkv" -' in arguments
     assert "-N" not in arguments  # il y a un identifiant
     assert not any("motdepasse-de-ligon" in a for a in arguments)  # jamais dans les arguments
+    assert "allinfo" not in " ".join(
+        arguments
+    )  # pas de contrôle préalable : le premier bloc dit tout
     assert "USER=ligon%motdepasse-de-ligon" in Path(str(fakes.log) + ".smbclient.env").read_text()
 
     text = journal.read_text(encoding="utf-8")
@@ -969,28 +983,133 @@ async def test_when_vlc_cannot_open_a_share_file_smbclient_gives_it_to_vlc_throu
     assert playerlog.FAILURE_MARK not in text  # tout s'est bien terminé
 
 
-async def test_the_pipe_is_not_tried_when_smbclient_cannot_reach_the_file(
+async def test_an_error_smbclient_writes_into_the_stream_is_explained_not_given_to_vlc(
     fakes, fast, monkeypatch, journal
 ):
     monkeypatch.setenv("FAKE_VLC_FAIL", "1")
     monkeypatch.setenv("FAKE_VLC_FAIL_ON", "smb://")
     monkeypatch.setenv(
-        "FAKE_VLC_STDERR", "[00aa] smb stream error: open failed for 'nas/x' (Invalid argument)\n"
+        "FAKE_VLC_STDERR", "[00aa] smb stream error: read failed (Invalid argument)\n"
     )
     Path(str(fakes.log) + ".smberror").write_text("tree connect failed: NT_STATUS_ACCESS_DENIED\n")
     s, box = session(fakes), Mailbox()
     await s.handle(smb_message(9), box)
     await box.wait(lambda m: m["t"] == "ended", timeout=15)
     error = box.of("ended")[0]["error"]
-    assert (
-        "Accès refusé" in error
-    )  # la raison de smbclient (il écrit ses erreurs sur la sortie standard : on le vérifie avant)
+    assert "Accès refusé" in error  # la raison que smbclient a écrite dans le flux
     assert "VLC et smbclient ont tous deux essayé" in error
     assert (
-        "get " not in Path(str(fakes.log) + ".smbclient").read_text()
-    )  # le tube n'a pas été lancé
+        "direct : smb stream error: read failed (Invalid argument)" in error
+    )  # ce que VLC avait dit d'abord
     assert "motdepasse-de-ligon" not in error
-    assert "smbclient n'atteint pas le fichier" in journal.read_text(encoding="utf-8")
+    record = json.loads(fakes.log.read_text())
+    assert record["args"][-1].startswith(
+        "smb://"
+    )  # le second VLC n'a jamais été lancé : le texte d'erreur ne lui a pas été donné
+    text = journal.read_text(encoding="utf-8")
+    assert "smbclient| tree connect failed: NT_STATUS_ACCESS_DENIED" in text
+    assert "smbclient n'a pas donné le fichier" in text
+    assert "motdepasse-de-ligon" not in text
+
+
+async def test_an_error_the_table_does_not_know_is_quoted_instead_of_called_unexpected(
+    fakes, fast, monkeypatch
+):
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_FAIL_ON", "smb://")
+    monkeypatch.setenv(
+        "FAKE_VLC_STDERR", "[00aa] smb stream error: read failed (Invalid argument)\n"
+    )
+    Path(str(fakes.log) + ".smberror").write_text(
+        "NT_STATUS_INVALID_PARAMETER opening remote file \\x.mkv\n"
+    )
+    s, box = session(fakes), Mailbox()
+    await s.handle(smb_message(11), box)
+    await box.wait(lambda m: m["t"] == "ended", timeout=15)
+    error = box.of("ended")[0]["error"]
+    assert "NT_STATUS_INVALID_PARAMETER" in error
+    assert "autrement que prévu" not in error
+
+
+async def test_a_smbclient_that_says_nothing_is_reported(fakes, fast, monkeypatch):
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_FAIL_ON", "smb://")
+    monkeypatch.setenv(
+        "FAKE_VLC_STDERR", "[00aa] smb stream error: read failed (Invalid argument)\n"
+    )
+    Path(str(fakes.log) + ".smbsilent").write_text("")
+    s, box = session(fakes), Mailbox()
+    await s.handle(smb_message(12), box)
+    await box.wait(lambda m: m["t"] == "ended", timeout=15)
+    assert "n'a rien lu" in box.of("ended")[0]["error"]
+
+
+async def test_a_smbclient_that_does_not_answer_ends_in_a_sentence_not_a_hang(
+    fakes, fast, monkeypatch
+):
+    monkeypatch.setattr(ps, "SMB_FIRST_BLOCK_WAIT", 0.6)
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_FAIL_ON", "smb://")
+    monkeypatch.setenv(
+        "FAKE_VLC_STDERR", "[00aa] smb stream error: read failed (Invalid argument)\n"
+    )
+    Path(str(fakes.log) + ".smbslow").write_text("")
+    s, box = session(fakes), Mailbox()
+    await s.handle(smb_message(13), box)
+    await box.wait(lambda m: m["t"] == "ended", timeout=15)
+    assert "ne répond pas" in box.of("ended")[0]["error"]
+
+
+async def test_the_startup_report_says_what_the_pi_is_and_what_it_found(fakes, journal):
+    s = session(fakes)
+    await s.log_startup()
+    text = journal.read_text(encoding="utf-8")
+    assert "=== assistant de lecture démarré ===" in text
+    assert re.search(
+        r"machine : \S+, Python en (32|64) bits, noyau ", text
+    )  # un Pi en 32 bits lit mal les gros fichiers
+    assert f"VLC : {fakes.vlc}" in text
+    assert f"smbclient : {fakes.smbclient}" in text
+    assert "modules de VLC : " in text
+    assert "langue de la session" in text
+
+
+async def test_the_whole_file_is_relayed_to_vlc_not_only_the_first_block(fakes, fast, monkeypatch):
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_FAIL_ON", "smb://")
+    monkeypatch.setenv(
+        "FAKE_VLC_STDERR", "[00aa] smb stream error: read failed (Invalid argument)\n"
+    )
+    Path(str(fakes.log) + ".smbbig").write_text("")
+    s, box = session(fakes), Mailbox()
+    await s.handle(smb_message(14), box)
+    await box.wait(
+        lambda m: m["t"] == "state" and m["job"] == 14 and m["state"] == "playing", timeout=15
+    )
+    record = json.loads(fakes.log.read_text())
+    assert (
+        record["stdin"] == "A" * 1000
+    )  # VLC a reçu les octets du fichier, pas le texte d'un message
+    await s._stop_playback()
+
+
+async def test_stopping_a_relayed_playback_stops_smbclient_too(fakes, fast, monkeypatch):
+    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
+    monkeypatch.setenv("FAKE_VLC_FAIL_ON", "smb://")
+    monkeypatch.setenv(
+        "FAKE_VLC_STDERR", "[00aa] smb stream error: read failed (Invalid argument)\n"
+    )
+    s, box = session(fakes), Mailbox()
+    await s.handle(smb_message(15), box)
+    await box.wait(
+        lambda m: m["t"] == "state" and m["job"] == 15 and m["state"] == "playing", timeout=15
+    )
+    pids = [process.pid for process in s._playback._procs]
+    assert len(pids) == 2  # smbclient puis VLC
+    await s._stop_playback()
+    for pid in pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)  # plus aucun des deux
 
 
 async def test_no_second_attempt_when_the_share_file_is_unknown_to_the_helper(

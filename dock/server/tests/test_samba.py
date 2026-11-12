@@ -469,91 +469,61 @@ def test_the_password_goes_in_the_environment_only():
     )
 
 
-def _fake_smbclient(tmp_path, body):
-    script = tmp_path / "smbclient"
-    script.write_text("#!/bin/sh\n" + body)
-    script.chmod(0o755)
-    return str(script)
+@pytest.mark.parametrize(
+    "first_block",
+    [
+        b"NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\absent.mkv\n",
+        b"Anonymous login successful\ntree connect failed: NT_STATUS_ACCESS_DENIED\n",
+        b"tree connect failed: NT_STATUS_BAD_NETWORK_NAME\n",
+        b"session setup failed: NT_STATUS_LOGON_FAILURE\n",
+        b"protocol negotiation failed: NT_STATUS_IO_TIMEOUT\n",
+        b"do_connect: Connection to nas failed (Error NT_STATUS_HOST_UNREACHABLE)\n",
+        b"Unable to initialize messaging context\n",
+    ],
+)
+def test_what_smbclient_writes_on_failure_is_told_from_a_video(first_block):
+    assert samba.output_is_error(first_block)
 
 
-async def test_a_file_smbclient_reaches_is_accepted(tmp_path):
-    binary = _fake_smbclient(tmp_path, "printf 'altname: X\\ncreate_time: Thu Nov 12 2026\\n'\n")
-    assert await samba.check_file(binary, "nas", "S", ["a.mkv"], user="", password="") is None
+@pytest.mark.parametrize(
+    "first_block",
+    [
+        b"\x1aE\xdf\xa3\x9fB\x86\x81\x01B\xf7\x81\x01B\xf2\x81\x04",  # Matroska
+        b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2avc1mp41",  # MP4
+        b"RIFF\x00\x00\x00\x00AVI LIST",  # AVI
+        b"G@\x00\x10\x00\x00\xb0\x0d\x00\x01\xc1\x00\x00\x00\x01\xe0\x20",  # MPEG-TS
+        b"\x89" * 600,
+    ],
+)
+def test_the_beginning_of_a_real_video_is_never_taken_for_an_error(first_block):
+    assert not samba.output_is_error(first_block)
 
 
 @pytest.mark.parametrize(
     ("output", "expected"),
     [
         ("tree connect failed: NT_STATUS_ACCESS_DENIED", "Accès refusé"),
-        ("NT_STATUS_LOGON_FAILURE", "refusé"),
-        ("NT_STATUS_OBJECT_NAME_NOT_FOUND getting alt name for \\\\a.mkv", "n'existe"),
+        ("session setup failed: NT_STATUS_LOGON_FAILURE", "refusé"),
+        ("NT_STATUS_OBJECT_NAME_NOT_FOUND opening remote file \\a.mkv", "Ce fichier n'existe plus"),
+        ("NT_STATUS_NO_SUCH_FILE", "Ce fichier n'existe plus"),
         ("tree connect failed: NT_STATUS_BAD_NETWORK_NAME", "partage n'existe pas"),
-        ("", "autrement que prévu"),
+        ("do_connect: Connection to nas failed (Error NT_STATUS_HOST_UNREACHABLE)", "injoignable"),
+        (
+            "NT_STATUS_INVALID_PARAMETER opening remote file \\a.mkv",
+            "« NT_STATUS_INVALID_PARAMETER opening remote file",
+        ),
+        ("", "n'a rien lu"),
     ],
 )
-async def test_a_file_smbclient_cannot_reach_is_explained_before_the_pipe_is_started(
-    tmp_path, output, expected
-):
-    """smbclient écrit ses erreurs sur la sortie standard (la vidéo) : on les lit avant de lancer le tube."""
-    binary = _fake_smbclient(tmp_path, f"printf '%s\\n' '{output}'\nexit 0\n")
-    message = await samba.check_file(binary, "nas", "S", ["a.mkv"], user="ligon", password="x")
-    assert message is not None
-    assert expected in message
-
-
-async def test_the_file_check_refuses_a_name_that_would_break_the_command_line(tmp_path):
-    called = tmp_path / "appele"
-    binary = _fake_smbclient(tmp_path, f"touch '{called}'\n")
-    message = await samba.check_file(binary, "nas", "S", ['a";rm "b.mkv'], user="", password="")
-    assert message is not None
-    assert not called.exists()  # smbclient n'a même pas été lancé
-
-
-async def test_the_file_check_does_not_wait_for_a_silent_server(tmp_path):
-    binary = _fake_smbclient(tmp_path, "sleep 30\n")
-    started = time.monotonic()
-    message = await samba.check_file(
-        binary, "nas", "S", ["a.mkv"], user="", password="", timeout=1.0
-    )
-    assert message == "Le serveur de fichiers ne répond pas."
-    assert time.monotonic() - started < 8
-
-
-async def test_the_file_check_says_when_smbclient_cannot_start(tmp_path):
-    message = await samba.check_file(
-        str(tmp_path / "absent"), "nas", "S", ["a.mkv"], user="", password=""
-    )
-    assert message is not None
-    assert "smbclient ne démarre pas" in message
+def test_the_reason_a_share_file_was_not_given_is_told_or_quoted(output, expected):
+    """Une erreur que la table ne connaît pas n'est jamais « autrement que prévu » : on cite ce que le serveur a dit."""
+    assert expected in samba.explain_stream(output, "nas")
 
 
 @needs_samba
-async def test_a_real_server_gives_its_file_through_the_pipe_and_check_file_agrees(nas):
+async def test_a_real_server_gives_its_file_through_the_pipe(nas):
     binary = shutil.which("smbclient")
     assert binary
-    assert (
-        await samba.check_file(
-            binary,
-            "127.0.0.1",
-            "Disque dur",
-            ["Films", "Un film d'été (2020).mkv"],
-            user="",
-            password="",
-            port=nas.port,
-        )
-        is None
-    )
-    absent = await samba.check_file(
-        binary,
-        "127.0.0.1",
-        "Disque dur",
-        ["Films", "Absent.mkv"],
-        user="",
-        password="",
-        port=nas.port,
-    )
-    assert absent is not None
-    assert "n'existe" in absent
     command = samba.stream_command(
         binary,
         "127.0.0.1",
@@ -568,31 +538,48 @@ async def test_a_real_server_gives_its_file_through_the_pipe_and_check_file_agre
     )  # fmt: skip
     data, _ = await process.communicate()
     assert data == b"film"  # le fichier, octet pour octet : la sortie standard est la vidéo
+    assert not samba.output_is_error(data)
 
 
 @needs_samba
-async def test_a_real_protected_share_is_checked_with_its_identifier(nas):
+async def test_a_real_server_writes_its_errors_into_the_stream_and_they_are_recognised(nas):
+    """Le fait qui impose de lire le premier bloc avant VLC : l'erreur d'un `get` arrive sur la sortie du fichier."""
+    binary = shutil.which("smbclient")
+    assert binary
+    command = samba.stream_command(
+        binary, "127.0.0.1", "Disque dur", ["Films", "Absent.mkv"], user="", port=nas.port
+    )
+    process = await asyncio.create_subprocess_exec(
+        *command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        env=samba.smbclient_env("", ""),
+    )  # fmt: skip
+    data, _ = await process.communicate()
+    assert samba.output_is_error(data)
+    assert "n'existe plus" in samba.explain_stream(data.decode(), "127.0.0.1")
+
+
+@needs_samba
+async def test_a_real_protected_share_refuses_a_wrong_password_in_the_stream(nas):
     if not nas.is_root:
         pytest.skip("le partage à mot de passe demande un Samba lancé par root")
     binary = shutil.which("smbclient")
     assert binary
-    bad = await samba.check_file(
-        binary, "127.0.0.1", "Prive", ["secret.mkv"], user="freebox", password="faux", port=nas.port
-    )
-    assert bad is not None
-    assert "refusé" in bad
-    assert (
-        await samba.check_file(
-            binary,
-            "127.0.0.1",
-            "Prive",
-            ["secret.mkv"],
-            user="freebox",
-            password="motdepasse",
-            port=nas.port,
+
+    async def first_block(password):
+        command = samba.stream_command(
+            binary, "127.0.0.1", "Prive", ["secret.mkv"], user="freebox", port=nas.port
         )
-        is None
-    )
+        process = await asyncio.create_subprocess_exec(
+            *command, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            env=samba.smbclient_env("freebox", password),
+        )  # fmt: skip
+        data, _ = await process.communicate()
+        return data
+
+    bad = await first_block("faux")
+    assert samba.output_is_error(bad)
+    assert "refusé" in samba.explain_stream(bad.decode(), "127.0.0.1")
+    assert await first_block("motdepasse") == b"secret"
 
 
 @needs_samba

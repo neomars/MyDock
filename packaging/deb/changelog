@@ -1,3 +1,10 @@
+mydock-agent (1.6.3) unstable; urgency=medium
+
+  * Aucun changement du côté du PC : la version suit celle du dock (1.6.3), dont la lecture de secours par smbclient
+    n'est plus bloquée à tort (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 13:00:00 +0000
+
 mydock-agent (1.6.2) unstable; urgency=medium
 
   * Aucun changement du côté du PC : la version suit celle du dock (1.6.2), dont les vidéos se lancent enfin sur le Pi et
