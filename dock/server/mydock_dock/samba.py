@@ -19,6 +19,7 @@ import contextlib
 import os
 import re
 import shutil
+import signal
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any
@@ -108,6 +109,107 @@ def smb_url(host: str, share: str, parts: list[str]) -> str:
     """L'adresse smb:// d'un fichier, que VLC ouvre telle quelle."""
     quoted = "/".join(urllib.parse.quote(p, safe="") for p in [share, *parts])
     return f"smb://{host}/{quoted}"
+
+
+# --- lire un fichier par smbclient (quand le module Samba de VLC ne l'ouvre pas) ---------------------------------------
+
+
+def stream_name_is_safe(parts: list[str]) -> bool:
+    """Le nom du fichier peut-il se glisser dans « get "nom" - » ? smbclient lit sa ligne de commandes sans prudence :
+    « ; » sépare deux ordres (`get "a";rm "b"`) et « " » ferme le nom. Ces noms-là ne passent que par VLC."""
+    return bool(parts) and not any(c in parts[-1] for c in '";')
+
+
+def smbclient_args(
+    host: str,
+    share: str,
+    parts: list[str],
+    command: str,
+    *,
+    anonymous: bool,
+    port: int | None = None,
+) -> list[str]:
+    """Les arguments de smbclient (sans le programme) pour `command` sur le fichier `parts` : le dossier passe par -D,
+    jamais dans la commande ; le mot de passe n'est jamais là (il va dans l'environnement : voir smbclient_env)."""
+    args = [f"//{host}/{share}"]
+    if len(parts) > 1:
+        args += ["-D", "\\".join(parts[:-1])]
+    if port:
+        args += ["-p", str(port)]
+    if anonymous:
+        args.append("-N")
+    args += ["-s", "/dev/null", "--option=name resolve order=host", "-c", command]
+    return args
+
+
+def smbclient_env(user: str, password: str) -> dict[str, str]:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": "/tmp", "LC_ALL": "C.UTF-8"}
+    if user:
+        env["USER"] = f"{user}%{password}"  # jamais dans les arguments
+    return env
+
+
+def stream_command(
+    binary: str, host: str, share: str, parts: list[str], *, user: str, port: int | None = None
+) -> list[str]:
+    """smbclient qui écrit le fichier sur sa sortie standard (VLC le lit comme un tube)."""
+    if not stream_name_is_safe(parts):
+        raise SambaError("Ce nom de fichier ne peut pas être lu par smbclient.")
+    return [
+        binary,
+        *smbclient_args(host, share, parts, f'get "{parts[-1]}" -', anonymous=not user, port=port),
+    ]
+
+
+async def check_file(
+    binary: str,
+    host: str,
+    share: str,
+    parts: list[str],
+    *,
+    user: str,
+    password: str,
+    port: int | None = None,
+    timeout: float = 15.0,
+) -> str | None:
+    """`None` si smbclient atteint le fichier ; sinon la phrase qui dit pourquoi.
+
+    Nécessaire avant de lire le fichier par un tube : smbclient écrit ses erreurs sur sa sortie standard, c'est-à-dire
+    dans la vidéo, où personne ne les lirait."""
+    if not stream_name_is_safe(parts):
+        return "Ce nom de fichier ne peut pas être lu par smbclient."
+    command = [
+        binary,
+        *smbclient_args(
+            host, share, parts, f'allinfo "{parts[-1]}"', anonymous=not user, port=port
+        ),
+        "-t",
+        str(int(timeout)),
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=smbclient_env(user, password),
+            start_new_session=True,
+        )
+    except OSError as exc:
+        return f"smbclient ne démarre pas ({exc.strerror})."
+    try:
+        out, _ = await asyncio.wait_for(process.communicate(), timeout + 4)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(
+                process.pid, signal.SIGKILL
+            )  # tout le groupe : rien ne garde la sortie ouverte
+        await process.wait()
+        return "Le serveur de fichiers ne répond pas."
+    text = out.decode("utf-8", "replace")
+    if "NT_STATUS_" in text or "create_time" not in text:
+        return explain(text, host)
+    return None
 
 
 # --- ce que dit smbclient --------------------------------------------------------------------------------------------

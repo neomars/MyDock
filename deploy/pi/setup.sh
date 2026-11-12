@@ -62,11 +62,13 @@ DOCK=${MYDOCK_DOCK_BIN:-/usr/bin/mydock-dock}
 ETC=$PREFIX/etc/mydock
 KETC=$PREFIX/etc/mydock-kiosk
 STATE=$PREFIX/var/lib/mydock
+LOGDIR=$PREFIX/var/log/mydock
 UNIT_DIR=$PREFIX/etc/systemd/system
 CONFIG=$ETC/dock.toml
 # Chemins vus par les services (sans le préfixe de test).
 R_LIB=/usr/lib/mydock; R_ETC=/etc/mydock; R_KETC=/etc/mydock-kiosk; R_STATE=/var/lib/mydock
 R_WEB=/usr/share/mydock/web; R_CLIENTS=/usr/share/mydock/clients
+R_LOG=/var/log/mydock
 
 as_dock() { # exécute une commande sous l'utilisateur « mydock » (ou tel quel en test)
   if [ "$STAGING" = 1 ]; then run "$@"; else run runuser -u mydock -- "$@"; fi
@@ -123,6 +125,14 @@ fi
 if [ "$STAGING" != 1 ] && [ "$DRY_RUN" != 1 ]; then
   [ "$(stat -c %a "$CONFIG")" = 600 ] || die "La configuration n'est pas en droits 600 : $CONFIG"
 fi
+
+# --- 1b. Journaux du Divertissement (/var/log/mydock) ------------------------------------------------------------
+# player.log (l'assistant de lecture, qui tourne sous l'utilisateur de la session de l'écran) et dock.log (le serveur,
+# sous « mydock ») : un dossier ouvert à tous en écriture (1777, comme /tmp : chacun n'efface que ses fichiers). Ils ne
+# contiennent jamais de mot de passe ; ils servent à comprendre pourquoi une vidéo ne se lance pas.
+step "Journaux ($R_LOG)"
+run install -d -m 1777 "$LOGDIR"
+ok "Journaux : $R_LOG/player.log (lecture) et $R_LOG/dock.log (serveur)"
 
 # --- 2. Ancienne installation (script install-dock.sh, environnement dans /opt/mydock) ---------
 # Son unité, dans /etc/systemd/system, masquerait celle du paquet : on la retire.

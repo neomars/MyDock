@@ -63,7 +63,10 @@
       <h2>La lecture a échoué</h2>
       <p data-testid="media-error-text">{failure?.main}</p>
       {#if failure?.detail}<p class="detail dim" data-testid="media-error-detail">{failure.detail}</p>{/if}
-      <button class="btn" data-testid="media-error-ok" onclick={() => media.control('dismiss')}>Compris</button>
+      <div class="ok-row">
+        <button class="btn" data-testid="media-error-ok" onclick={() => media.control('dismiss')}>Compris</button>
+        <span class="dim hint" data-testid="media-error-log">Journal : /var/log/mydock/player.log</span>
+      </div>
     </section>
   {/if}
   {#if active && player}
@@ -155,6 +158,16 @@
   }
   .failed p {
     margin: 0;
+  }
+  .ok-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .hint {
+    font-size: var(--fs-cap);
+    overflow-wrap: anywhere;
   }
   .detail {
     font-size: var(--fs-cap);

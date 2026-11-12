@@ -487,6 +487,8 @@ export interface PlayerSnapshot {
   volume: number
   /** Quelle fenêtre est devant : la vidéo ou le dock (la télécommande). */
   front: 'video' | 'dock'
+  /** Faux quand le fichier arrive par un tube (smbclient) : pas d'avance ni de retour rapides. Absent d'un dock plus ancien. */
+  seekable?: boolean
   error: string | null
   helper: { vlc: boolean; live555: boolean; ffmpeg: boolean; touch: boolean; demo: boolean } | null
 }

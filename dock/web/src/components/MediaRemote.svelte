@@ -16,7 +16,8 @@
 
   const ratio = $derived(progressRatio(player))
   const paused = $derived(player.state === 'paused')
-  const seekable = $derived(!player.live && player.state !== 'starting')
+  // Pas d'avance rapide dans un direct, ni quand le fichier arrive par un tube (smbclient : VLC ne peut pas y revenir en arrière).
+  const seekable = $derived(!player.live && player.state !== 'starting' && player.seekable !== false)
 </script>
 
 <section class="remote card" data-testid="remote" data-state={player.state} data-front={player.front}>
@@ -24,7 +25,7 @@
     <div class="now">
       <h2 data-testid="remote-title">{player.title}</h2>
       <p class="meta">
-        {#if player.subtitle}<span class="dim" data-testid="remote-subtitle">{player.subtitle}</span>{' · '}{/if}<span class="state" class:wait={player.state === 'starting'} data-testid="remote-state">{stateText(player)}</span>
+        {#if player.subtitle}<span class="dim" data-testid="remote-subtitle">{player.subtitle}</span>{' · '}{/if}<span class="state" class:wait={player.state === 'starting'} data-testid="remote-state">{stateText(player)}</span>{#if player.seekable === false && !player.live}<span class="dim" data-testid="remote-noseek">{' · '}sans avance rapide</span>{/if}
       </p>
     </div>
     <button class="btn" data-testid="media-other" onclick={onMenu}><ArrowLeft size={30} aria-hidden="true" />Menu</button>

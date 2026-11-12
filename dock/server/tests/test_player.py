@@ -141,6 +141,56 @@ async def test_the_helper_reports_progress_and_the_end():
     assert h.front == "dock"
 
 
+async def test_a_file_read_through_a_pipe_has_no_fast_forward_and_the_next_playback_starts_afresh():
+    h, conn, _ = hub()
+    assert h.snapshot()["seekable"] is True
+    h.play({"kind": "file", "title": "Film", "live": False}, "smb://nas/x/film.mkv")
+    h.on_message(
+        conn,
+        {
+            "t": "state",
+            "job": 1,
+            "state": "playing",
+            "position": 3,
+            "length": 90,
+            "seekable": False,
+        },
+    )
+    assert h.snapshot()["seekable"] is False
+    h.on_message(conn, {"t": "state", "job": 1, "state": "playing", "position": 4, "length": 90})
+    assert h.snapshot()["seekable"] is True  # un rapport sans le mot : le cas général
+    h.on_message(
+        conn,
+        {
+            "t": "state",
+            "job": 1,
+            "state": "playing",
+            "position": 5,
+            "length": 90,
+            "seekable": False,
+        },
+    )
+    h.play({"kind": "file", "title": "Autre", "live": False}, "smb://nas/x/autre.mkv")
+    assert h.snapshot()["seekable"] is True  # une nouvelle lecture repart de zéro
+
+
+async def test_the_smb_source_is_passed_to_the_helper_but_never_to_the_screen():
+    h, conn, _ = hub()
+    media = {
+        "kind": "file",
+        "title": "F",
+        "live": False,
+        "smb": {"host": "nas", "share": "S", "path": "a/b.mkv"},
+    }
+    h.play(media, "smb://nas/S/a/b.mkv", secrets={"smb_user": "u", "smb_password": "p"})
+    command = sent(conn)[-1]
+    assert command["smb"] == {"host": "nas", "share": "S", "path": "a/b.mkv"}
+    assert (command["smb_user"], command["smb_password"]) == ("u", "p")
+    assert "smb" not in h.snapshot()
+    h.play({"kind": "tv", "title": "TF1", "live": True}, "rtsp://box/x")
+    assert "smb" not in sent(conn)[-1]  # une chaîne n'a pas de partage
+
+
 async def test_an_error_from_the_helper_is_kept_for_the_screen():
     h, conn, _ = hub()
     h.play({"title": "x"}, "rtsp://h/x")
@@ -478,6 +528,12 @@ async def test_a_file_starts_with_its_share_address_and_the_identifier_only_when
             == "smb://nas.local/Disque%20dur/Films/Un%20film%20d%27%C3%A9t%C3%A9%20%282020%29.mkv"
         )
         assert command["live"] is False
+        # De quoi lire le fichier par smbclient si VLC n'y arrive pas : l'hôte, le partage et le chemin, jamais de secret.
+        assert command["smb"] == {
+            "host": "nas.local",
+            "share": "Disque dur",
+            "path": "Films/Un film d'été (2020).mkv",
+        }
         assert "smb_user" not in command  # accès libre : rien de secret n'est envoyé
         assert (
             await call(
@@ -490,10 +546,12 @@ async def test_a_file_starts_with_its_share_address_and_the_identifier_only_when
         await call(browser, "q", "dock.player.play", params)
         command = await command_of(ws)
         assert (command["smb_user"], command["smb_password"]) == ("freebox", "motdepasse")
+        assert command["smb"]["share"] == "Disque dur"
         snapshot = (await snapshot_of(browser, "player"))["data"]
         assert snapshot["title"] == "Un film d'été (2020)"
         assert snapshot["subtitle"] == "Disque dur/Films"
         assert "motdepasse" not in json.dumps(snapshot)
+        assert "smb" not in snapshot  # l'écran ne reçoit ni adresse ni chemin construit
 
 
 @pytest.mark.parametrize(
