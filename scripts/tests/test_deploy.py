@@ -154,7 +154,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 1.6.1")
+    assert version.stdout.startswith("mydock-agent 1.6.2")
 
 
 @pytest.mark.slow
@@ -319,6 +319,16 @@ def test_pi_setup_says_where_the_pc_goes_next(pi_setup):
     assert "ouvre   http://" in out
     assert ".local/" in out
     assert "mydock-dock doctor" in out
+
+
+def test_pi_setup_creates_the_journal_directory_everyone_can_write_to(pi_setup):
+    """player.log (session de l'écran) et dock.log (utilisateur « mydock ») : un dossier à bit collant, comme /tmp."""
+    log_dir = pi_setup["prefix"] / "var/log/mydock"
+    assert log_dir.is_dir()
+    assert mode(log_dir) == 0o1777
+    out = pi_setup["first"].stdout
+    assert "/var/log/mydock/player.log" in out
+    assert "/var/log/mydock/dock.log" in out
 
 
 def test_pi_kiosk_configuration_is_readable_by_the_browser_user(pi_setup):

@@ -1,3 +1,28 @@
+mydock (1.6.2) unstable; urgency=medium
+
+  * Les vidéos ne se lançaient pas sur le Pi (Kiosque comme Freetv). Cause trouvée sur la photo de l'écran : VLC y parle
+    français (« Votre média d'entrée ne peut être ouvert »), et tout ce que l'assistant de lecture reconnaissait dans
+    ses messages — accès refusé, fichier introuvable, module manquant, mais aussi l'état « en pause » — était écrit en
+    anglais : aucune cause n'était donc jamais reconnue, et le message de VLC n'expliquait rien. VLC, ffmpeg et smbclient
+    tournent maintenant en C.UTF-8 (anglais), quelle que soit la langue de la session.
+  * Kiosque : quand VLC n'ouvre pas le fichier d'un partage (son module Samba absent, ou qui échoue là où smbclient,
+    lui, parcourt le partage), le fichier est lu par smbclient et donné à VLC par un tube. Une vérification préalable
+    (smbclient écrit ses erreurs sur la même sortie que la vidéo) dit pourquoi si le fichier n'est pas accessible. Ce
+    mode n'a pas d'avance rapide : la télécommande grise les sauts et l'écrit. Le nom du fichier est vérifié (un « ; »
+    ou un « " » ferait exécuter un autre ordre à smbclient) ; le mot de passe reste dans l'environnement de smbclient.
+  * Freetv : ffmpeg ne recopie plus que l'image et le son d'une chaîne (un flux de télévision porte aussi du télétexte
+    et des données qu'un copie brut ne sait pas écrire) ; avec le module RTSP de VLC, le pont ffmpeg sert de second essai.
+  * Journal de débogage : /var/log/mydock/player.log (la lecture : ce que le dock a demandé, les commandes lancées, tout
+    ce que VLC — lancé en -vv — ffmpeg et smbclient disent, les tentatives, la fin) et /var/log/mydock/dock.log (le
+    serveur : liste des chaînes, partages parcourus, lectures demandées ou refusées). Ils tournent (1,5 Mo, trois
+    anciens gardés), ne contiennent jamais de mot de passe, et l'écran d'une lecture ratée donne leur chemin. Le dossier est
+    créé par l'installation (droits 1777). mydock-dock doctor les nomme et montre les dernières lectures ratées.
+  * Le détail d'une erreur de VLC montre ses premières lignes utiles (la cause) au lieu des dernières (phrases génériques).
+  * Une mise à jour relance l'assistant de lecture dans la session ouverte (pas de redémarrage du Pi en mode bureau).
+  * Nouvelle version : 1.6.1 -> 1.6.2 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 10:00:00 +0000
+
 mydock (1.6.1) unstable; urgency=medium
 
   * Freetv : « Les chaînes ne sont pas disponibles » alors que la liste s'ouvre depuis un PC du même réseau. Le nom que

@@ -26,14 +26,18 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import signal
 import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+from mydock_dock import playerlog, samba
 
 log = logging.getLogger("mydock.player")
 
@@ -41,7 +45,6 @@ DEFAULT_URL = "ws://127.0.0.1:8080/ws/player"
 #: Options supplémentaires de VLC, une par ligne (# = commentaire) ; la variable donne un autre fichier (essais).
 FLAGS_FILE = "/etc/mydock-kiosk/vlc.flags"
 FLAGS_ENV = "MYDOCK_VLC_FLAGS"
-LOG_NAME = "mydock-player.log"  # dans le dossier d'exécution de la session : la dernière lecture qui a échoué
 POLL_SECONDS = 1.0
 RC_WAIT = 20.0  # temps laissé à VLC pour ouvrir son socket de commande
 #: Après être passé à la vidéo, un toucher n'est pas pris pour une demande de retour au dock (c'est celui qui l'a lancée).
@@ -120,6 +123,7 @@ def vlc_command(
         # suite, « Permission denied »), et pas de trousseau de clés (il cherche D-Bus, absent de la session du kiosque).
         "--no-interact",
         "--keystore=memory",
+        "--verbose=2",  # tout ce que VLC fait va dans le journal (/var/log/mydock/player.log)
         "--no-snapshot-preview",
         f"--volume={round(volume * VLC_VOLUME_MAX / 100)}",
         *extra,
@@ -136,11 +140,15 @@ def ffmpeg_bridge_command(ffmpeg: str, url: str) -> list[str]:
         "-nostdin",
         "-hide_banner",
         "-loglevel",
-        "error",
+        "info",
         "-i",
         url,
+        # L'image et le son seulement : un flux de télévision porte aussi du télétexte et des données (EPG) que ffmpeg
+        # ne sait pas recopier tels quels dans un MPEG-TS (« Could not write header »).
         "-map",
-        "0",
+        "0:v?",
+        "-map",
+        "0:a?",
         "-c",
         "copy",
         "-f",
@@ -161,21 +169,34 @@ _VLC_NOISE = (
     "globalhotkeys",
     "no suitable interface",
     "end of playlist",
-    "your input can't be opened",
-    "check the log for details",
 )
+#: Les lignes génériques de VLC (« votre média ne peut être ouvert ») : elles viennent après la vraie cause, qu'on préfère.
+_VLC_GENERIC = ("your input can't be opened", "unable to open the mrl")
 _VLC_PREFIX = re.compile(r"^\[[0-9a-fA-F]+\]\s*")
+_VLC_CHECK_LOG = re.compile(r"\s*Check the log for details\.?\s*$")
 
 
 def vlc_detail(tail: str, limit: int = 200) -> str:
-    """Les dernières lignes utiles de ce que VLC a écrit (sans l'adresse mémoire de tête ni le bruit habituel), en une phrase."""
-    lines: list[str] = []
+    """Les premières lignes utiles de ce que VLC a dit d'anormal (la cause vient avant les phrases génériques), en une phrase.
+
+    Sans l'adresse mémoire de tête ni le bruit habituel ; les erreurs passent avant les avertissements."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    generic: list[str] = []
     for raw in tail.splitlines():
-        line = _VLC_PREFIX.sub("", raw).strip()
+        line = _VLC_CHECK_LOG.sub("", _VLC_PREFIX.sub("", raw).strip())
         lowered = line.lower()
-        if line and not any(noise in lowered for noise in _VLC_NOISE) and line not in lines:
-            lines.append(line)
-    text = " ; ".join(lines[-2:])
+        if not line or any(noise in lowered for noise in _VLC_NOISE):
+            continue
+        if any(word in lowered for word in _VLC_GENERIC):
+            bucket = generic
+        elif " warning: " in lowered:
+            bucket = warnings
+        else:
+            bucket = errors
+        if line not in bucket:
+            bucket.append(line)
+    text = " ; ".join((errors or warnings or generic)[:2])
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
@@ -186,7 +207,9 @@ def explain_exit(played: bool, live: bool, tail: str, code: int | None = None) -
     lowered = tail.lower()
     detail = vlc_detail(tail)
     more = f" Détail : « {detail} »." if detail else ""
-    if "permission denied" in lowered or "access denied" in lowered or "logon" in lowered:
+    if any(
+        word in lowered for word in ("permission denied", "access denied", "access_denied", "logon")
+    ):
         return (
             "Accès refusé au partage : vérifie l'identifiant et le mot de passe (Réglages → Divertissement)."
             + more
@@ -297,8 +320,68 @@ class Playback(Protocol):
     def error(self) -> str | None: ...
 
 
+@dataclass(frozen=True)
+class SmbSource:
+    """Où est le fichier d'un partage Samba, en morceaux (de quoi le lire par smbclient si VLC n'y arrive pas)."""
+
+    host: str
+    share: str
+    parts: tuple[str, ...]
+
+
+_HOST = re.compile(r"^[A-Za-z0-9._:-]{1,253}$")
+
+
+def smb_source_from(message: dict[str, Any]) -> SmbSource | None:
+    """Ce que le dock envoie (`smb` : hôte, partage, chemin) ; rien si ce n'est pas un fichier de partage ou s'il est suspect."""
+    raw = message.get("smb")
+    if not isinstance(raw, dict):
+        return None
+    host = raw.get("host")
+    if not isinstance(host, str) or not _HOST.fullmatch(host):
+        return None
+    try:
+        share = samba.clean_share(raw.get("share"))
+        parts = samba.clean_path(raw.get("path"))
+    except samba.SambaError:
+        return None
+    return SmbSource(host, share, tuple(parts)) if parts else None
+
+
+def plan_attempts(
+    url: str,
+    *,
+    live555: bool,
+    ffmpeg: str | None,
+    smbclient: str | None,
+    smb: SmbSource | None,
+) -> list[str]:
+    """Les façons d'essayer de lire `url`, dans l'ordre : quand l'une échoue avant la première image, on passe à la suivante.
+
+    `direct` : VLC ouvre l'adresse lui-même. `ffmpeg` : ffmpeg lit le RTSP et le recopie (sans décoder) vers VLC.
+    `smbclient` : smbclient lit le fichier du partage et le donne à VLC par un tube (sans module Samba, sans avance rapide)."""
+    scheme = url.split(":", 1)[0].lower()
+    if scheme == "rtsp":
+        if live555:
+            return ["direct", *(["ffmpeg"] if ffmpeg else [])]
+        return ["ffmpeg"]
+    if scheme == "smb":
+        usable = bool(smbclient and smb and samba.stream_name_is_safe(list(smb.parts)))
+        return ["direct", *(["smbclient"] if usable else [])]
+    return ["direct"]
+
+
+#: Ce que dit ffmpeg qui explique un échec (avec `-loglevel info` il parle beaucoup : on ne garde que cela pour la phrase).
+_FFMPEG_ISSUE = re.compile(
+    r"error|fail|unsupported|refused|timed out|timeout|not found|invalid|unauthorized|forbidden|could not|cannot|no such|"
+    r"\b[45]\d\d\b",
+    re.IGNORECASE,
+)
+MAX_LOGGED_LINES = 4000  # par lecture : le journal ne doit pas grossir sans fin si VLC bavarde
+
+
 class VlcPlayback:
-    """Une lecture : VLC (et ffmpeg si la chaîne passe par le pont), jusqu'à la fin ou l'arrêt."""
+    """Une lecture : VLC (et ffmpeg ou smbclient si la source passe par un tube), jusqu'à la fin ou l'arrêt."""
 
     def __init__(
         self,
@@ -314,42 +397,116 @@ class VlcPlayback:
         extra: Sequence[str] = (),
         smb: tuple[str, str] | None = None,
         job: int = 0,
+        smbclient: str | None = None,
+        smb_source: SmbSource | None = None,
     ) -> None:
         self.url, self.live, self.volume = url, live, volume
         self._vlc, self._ffmpeg, self._live555 = vlc, ffmpeg, live555
         self._dir, self._env, self._extra, self._smb = runtime_dir, env, list(extra), smb
         self._job = job
+        self._smbclient, self._smb_source = smbclient, smb_source
+        self._attempts = plan_attempts(
+            url, live555=live555, ffmpeg=ffmpeg, smbclient=smbclient, smb=smb_source
+        )
+        self._attempt = -1
+        self.mode = ""
+        self.seekable = True
         self._procs: list[asyncio.subprocess.Process] = []
         self._rc: RcClient | None = None
         self._drains: list[asyncio.Task[None]] = []
-        self._stderr_tail = ""
+        self._issues: list[
+            str
+        ] = []  # ce que VLC, ffmpeg, smbclient ont dit d'anormal, de la dernière tentative
+        self._logged = 0
         self._played = False
         self._paused = False
         self._stopped = False
         self._started = time.monotonic()
         self._socket = str(runtime_dir / f"vlc-{os.getpid()}-{job}.sock")
         self._config: Path | None = None
+        self._failed_precheck: str | None = None
+        if smb is not None:
+            playerlog.add_secret(smb[1])
 
     @property
     def finished(self) -> bool:
         return bool(self._procs) and self._procs[-1].returncode is not None
 
+    # --- démarrage -------------------------------------------------------------------------------------------
+
     async def start(self) -> None:
+        await self._next_attempt()
+
+    async def recover(self) -> bool:
+        """VLC s'est arrêté avant la première image : essayer la façon suivante, s'il en reste. `True` : relancé."""
+        if self._played or self._stopped or self._attempt + 1 >= len(self._attempts):
+            return False
+        playerlog.event(
+            f"lecture {self._job} : la tentative « {self.mode} » a échoué ({self._summary() or 'sans message'}) ; "
+            f"on essaie « {self._attempts[self._attempt + 1]} »"
+        )
+        await self._terminate()
+        try:
+            await self._next_attempt()
+        except (OSError, RuntimeError) as exc:
+            self._issues.append(str(exc))
+            return False
+        return True
+
+    async def _next_attempt(self) -> None:
+        self._attempt += 1
+        mode = self._attempts[self._attempt]
+        self._issues = []
+        self._rc = None
+        self._procs = []
+        self._drains = []
+        self._logged = 0
+        self._started = time.monotonic()
+        self.mode = mode
+        playerlog.event(
+            f"lecture {self._job} : tentative {self._attempt + 1}/{len(self._attempts)} « {mode} » pour {self.url}"
+        )
+        await self._launch(mode)
+
+    async def _launch(self, mode: str) -> None:
         source = self.url
         extra = list(self._extra)
-        stdin: int | None = None
-        bridge_fd: int | None = None
-        if needs_bridge(self.url, self._live555):
+        bridge: list[str] | None = None
+        bridge_label = ""
+        bridge_env: dict[str, str] | None = None
+        if mode == "ffmpeg":
             if not self._ffmpeg:
                 raise RuntimeError(
                     "ffmpeg manque : sudo apt install ffmpeg (VLC ne lit pas les chaînes de la Freebox sans lui)."
                 )
-            read_fd, bridge_fd = os.pipe()
-            stdin, source = read_fd, "fd://0"
+            bridge, bridge_label = ffmpeg_bridge_command(self._ffmpeg, self.url), "ffmpeg"
+            source = "fd://0"
             extra += ["--network-caching=1500"]
+        elif mode == "smbclient":
+            assert self._smb_source is not None
+            assert self._smbclient is not None
+            src = self._smb_source
+            user, password = self._smb or ("", "")
+            problem = await samba.check_file(
+                self._smbclient, src.host, src.share, list(src.parts), user=user, password=password
+            )
+            if problem is not None:
+                self._failed_precheck = problem
+                self._issues.append(f"smbclient : {problem}")
+                playerlog.event(
+                    f"lecture {self._job} : smbclient n'atteint pas le fichier : {problem}"
+                )
+                raise RuntimeError(problem)
+            bridge = samba.stream_command(
+                self._smbclient, src.host, src.share, list(src.parts), user=user
+            )
+            bridge_label, bridge_env = "smbclient", samba.smbclient_env(user, password)
+            source = "fd://0"
+            extra += ["--file-caching=3000"]
+            self.seekable = False  # VLC ne revient pas en arrière dans un tube
         elif self.live:
             extra += ["--network-caching=1500", "--live-caching=1500"]
-        if self._smb is not None:
+        if mode == "direct" and self._smb is not None and self._config is None:
             self._config = self._dir / f"vlc-{os.getpid()}-{self._job}.conf"
             fd = os.open(self._config, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -359,20 +516,28 @@ class VlcPlayback:
             source,
             self._socket,
             volume=self.volume,
-            config_file=str(self._config) if self._config else None,
+            config_file=str(self._config) if self._config and mode == "direct" else None,
             extra=extra,
         )
+        playerlog.event(f"lecture {self._job} : commande VLC : {shlex.join(command)}")
+        stdin: int | None = None
+        bridge_fd: int | None = None
+        if bridge is not None:
+            read_fd, bridge_fd = os.pipe()
+            stdin = read_fd
+            playerlog.event(f"lecture {self._job} : commande {bridge_label} : {shlex.join(bridge)}")
         try:
-            if bridge_fd is not None and self._ffmpeg:
-                bridge = await asyncio.create_subprocess_exec(
-                    *ffmpeg_bridge_command(self._ffmpeg, self.url),
+            if bridge is not None and bridge_fd is not None:
+                process = await asyncio.create_subprocess_exec(
+                    *bridge,
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=bridge_fd,
                     stderr=asyncio.subprocess.PIPE,
+                    env=bridge_env if bridge_env is not None else self._env,
                     start_new_session=True,
                 )
-                self._procs.append(bridge)
-                self._drains.append(asyncio.create_task(self._drain_stderr(bridge, "ffmpeg : ")))
+                self._procs.append(process)
+                self._drains.append(asyncio.create_task(self._drain_stderr(process, bridge_label)))
             vlc = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=stdin if stdin is not None else asyncio.subprocess.DEVNULL,
@@ -386,15 +551,29 @@ class VlcPlayback:
             for fd in (stdin, bridge_fd):
                 if fd is not None:
                     os.close(fd)
-        self._drains.append(asyncio.create_task(self._drain_stderr(vlc)))
+        self._drains.append(asyncio.create_task(self._drain_stderr(vlc, "vlc")))
 
-    async def _drain_stderr(self, process: asyncio.subprocess.Process, label: str = "") -> None:
-        """Garde la fin de ce que le programme écrit : c'est elle qui dit pourquoi une lecture n'a pas démarré."""
+    async def _drain_stderr(self, process: asyncio.subprocess.Process, label: str) -> None:
+        """Recopie dans le journal tout ce que le programme dit, et garde ce qui explique un échec (la phrase de l'écran)."""
         assert process.stderr is not None
         with contextlib.suppress(Exception):
-            while line := await process.stderr.readline():
-                text = line.decode("utf-8", "replace")
-                self._stderr_tail = (self._stderr_tail + (label + text if label else text))[-4000:]
+            while raw := await process.stderr.readline():
+                text = raw.decode("utf-8", "replace").rstrip("\r\n")
+                if self._logged < MAX_LOGGED_LINES:
+                    self._logged += 1
+                    playerlog.line(label, text)
+                    if self._logged == MAX_LOGGED_LINES:
+                        playerlog.event(
+                            f"{label} : la suite est omise du journal ({MAX_LOGGED_LINES} lignes)"
+                        )
+                if _is_issue(label, text):
+                    self._issues.append(text if label == "vlc" else f"{label} : {text}")
+                    del self._issues[:-80]
+
+    def _summary(self) -> str:
+        return vlc_detail("\n".join(self._issues), limit=160)
+
+    # --- suivi -----------------------------------------------------------------------------------------------
 
     async def _connect_rc(self) -> RcClient | None:
         if self._rc is None and not self.finished:
@@ -432,6 +611,10 @@ class VlcPlayback:
             self._played, state = True, "paused"
         elif running == 1 and (self._played or (position or 0) > 0):
             # Les images (le temps de lecture avance) : avant cela VLC ouvre le flux, la chaîne n'a encore rien montré.
+            if not self._played:
+                playerlog.event(
+                    f"lecture {self._job} : la lecture a démarré (mode « {self.mode} »)"
+                )
             self._played, state = True, "playing"
         else:
             state = "starting"
@@ -440,6 +623,7 @@ class VlcPlayback:
             "state": state,
             "position": None if self.live else position,
             "length": None if self.live or not length else length,
+            "seekable": self.seekable and not self.live,
         }
 
     async def command(self, name: str, **params: Any) -> None:
@@ -451,7 +635,7 @@ class VlcPlayback:
             if want is None:  # « toggle »
                 want = await self._is_paused(rc)
             await self._set_playing(rc, want)
-        elif name == "seek" and not self.live:
+        elif name == "seek" and not self.live and self.seekable:
             numbers = parse_numbers(await rc.ask("get_time\nget_length"))
             if numbers:
                 target = max(0, numbers[0] + int(params.get("delta", 0)))
@@ -462,10 +646,12 @@ class VlcPlayback:
             self.volume = int(params.get("value", self.volume))
             await rc.ask(f"volume {round(self.volume * VLC_VOLUME_MAX / 100)}")
 
-    async def stop(self) -> None:
-        self._stopped = True
+    # --- arrêt -----------------------------------------------------------------------------------------------
+
+    async def _terminate(self) -> None:
         if self._rc is not None:
             self._rc.close()
+            self._rc = None
         for process in reversed(self._procs):
             if process.returncode is None:
                 with contextlib.suppress(ProcessLookupError, PermissionError):
@@ -481,10 +667,17 @@ class VlcPlayback:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        for path in (self._config, Path(self._socket)):
-            if path is not None:
-                with contextlib.suppress(OSError):
-                    path.unlink()
+        with contextlib.suppress(OSError):
+            os.unlink(self._socket)
+
+    async def stop(self) -> None:
+        self._stopped = True
+        await self._terminate()
+        if self._config is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(self._config)
+        if self._smb is not None:
+            playerlog.drop_secret(self._smb[1])
 
     async def wait_output(self) -> None:
         """Laisse finir la lecture de ce que VLC a écrit avant de s'arrêter (sans attendre un ffmpeg qui s'éterniserait)."""
@@ -496,23 +689,28 @@ class VlcPlayback:
         if self._stopped:
             return None
         code = self._procs[-1].returncode if self._procs else None
-        message = explain_exit(self._played, self.live, self._stderr_tail, code)
+        tail = "\n".join(self._issues)
+        message = explain_exit(self._played, self.live, tail, code)
+        if message is not None and self._failed_precheck and self.mode == "smbclient":
+            message = f"{self._failed_precheck} (VLC et smbclient ont tous deux essayé)." + (
+                f" Détail : « {self._summary()} »." if self._summary() else ""
+            )
+        playerlog.event(
+            f"lecture {self._job} : fin, mode « {self.mode} », code de VLC : {code}, "
+            + ("lecture normale." if message is None else "sans avoir joué.")
+        )
         if message is not None:
-            self._write_log(message, code)
+            playerlog.failure(self._job, message)
         return message
 
-    def _write_log(self, message: str, code: int | None) -> None:
-        """La dernière lecture ratée, en entier, pour qui voudrait comprendre : `cat $XDG_RUNTIME_DIR/mydock-player.log`."""
-        text = (
-            f"{time.strftime('%Y-%m-%d %H:%M:%S')} : {message}\n"
-            f"Adresse : {self.url}\nCode de sortie de VLC : {code}\n\n{self._stderr_tail}\n"
-        )
-        try:
-            fd = os.open(self._dir / LOG_NAME, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(text)
-        except OSError:
-            log.debug("Journal de la lecture illisible : %s", self._dir)
+
+def _is_issue(label: str, text: str) -> bool:
+    """Cette ligne d'un programme dit-elle quelque chose d'anormal ? (VLC en `-vv` dit tout : on ne garde que les erreurs)"""
+    if label == "vlc":
+        return " error: " in text or " warning: " in text
+    if label == "ffmpeg":
+        return bool(_FFMPEG_ISSUE.search(text))
+    return True  # smbclient : tout ce qu'il écrit sur son erreur est une erreur
 
 
 class DemoPlayback:
@@ -706,6 +904,9 @@ def session_environment(base: dict[str, str] | None = None) -> dict[str, str]:
         if sockets:
             env["DISPLAY"] = ":" + sockets[0].rsplit("X", 1)[1]
     env.pop("QT_QPA_PLATFORM", None)
+    # En anglais : VLC traduit ses messages (« Votre média d'entrée ne peut être ouvert ») et sa réponse « status » avec
+    # la langue de la session, et tout ce que l'assistant y reconnaît (accès refusé, pause…) est écrit en anglais.
+    env.update(LC_ALL="C.UTF-8", LANG="C.UTF-8", LANGUAGE="C")
     return env
 
 
@@ -721,6 +922,7 @@ class Session:
         vlc: str | None = None,
         ffmpeg: str | None = None,
         live555: bool | None = None,
+        smbclient: str | None = None,
     ) -> None:
         self.url = url
         self.demo = demo
@@ -732,6 +934,7 @@ class Session:
         self.vlc = vlc if vlc is not None else find_vlc()
         self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
         self.live555 = has_live555() if live555 is None else live555
+        self.smbclient = smbclient if smbclient is not None else shutil.which("smbclient")
         self.windows: Any = Windows(self.env)
         self.touch: Any = TouchWatcher(self.env, self._touched)
         if demo:  # pas d'écran réel : ni fenêtres à ordonner ni toucher à guetter
@@ -751,6 +954,7 @@ class Session:
             "vlc": True if self.demo else self.vlc is not None,
             "live555": self.live555,
             "ffmpeg": self.ffmpeg is not None,
+            "smbclient": self.smbclient is not None,
             # Sans de quoi revenir au dock d'un toucher, la vidéo plein écran garderait l'écran : on ne la lance pas.
             "touch": True if self.demo else (self.touch.available and self.windows.available),
             "demo": self.demo,
@@ -795,9 +999,14 @@ class Session:
                 if message.get("smb_user")
                 else None
             )
+            playerlog.event(
+                f"lecture {self._job} : demandée par le dock ({'chaîne en direct' if live else 'fichier'}), "
+                f"adresse {url}, volume {volume} %, identifiant du partage : {'oui' if smb else 'non'}"
+            )
             playback = VlcPlayback(
                 url, live=live, volume=volume, vlc=self.vlc, ffmpeg=self.ffmpeg, live555=self.live555,
                 runtime_dir=self.runtime_dir, env=session_environment(self.env), extra=self.extra, smb=smb, job=self._job,
+                smbclient=self.smbclient, smb_source=smb_source_from(message),
             )  # fmt: skip
         try:
             await playback.start()
@@ -823,6 +1032,10 @@ class Session:
                 if playback.finished:
                     if (wait_output := getattr(playback, "wait_output", None)) is not None:
                         await wait_output()
+                    if (
+                        recover := getattr(playback, "recover", None)
+                    ) is not None and await recover():
+                        continue  # VLC n'a rien lu : une autre façon de lire est lancée (journal : « tentative »)
                     await self._ended(job, playback.error(), playback)
                     return
                 status = await playback.status()
@@ -853,6 +1066,7 @@ class Session:
                 "length": status.get("length"),
                 "volume": getattr(playback, "volume", None),
                 "front": self.front,
+                **({"seekable": False} if status.get("seekable") is False else {}),
             }
         )
 
@@ -905,19 +1119,71 @@ class Session:
 
     # --- la liaison avec le dock -------------------------------------------------------------------------------
 
+    async def log_startup(self) -> None:
+        """Ce que l'assistant trouve sur ce Pi, écrit en tête du journal : la première chose à lire quand rien ne se lance."""
+        if not playerlog.active():
+            return
+        from mydock_dock import __version__
+
+        playerlog.event("=== assistant de lecture démarré ===")
+        playerlog.event(
+            f"mydock_dock {__version__}, Python {sys.version.split()[0]}, uid {os.getuid()}, "
+            f"journal {playerlog.current_path()}"
+        )
+        keys = (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR",
+            "XDG_SESSION_TYPE",
+            "XDG_CURRENT_DESKTOP",
+            "HOME",
+        )
+        playerlog.event(
+            "session : "
+            + ", ".join(f"{key}={os.environ.get(key) or '-'}" for key in keys)
+            + f", langue de la session {os.environ.get('LANG') or '-'} (VLC et ffmpeg tournent en C.UTF-8)"
+        )
+        playerlog.event(
+            f"écrans X11 : {', '.join(sorted(glob.glob('/tmp/.X11-unix/X*'))) or 'aucun'}"
+        )
+        for name, path, args in (
+            ("VLC", self.vlc, ("--version",)),
+            ("ffmpeg", self.ffmpeg, ("-version",)),
+            ("smbclient", self.smbclient, ("--version",)),
+        ):
+            version = await _version_of(path, args) if path else "absent"
+            playerlog.event(f"{name} : {path or '-'} ({version})")
+        for name in ("wlrctl", "xdotool", "swayidle", "Xwayland"):
+            playerlog.event(f"{name} : {shutil.which(name) or 'absent'}")
+        playerlog.event(
+            "modules de VLC : "
+            + ", ".join(
+                f"{name} {'oui' if has_vlc_plugin(name) else 'NON'}"
+                for name in ("smb", "avcodec", "xcb_x11", "gl", "wl_shm")
+            )
+            + f", live555 {'oui' if self.live555 else 'NON (chaînes par le pont ffmpeg)'}"
+        )
+        playerlog.event(f"options de VLC en plus ({FLAGS_FILE}) : {self.extra or 'aucune'}")
+
     async def serve(self) -> None:
         from websockets.asyncio.client import (
             connect,
         )  # importé ici : inutile pour les tests des fonctions pures
 
         self._loop = asyncio.get_running_loop()
+        with contextlib.suppress(Exception):  # le journal ne doit jamais empêcher de lire une vidéo
+            await self.log_startup()
         delay = 1.0
+        linked = False
         while True:
             try:
                 async with connect(
                     self.url, open_timeout=3, ping_interval=20, proxy=None, max_size=64 * 1024
                 ) as ws:
                     delay = 1.0
+                    if not linked:
+                        linked = True
+                        playerlog.event(f"connecté au dock ({self.url})")
 
                     async def send(message: dict[str, Any], ws: Any = ws) -> None:
                         await ws.send(json.dumps(message, separators=(",", ":")))
@@ -938,6 +1204,11 @@ class Session:
                 Exception
             ) as exc:  # le dock redémarre à chaque mise à jour : on le rejoint dès qu'il revient
                 log.debug("Liaison avec le dock perdue (%s)", exc)
+                if linked:
+                    linked = False
+                    playerlog.event(
+                        f"liaison avec le dock perdue ({exc}) : nouvel essai dans un instant"
+                    )
             self._send = None
             await self._stop_playback()
             await asyncio.sleep(delay)
@@ -958,12 +1229,37 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _version_of(binary: str, args: Sequence[str]) -> str:
+    """La première ligne que le programme répond à --version (« inconnue » s'il ne répond pas en dix secondes)."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, "LC_ALL": "C.UTF-8"},
+        )
+        out, _ = await asyncio.wait_for(process.communicate(), 10)
+    except (OSError, TimeoutError):
+        return "version inconnue"
+    lines = out.decode("utf-8", "replace").strip().splitlines()
+    return lines[0][:120] if lines else "version inconnue"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    path = playerlog.attach()
+    if path is None:
+        log.warning(
+            "Aucun emplacement où écrire le journal de la lecture (%s)", playerlog.candidates()
+        )
+    else:
+        log.info("Journal de la lecture : %s", path)
     session = Session(args.url, demo=args.demo)
     try:
         asyncio.run(session.serve())

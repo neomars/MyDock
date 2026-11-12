@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlsplit
 
 from mydock_common.config import ConfigError
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
-from mydock_dock import __version__, player_session, screensaver
+from mydock_dock import __version__, player_session, playerlog, screensaver
 from mydock_dock.agent_link import (
     UNREACHABLE_ERRNOS,
     LinkFailure,
@@ -616,6 +616,8 @@ def check_media(
     live555: Callable[[], bool] = player_session.has_live555,
     flags: Callable[[], list[str]] = player_session.read_flags,
     plugin: Callable[[str], bool] = player_session.has_vlc_plugin,
+    journal: Callable[[], Path | None] = playerlog.existing_path,
+    failures: Callable[[], list[str]] = playerlog.recent_failures,
 ) -> None:
     """Divertissement : VLC et ce qu'il faut autour, et les réglages (jamais le mot de passe)."""
     report.section("Divertissement (Freetv, Kiosque)")
@@ -691,6 +693,21 @@ def check_media(
             INFO,
             "L'assistant de lecture ne tourne pas : il démarre avec l'écran du dock (après une installation ou une mise à jour : sudo reboot)",
         )
+    log_path = journal()
+    if log_path is not None:
+        report.add(
+            INFO,
+            f"Journal de la lecture : {log_path} (à lire avec : sudo cat {log_path}) ; "
+            f"celui du serveur : {playerlog.LOG_DIR / playerlog.DOCK_LOG_NAME}",
+        )
+    else:
+        report.add(
+            INFO,
+            f"Journal de la lecture : {playerlog.LOG_DIR / playerlog.LOG_NAME} (créé à la première lecture ; "
+            "absent ? sudo /usr/lib/mydock/setup crée le dossier)",
+        )
+    for row in failures():
+        report.add(WARN, f"Lecture ratée, d'après le journal : {row}")
     report.add(INFO, f"Liste des chaînes : {config.playlist_url}")
     if config.smb_host:
         user = f"identifiant « {config.smb_user} »" if config.smb_user else "accès sans identifiant"

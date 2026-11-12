@@ -1838,6 +1838,24 @@ test('Divertissement : une lecture qui échoue est dite dans le menu, et « Comp
   expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.dismiss' })
 })
 
+test('Divertissement : un fichier lu par smbclient (tube) n’a pas d’avance rapide, et la télécommande le dit', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ front: 'dock' })) // un fichier ordinaire : l'avance rapide marche
+  await expect(page.getByTestId('remote-fwd')).toBeEnabled()
+  await expect(page.getByTestId('remote-noseek')).toHaveCount(0)
+
+  mock.push('player', playerState({ front: 'dock', seekable: false })) // le dock dit que VLC lit un tube
+  for (const id of ['remote-back5', 'remote-back', 'remote-fwd', 'remote-fwd5']) await expect(page.getByTestId(id)).toBeDisabled()
+  await expect(page.getByTestId('remote-noseek')).toHaveText('· sans avance rapide')
+  await expect(page.getByTestId('remote-toggle')).toBeEnabled() // pause et volume marchent toujours
+  await expect(page.getByTestId('remote-volume')).toBeVisible()
+  await noPageScroll(page)
+
+  mock.push('player', playerState({ front: 'dock', seekable: false, live: true, position: null, length: null })) // un direct : pas de mention
+  await expect(page.getByTestId('remote-noseek')).toHaveCount(0)
+})
+
 test('Divertissement : le détail que VLC a donné s’affiche à part, en plus petit, sans rien faire déborder', async ({ page, stack }) => {
   const mock = await mockDock(page, {}, { startPage: 'media' })
   await page.goto(stack.url)
@@ -1850,6 +1868,8 @@ test('Divertissement : le détail que VLC a donné s’affiche à part, en plus 
   await expect(page.getByTestId('media-error-detail')).toContainText('No such file or directory')
   await noPageScroll(page) // 1024 × 600 : jamais de défilement de la page
   await expect(page.getByTestId('media-error-ok')).toBeInViewport()
+  await expect(page.getByTestId('media-error-log')).toHaveText('Journal : /var/log/mydock/player.log') // de quoi aller chercher la suite
+  await expect(page.getByTestId('media-error-log')).toBeInViewport()
   const sizes = await page.evaluate(() => ({
     text: parseFloat(getComputedStyle(document.querySelector('[data-testid=media-error-text]')!).fontSize),
     detail: parseFloat(getComputedStyle(document.querySelector('[data-testid=media-error-detail]')!).fontSize),

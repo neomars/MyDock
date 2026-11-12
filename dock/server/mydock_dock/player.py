@@ -70,6 +70,9 @@ class PlayerHub:
         self.length: float | None = None
         self.volume = DEFAULT_VOLUME
         self.front = "dock"
+        self.seekable = (
+            True  # faux quand le fichier arrive par un tube (smbclient) : pas d'avance rapide
+        )
         self.error: str | None = None
         self.job = 0
         self._started_at = 0.0
@@ -99,6 +102,7 @@ class PlayerHub:
             "length": self.length,
             "volume": self.volume,
             "front": self.front,
+            "seekable": self.seekable,
             "error": self.error,
             "helper": {k: helper.get(k) for k in ("vlc", "live555", "ffmpeg", "touch", "demo")}
             if helper
@@ -164,6 +168,7 @@ class PlayerHub:
             self.volume = round(volume)
         if message.get("front") in ("video", "dock"):
             self.front = message["front"]
+        self.seekable = message.get("seekable") is not False
         if self.state == "playing":
             self._cancel_watchdog()
         self._changed()
@@ -212,6 +217,7 @@ class PlayerHub:
         self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "live")}
         self.state, self.error = "starting", None
         self.position = self.length = None
+        self.seekable = True
         self.front = "video"
         self._started_at = self._clock()
         helper.send(
@@ -222,6 +228,8 @@ class PlayerHub:
                 "url": url,
                 "live": bool(media.get("live")),
                 "volume": self.volume,
+                # Où est le fichier d'un partage (jamais le mot de passe : voir `secrets`) : de quoi le lire par smbclient.
+                **({"smb": media["smb"]} if isinstance(media.get("smb"), dict) else {}),
                 **(secrets or {}),
             }
         )

@@ -127,6 +127,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.demo_markets:
         config.demo_markets = True
     logging.basicConfig(level=config.log_level, format="%(levelname)s %(name)s: %(message)s")
+    from mydock_dock import playerlog
+
+    media_log_path = playerlog.attach_dock(fallback_dir=Path(config.state_dir))
+    if media_log_path is not None:
+        log.info("Journal du Divertissement (dock) : %s", media_log_path)
 
     server = DockServer(config)
     log.info("MyDock dock %s - http://%s:%d", __version__, config.listen_host, config.port)

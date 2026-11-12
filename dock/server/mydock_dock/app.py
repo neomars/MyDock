@@ -62,6 +62,7 @@ from mydock_dock.validation import ValidationFailure, normalize_mac, validate_ho
 from mydock_dock.wol import send_magic_packet
 
 log = logging.getLogger(__name__)
+media_log = logging.getLogger("mydock_dock.media")  # dock.log : Freetv, Kiosque, lectures demandées
 
 MAX_INFLIGHT_ACTIONS = 32
 #: Combien de temps le dock attend la réponse de l'agent à une action du navigateur, en secondes.
@@ -733,14 +734,23 @@ class DockServer:
         try:
             channels, warning = await self.channels.get(refresh=params.refresh)
         except FreeboxError as exc:
+            media_log.warning(
+                "Freetv : liste des chaînes illisible (%s) : %s", self.config.playlist_url, exc
+            )
             raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        if warning:
+            media_log.warning("Freetv : %d chaînes (liste gardée) : %s", len(channels), warning)
+        elif params.refresh:
+            media_log.info("Freetv : %d chaînes lues (%s)", len(channels), self.config.playlist_url)
         return {"channels": [c.public() for c in channels], "warning": warning}
 
     async def _act_media_shares(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         try:
             shares = await self.samba.shares()
         except SambaError as exc:
+            media_log.warning("Kiosque : partages de %s illisibles : %s", self.config.smb_host, exc)
             raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        media_log.info("Kiosque : %d partage(s) sur %s", len(shares), self.config.smb_host)
         return {"host": self.config.smb_host, "shares": shares}
 
     async def _act_media_browse(
@@ -750,18 +760,31 @@ class DockServer:
             share, parts = clean_share(params.share), clean_path(params.path)
             entries = await self.samba.listing(share, parts)
         except SambaError as exc:
+            media_log.warning(
+                "Kiosque : dossier %s/%s illisible : %s", params.share, params.path or "", exc
+            )
             raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        media_log.info("Kiosque : %s/%s : %d entrée(s)", share, "/".join(parts), len(entries))
         return {"share": share, "path": "/".join(parts), "entries": [e.public() for e in entries]}
 
     async def _act_media_set(self, _ctx: ActionContext, params: MediaSetParams) -> dict[str, Any]:
         patch = params.model_dump(exclude_none=True)
         self._persist(lambda: self.config.set_media(**patch))
+        shown = {
+            k: ("(défini)" if k == "smb_password" else v) for k, v in patch.items()
+        }  # jamais le mot de passe
+        media_log.info("Réglages du Divertissement changés : %s", shown)
         self.push_local("dock")
         return self.media_info()
 
     async def _act_media_test(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         """Essaie chaque maillon (liste des chaînes, partages, lecteur) et dit en clair lequel ne va pas."""
         result: dict[str, Any] = {}
+        media_log.info(
+            "Essai Freetv et Kiosque demandé (liste %s, serveur %s)",
+            self.config.playlist_url,
+            self.config.smb_host,
+        )
         try:
             channels, warning = await self.channels.get(refresh=True)
             result["tv"] = {
@@ -808,6 +831,12 @@ class DockServer:
                     else " (ffmpeg manque : les chaînes ne passeront pas)"
                 ),
             }
+        media_log.info(
+            "Essai : %s",
+            " ; ".join(
+                f"{k} {'ok' if v['ok'] else 'ÉCHEC'} ({v['text']})" for k, v in result.items()
+            ),
+        )
         return result
 
     async def _act_player_play(self, _ctx: ActionContext, params: PlayParams) -> dict[str, Any]:
@@ -818,7 +847,15 @@ class DockServer:
                 media, url, secrets = self._file_request(params)
             self.player.play(media, url, secrets=secrets)
         except (PlayerError, SambaError, FreeboxError) as exc:
+            media_log.warning("Lecture refusée (%s) : %s", params.kind, exc)
             raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        media_log.info(
+            "Lecture %d demandée à l'assistant : %s « %s » (%s)",
+            self.player.job,
+            params.kind,
+            media["title"],
+            url,
+        )
         return {"started": media["title"]}
 
     async def _tv_request(self, params: PlayParams) -> tuple[dict[str, Any], str, dict[str, str]]:
@@ -858,6 +895,7 @@ class DockServer:
             "title": stem,
             "subtitle": "/".join([share, *parts[:-1]]),
             "live": False,
+            "smb": {"host": host, "share": share, "path": "/".join(parts)},
         }
         secrets: dict[str, str] = {}
         if self.config.smb_user:

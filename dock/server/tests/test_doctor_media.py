@@ -33,7 +33,17 @@ ALL = ("vlc", "ffmpeg", "wlrctl", "swayidle", "xwayland", "smbclient")
 PLUGINS = frozenset({"smb", "avcodec", "xcb_x11", "gl"})
 
 
-def report_for(config, *, tools=ALL, running=True, live555=False, flags=(), plugins=PLUGINS) -> str:
+def report_for(
+    config,
+    *,
+    tools=ALL,
+    running=True,
+    live555=False,
+    flags=(),
+    plugins=PLUGINS,
+    journal=None,
+    failures=(),
+) -> str:
     report = Report()
     check_media(
         report,
@@ -43,6 +53,8 @@ def report_for(config, *, tools=ALL, running=True, live555=False, flags=(), plug
         live555=lambda: live555,
         flags=lambda: list(flags),
         plugin=lambda name: name in plugins,
+        journal=lambda: journal,
+        failures=lambda: list(failures),
     )
     return report.render()
 
@@ -75,6 +87,27 @@ def test_vlc_modules_are_checked_one_by_one_with_the_package_that_brings_them(tm
     assert "⚠ VLC ne sait pas décoder les vidéos : sudo apt install vlc-plugin-base" in out
     out = report_for(config_for(tmp_path), plugins=frozenset({"smb", "avcodec"}))
     assert "⚠ VLC n'a aucun module d'affichage : sudo apt install vlc-plugin-video-output" in out
+
+
+def test_the_journal_is_named_so_it_can_be_read_and_the_last_failures_are_shown(tmp_path):
+    out = report_for(config_for(tmp_path), journal=Path("/var/log/mydock/player.log"))
+    assert (
+        "Journal de la lecture : /var/log/mydock/player.log (à lire avec : sudo cat /var/log/mydock/player.log)"
+        in out
+    )
+    assert "dock.log" in out
+    assert "Lecture ratée" not in out
+    row = "2026-11-12 09:00:00 ÉCHEC lecture 3 : Accès refusé au partage"
+    out = report_for(
+        config_for(tmp_path), journal=Path("/var/log/mydock/player.log"), failures=[row]
+    )
+    assert f"⚠ Lecture ratée, d'après le journal : {row}" in out
+
+
+def test_without_a_journal_yet_the_doctor_says_where_it_will_be(tmp_path):
+    out = report_for(config_for(tmp_path), journal=None)
+    assert "/var/log/mydock/player.log (créé à la première lecture" in out
+    assert "sudo /usr/lib/mydock/setup" in out
 
 
 def test_without_vlc_its_modules_are_not_blamed(tmp_path):

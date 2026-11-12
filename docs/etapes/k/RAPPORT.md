@@ -111,3 +111,34 @@ Je n'ai pas inventé de fonction que tu n'as pas demandée. À toi de dire, apr�
 | Essais sur le banc (vrai VLC 3.0.20, vrai Samba) | identifiant juste : lit ; identifiant faux ou absent : échoue en moins d'une seconde (« Permission denied ») ; nom de fichier avec accents, crochets, `#` : lit |
 | Suites complètes | `ruff`, `shellcheck`, `svelte-check` propres ; Python **2 471 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 401 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : réussis ; Vitest **371 réussis** ; Playwright **279 réussis** |
 | Ce qui reste non vérifié | tout ce qui touche ton matériel : décodage, affichage et son sur le Pi, et ce que ton Samba de Freebox accepte |
+
+## Addendum 2 — version 1.6.2 : « les chaînes sont listées mais la vidéo ne se lance pas, et dans le Kiosque non plus »
+
+> [Photo de l'écran du Pi : « La lecture a échoué — VLC n'a pas pu lire cette vidéo (format, ou accès au partage). main input error: Votre média d'entrée ne peut être ouvert ; main input error: VLC ne peut pas ouvrir « smb://mafreebox.freebox.fr/Freebox/Download/Daredevil%20%20Born%20Again%20-%20S02E02… »] — « Corrige ces erreurs. Et crée un fichier de log qui permettra le débogage. »
+
+**Ce que la photo apprend (et que 1.6.1 ne pouvait pas voir).** VLC parle **français** sur ton Pi. Tout ce que l'assistant de lecture reconnaissait dans ses messages était écrit en **anglais** : « Permission denied », « No such file », « unable to open the MRL 'smb://… » — et, sans que personne le voie, **« to continue »**, le mot par lequel il reconnaît une lecture en pause. Aucune cause n'était donc jamais reconnue, d'où la phrase générique. Mon banc, en anglais, ne pouvait pas le montrer. **VLC, ffmpeg et smbclient tournent maintenant en C.UTF-8**, quelle que soit la langue de la session (`LC_ALL`, `LANG`, `LANGUAGE`).
+
+**Ce que je n'ai toujours pas pu établir** : *pourquoi* VLC n'ouvre pas ton fichier `smb://mafreebox.freebox.fr/Freebox/Download/…` alors que `smbclient` parcourt le même partage avec le même identifiant. La photo montre « ne peut pas ouvrir » sans la ligne qui dirait pourquoi (elle était coupée : on ne montrait que les dernières lignes, les génériques). Les causes possibles sont toutes propres au module Samba de VLC (absent, ou refusant ce serveur) — et pour toutes, la même parade :
+
+1. **Repli par smbclient** (Kiosque). Quand VLC n'ouvre pas le fichier, `smbclient` le lit et le donne à VLC par un tube (`fd://0`). **Essayé sur le banc avec le vrai VLC, le vrai smbclient et un vrai Samba protégé** : le chemin direct échoue exprès (fichier absent côté VLC), le repli lit le vrai fichier, la lecture démarre (position, durée), le journal raconte les deux tentatives. Limites assumées : **pas d'avance rapide** (VLC ne revient pas en arrière dans un tube ; la télécommande grise les sauts et écrit « sans avance rapide »), et un nom de fichier contenant `;` ou `"` ne passe que par VLC (sinon `smbclient` exécuterait un second ordre — vérifié sur un vrai Samba, puis refusé).
+2. **Une vérification avant le tube.** `smbclient` écrit ses erreurs sur **la même sortie que la vidéo** (vérifié : `NT_STATUS_ACCESS_DENIED` arrive dans le flux) : sans cela, un mauvais mot de passe aurait donné une vidéo illisible sans explication. Un test `allinfo` dit d'abord si le fichier est accessible, et pourquoi sinon.
+
+**Freetv — la cause n'est pas établie non plus.** Les chaînes sont listées (le correctif de 1.6.1 a marché), puis la vidéo ne se lance pas, sans que je sache à quelle étape (RTSP, ffmpeg, VLC, affichage). Deux changements plausibles : ffmpeg ne recopie plus que **l'image et le son** (`-map 0:v? -map 0:a?` : un flux de télévision porte aussi du télétexte et des données qu'un copie brut ne sait pas écrire, ce qui fait échouer ffmpeg avant la première image — une hypothèse, pas une certitude), et si VLC a le module RTSP, le pont ffmpeg sert de **second essai**. Le reste, le journal le dira.
+
+**Le fichier de log demandé.**
+
+| Fichier | Qui l'écrit | Contenu |
+|---|---|---|
+| `/var/log/mydock/player.log` | l'assistant de lecture (sous l'utilisateur de la session de l'écran) | en tête, ce que l'assistant trouve sur le Pi (versions de VLC, ffmpeg, smbclient, modules de VLC, session, langue, `wlrctl`/`xdotool`/`swayidle`) ; pour chaque vidéo : la demande du dock, **chaque tentative**, les commandes exactes (VLC, ffmpeg, smbclient), **tout ce que VLC (lancé en `-vv`), ffmpeg et smbclient disent**, le moment où la lecture démarre, la fin ou la ligne `ÉCHEC lecture N : …` |
+| `/var/log/mydock/dock.log` | le serveur du dock (utilisateur `mydock`) | liste des chaînes lue ou refusée, partages et dossiers parcourus, lectures demandées ou refusées, réglages changés (le mot de passe y est « (défini) ») |
+
+Ils tournent (1,5 Mo, trois anciens gardés), sont créés par l'installation (dossier à bit collant `1777`), **n'écrivent jamais le mot de passe** (testé : une occurrence éventuelle devient `***`, l'identifiant n'est même pas écrit), et `mydock-dock doctor` les nomme et montre les dernières lectures ratées. **L'écran d'une lecture ratée écrit le chemin du journal.** Lecture en direct : `sudo tail -f /var/log/mydock/player.log` pendant qu'on touche une chaîne.
+
+**Ce que tu peux faire :** installer cette version (l'assistant se relance tout seul dans ta session), lancer **une chaîne et une vidéo du Kiosque**, puis m'envoyer `sudo cat /var/log/mydock/player.log` (sans le ranger : les noms de fichiers y figurent). Il dira laquelle des étapes coince.
+
+| Contrôle (1.6.2) | Résultat |
+|---|---|
+| Tests ajoutés | les tentatives et leur ordre ; le repli (VLC échoue sur `smb://`, `smbclient` lit : arguments, environnement, mot de passe absent des arguments et du journal) ; la vérification préalable et ses messages ; refus des noms dangereux (sur un vrai Samba) ; VLC et ffmpeg reçoivent l'anglais ; pont ffmpeg image + son ; journal (emplacements, rotation, secret effacé, échecs retrouvés par le diagnostic) ; journal du dock ; `seekable` du dock à l'écran (Vitest, Playwright) ; installation (dossier `1777`, droit d'écriture du service, purge) |
+| Banc d'essai (vrai VLC 3.0.20, vrai smbclient, vrai Samba protégé) | repli : lecture démarrée (1 s / 30 s, sans avance rapide), journal complet ; un nom avec `;` jamais transmis à smbclient |
+| Suites complètes | `ruff`, `shellcheck`, `svelte-check` propres ; Python **2 515 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 444 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : réussis ; Vitest **371 réussis** ; Playwright **280 réussis** |
+| Ce qui reste non vérifié | tout ce qui touche ton Pi : pourquoi VLC n'ouvre pas ton fichier, pourquoi la chaîne ne démarre pas, et la fluidité du décodage |

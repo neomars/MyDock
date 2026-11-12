@@ -379,7 +379,8 @@ def test_the_service_runs_the_installed_program_with_the_config_of_the_package(e
     unit = (extracted / "usr/lib/systemd/system/mydock-dock.service").read_text()
     assert "ExecStart=/usr/bin/mydock-dock run --config /etc/mydock/dock.toml" in unit
     assert "User=mydock\n" in unit
-    assert "ReadWritePaths=/var/lib/mydock /etc/mydock" in unit
+    # Le journal du Divertissement (dock.log) : « - » devant le chemin, le service démarre même sans ce dossier.
+    assert "ReadWritePaths=/var/lib/mydock /etc/mydock -/var/log/mydock\n" in unit
     assert "WantedBy=multi-user.target" in unit
     for hardening in (
         "NoNewPrivileges=yes",
@@ -544,7 +545,10 @@ def test_remove_keeps_the_configuration_and_purge_erases_it(fake_system):
     assert calls(fake_system) == []  # « apt remove » garde le jeton
     run_script(script, "purge", path=fake_system["bin"], log=fake_system["log"])
     log = calls(fake_system)
-    assert log[0] == "rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock /var/lib/mydock-kiosk"
+    assert (
+        log[0]
+        == "rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock /var/lib/mydock-kiosk /var/log/mydock"
+    )  # les journaux du Divertissement s'en vont aussi
     assert "userdel mydock" in log
     assert "userdel mydock-kiosk" in log
 
