@@ -187,3 +187,35 @@ Ils tournent (1,5 Mo, trois anciens gardés), sont créés par l'installation (d
 | Tests ajoutés | `--deinterlace=0` présent et avant les options de `vlc.flags` (qui peuvent le rétablir) ; une lecture dont VLC écarte les images écrit « affichage en difficulté » une seule fois sans être une panne |
 | Suites | `ruff`, `shellcheck` propres ; Python **2 536 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 465 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : **15 réussis** ; banc du repli smbclient (3 cas) inchangé ; l'interface n'a pas changé (Vitest 371) et ses parcours liés au Divertissement (stage k, 9, et les 5 du dock simulé) sont réussis |
 
+
+## Addendum 5 — version 1.6.5 : « sur Freetv, une image quelques centièmes de secondes et plus rien »
+
+> [extrait de `player.log` après la 1.6.4 : `wl_dmabuf vout display warning: Video discarded due to Wayland congestion` en continu (plusieurs par seconde), `main video output warning: picture is too late to be displayed (missing 2279 ms)`, `ts demux warning: discontinuity received …`, `h264 packetizer: Recovering using SEI`, `main audio output warning: playback way too early … playing silence / way too late … flushing buffers`]
+
+**Ce que le journal dit, et ce qu'il ne dit pas.**
+
+- Les lignes `Video discarded due to Wayland congestion` sont **la cause visible** : VLC reçoit les images décodées et **les jette toutes** au moment de les présenter à l'écran. Aucune n'est affichée, hors la première — d'où « une image, puis plus rien ».
+- Tout le reste de l'extrait **ressemble à la conséquence**, pas à la cause : des images « trop en retard » de plusieurs secondes (le pipeline d'affichage est bloqué), un son qui perd puis rattrape sa synchronisation (`write index corrupt`, `flushing buffers`), et des **discontinuités dans le flux** (`ts demux … discontinuity`, `Recovering using SEI`) — c'est ce qu'on voit quand le lecteur ne lit plus assez vite : le flux UDP de la Freebox déborde et perd des paquets. Je n'ai donc **pas** touché au réseau (TCP, ffmpeg) : je pense que c'est l'effet, pas la panne.
+- Le **premier journal** (désentrelacement activé) montrait la cause directe de ce blocage : `[destroyed object]: error 7: importing the supplied dmabufs failed`, une erreur fatale du protocole Wayland (labwc refuse les images du décodeur matériel) après laquelle la connexion de VLC est coupée. **Elle n'est pas dans la partie du second journal que tu m'as envoyée** (elle serait plus haut) : j'infère qu'elle est encore là, sans l'avoir vue. Je l'écris comme une hypothèse.
+
+**Pourquoi un réglage ne suffit pas** : VLC **ne se rétablit pas** après cette erreur, il faut le relancer — et je ne peux pas essayer l'écran du Pi pour savoir quelle option le fait marcher. Plutôt que de te demander un essai de plus par option, **l'assistant essaie lui-même, dans l'ordre**, jusqu'à ce que l'image s'affiche :
+
+| Étape | Décodage | Affichage | Quand |
+|---|---|---|---|
+| 1. matériel | matériel (`h264_v4l2m2m`) | `wl_dmabuf` | au départ |
+| 2. logiciel | processeur, avec désentrelacement | `wl_dmabuf` | si l'image n'arrive pas à l'écran |
+| 3. logiciel, mémoire partagée | processeur, avec désentrelacement | `wl_shm` | si l'étape 2 échoue aussi |
+
+« L'image n'arrive pas à l'écran » = l'erreur fatale de Wayland **ou 20 images écartées dans la minute qui suit le lancement** (une gêne passagère plus tard n'est pas prise pour ce défaut). La lecture est relancée avec l'étape suivante ; **une chaîne qui a obligé à changer en garde la façon pour les chaînes suivantes** (les films n'en héritent jamais : un 1080p ne se décode pas par le processeur du Pi) jusqu'au redémarrage de l'assistant ; **on s'arrête à l'étape 3** (pas de relance sans fin). Le journal raconte chaque changement :
+
+```
+lecture 7 : l'image n'arrive pas à l'écran (affichage « matériel » : erreur fatale de Wayland) ; on relance en « logiciel »
+```
+
+Une lecture qui n'a **montré aucune image au bout d'une minute** est aussi déclarée en panne (« VLC ne répond pas ») au lieu de rester indéfiniment « en démarrage ».
+
+**Ce que j'ai vérifié** : la logique de relance, avec un faux VLC qui reproduit le comportement (il continue de « jouer » mais n'affiche rien tant qu'il n'a pas les bonnes options) : erreur fatale → relance en logiciel ; images écartées en série → relance ; échelle montée jusqu'à l'étape 3 puis arrêt ; chaîne suivante partant directement avec la bonne façon ; film qui n'en hérite pas ; affichage correct laissé en paix ; lecture sans image déclarée en panne. Et le **vrai VLC** accepte les trois options (`--avcodec-hw=none`, `--deinterlace=-1`, `--vout=wl_shm`) et active bien le désentrelacement.
+
+**Ce que je n'ai pas pu vérifier** : que le décodage logiciel, ou l'affichage `wl_shm`, **montre l'image sur ton écran**. C'est le but de la relance, pas quelque chose que j'ai vu fonctionner. Si l'écran reste noir aux trois étapes, le journal le dira (trois lignes « on relance en … ») et l'étape suivante sera à chercher ailleurs (la sortie du compositeur, par exemple : le journal de VLC parlait d'un écran de 1920×1080 alors que le dock est un 1024×600).
+
+**Suites (1.6.5)** : `ruff`, `shellcheck` propres ; Python **2 543 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 472 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : **15 réussis** ; banc du repli smbclient (3 cas) inchangé ; l'interface n'a pas changé (Vitest 371) et ses parcours liés au Divertissement (stage k, 9, et les 5 du dock simulé) sont réussis.

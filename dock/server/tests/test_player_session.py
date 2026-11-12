@@ -254,13 +254,24 @@ if os.environ.get("FAKE_VLC_NOISE"):
     for _ in range(int(os.environ.get("FAKE_VLC_NOISE_COUNT", "25"))):
         sys.stderr.write(os.environ["FAKE_VLC_NOISE"] + "\\n")
     sys.stderr.flush()
+open(os.environ["FAKE_LOG"] + ".launches", "a").write("lancé\\n")
+# L'affichage du Pi : tant que VLC n'a pas la façon d'afficher que FAKE_VLC_NEEDS_PROFILE demande, l'image n'arrive pas
+# (une erreur fatale de Wayland, ou des images écartées) ; VLC, lui, continue de « jouer » comme le vrai.
+profile = 2 if "--vout=wl_shm" in args else 1 if "--avcodec-hw=none" in args else 0
+if profile < int(os.environ.get("FAKE_VLC_NEEDS_PROFILE", "0")):
+    if os.environ.get("FAKE_VLC_DISCARD"):
+        for _ in range(25):
+            sys.stderr.write("[0000007f800015d0] wl_dmabuf vout display warning: Video discarded due to Wayland congestion\\n")
+    else:
+        sys.stderr.write("[destroyed object]: error 7: importing the supplied dmabufs failed\\n")
+    sys.stderr.flush()
 live = os.environ.get("FAKE_LIVE") == "1"
 state = {{"playing": 1, "base": 0.0, "since": time.monotonic(), "volume": volume}}
 def now():
     return state["base"] + ((time.monotonic() - state["since"]) if state["playing"] else 0)
 def handle(line):
     word, _, rest = line.strip().partition(" ")
-    if word == "is_playing": return "1"  # comme VLC 3 : 1 même en pause
+    if word == "is_playing": return "0" if os.environ.get("FAKE_VLC_NEVER") else "1"  # comme VLC 3 : 1 même en pause
     if word == "status":
         return ("Type 'pause' to continue." if not state["playing"] else "( audio volume: %d )" % state["volume"]) + "\\nstatus: returned 0 (no error)"
     if word == "get_time": return str(int(now()))
@@ -847,13 +858,16 @@ async def test_the_reason_vlc_gives_is_shown_and_written_to_the_journal_without_
 async def test_vlc_dropping_the_pictures_is_said_in_the_journal_while_the_playback_goes_on(
     fakes, fast, monkeypatch, journal
 ):
-    """Le cas du Pi : la lecture avance, l'écran reste noir, et rien d'autre ne le dirait."""
+    """Quand il n'y a plus de façon plus sûre d'afficher, rien n'est relancé : le journal le dit, une seule fois."""
     monkeypatch.setenv(
         "FAKE_VLC_NOISE",
         "[0000007f500013f0] wl_dmabuf vout display warning: Video discarded due to Wayland congestion",
     )
     s, box = session(fakes), Mailbox()
-    await s.handle({"t": "cmd", "name": "play", "job": 21, "url": "/tmp/a.mkv", "volume": 70}, box)
+    s.live_profile = (
+        len(ps.DISPLAY_PROFILES) - 1
+    )  # la dernière façon d'afficher : il n'y en a pas d'autre à essayer
+    await s.handle(live_message(21), box)
     await box.wait(lambda m: m["t"] == "state" and m["state"] == "playing")
     try:
         text = ""
@@ -864,9 +878,170 @@ async def test_vlc_dropping_the_pictures_is_said_in_the_journal_while_the_playba
             await asyncio.sleep(0.1)
         assert "affichage en difficulté — VLC écarte des images (20 fois)" in text
         assert text.count("affichage en difficulté") == 1  # dit une fois, pas à chaque image
+        assert launches(fakes) == 1  # rien à relancer
         assert not box.of("ended")  # ce n'est pas une panne : VLC joue toujours
     finally:
         await s._stop_playback()
+
+
+# --- l'image n'arrive pas à l'écran : une façon d'afficher plus sûre ----------------------------------------------------
+
+
+def live_message(job, **extra):
+    return {
+        "t": "cmd",
+        "name": "play",
+        "job": job,
+        "url": "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=sd",
+        "live": True,
+        "volume": 70,
+        **extra,
+    }
+
+
+def launches(fakes) -> int:
+    path = Path(str(fakes.log) + ".launches")
+    return len(path.read_text().splitlines()) if path.exists() else 0
+
+
+async def wait_for_launches(fakes, count, timeout=15.0):
+    end = asyncio.get_running_loop().time() + timeout
+    while launches(fakes) < count and asyncio.get_running_loop().time() < end:
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.6)  # le temps qu'une relance de plus, s'il y en avait une, se montre
+
+
+async def test_a_fatal_wayland_error_relaunches_the_channel_with_software_decoding(
+    fakes, fast, monkeypatch, journal
+):
+    """Le cas du Pi : VLC ne peut plus rien montrer après l'erreur fatale, mais continue de « jouer »."""
+    monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(30), box)
+    await wait_for_launches(fakes, 2)
+    try:
+        assert launches(fakes) == 2  # le premier lancement (matériel), puis un seul de plus
+        args = json.loads(fakes.log.read_text())["args"]
+        assert "--avcodec-hw=none" in args
+        # le désentrelacement (coupé pour l'affichage matériel) est rétabli, et vient après : VLC garde la dernière valeur
+        assert args.index("--deinterlace=0") < args.index("--deinterlace=-1")
+        await box.wait(
+            lambda m: m["t"] == "state" and m["job"] == 30 and m["state"] == "playing", timeout=15
+        )
+        assert not box.of("ended")
+        text = journal.read_text(encoding="utf-8")
+        assert (
+            "l'image n'arrive pas à l'écran (affichage « matériel » : erreur fatale de Wayland)"
+            in text
+        )
+        assert "on relance en « logiciel »" in text
+        assert "(affichage : logiciel)" in text
+        assert s.live_profile == 1  # les chaînes suivantes partent avec
+    finally:
+        await s._stop_playback()
+
+
+async def test_the_next_channel_starts_directly_with_the_way_of_displaying_that_worked(
+    fakes, fast, monkeypatch
+):
+    monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(31), box)
+    await wait_for_launches(fakes, 2)
+    Path(str(fakes.log) + ".launches").unlink()
+    await s.handle(live_message(32), box)
+    await wait_for_launches(fakes, 1)
+    try:
+        assert launches(fakes) == 1  # plus de premier essai raté : on repart de ce qui a marché
+        assert "--avcodec-hw=none" in json.loads(fakes.log.read_text())["args"]
+    finally:
+        await s._stop_playback()
+
+
+async def test_a_file_never_inherits_the_software_display_of_the_channels(fakes, fast, monkeypatch):
+    """Un film en 1080p ne se décode pas par le processeur du Pi : la mémoire ne vaut que pour les chaînes."""
+    monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(33), box)
+    await wait_for_launches(fakes, 2)
+    assert s.live_profile == 1
+    s.env["FAKE_VLC_NEEDS_PROFILE"] = (
+        "0"  # l'environnement des programmes est celui de la session, copié à sa création
+    )
+    Path(str(fakes.log) + ".launches").unlink()
+    await s.handle(
+        {"t": "cmd", "name": "play", "job": 34, "url": "/tmp/film.mkv", "volume": 70}, box
+    )
+    await wait_for_launches(fakes, 1)
+    try:
+        assert "--avcodec-hw=none" not in json.loads(fakes.log.read_text())["args"]
+    finally:
+        await s._stop_playback()
+
+
+async def test_images_dropped_in_series_relaunch_the_channel_too(fakes, fast, monkeypatch, journal):
+    monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
+    monkeypatch.setenv(
+        "FAKE_VLC_DISCARD", "1"
+    )  # pas d'erreur fatale : seulement des images écartées
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(35), box)
+    await wait_for_launches(fakes, 2)
+    try:
+        assert launches(fakes) == 2
+        assert "25 images écartées" in journal.read_text(
+            encoding="utf-8"
+        ) or "20 images écartées" in journal.read_text(encoding="utf-8")
+    finally:
+        await s._stop_playback()
+
+
+async def test_the_ladder_goes_up_to_shared_memory_display_and_stops_there(
+    fakes, fast, monkeypatch, journal
+):
+    monkeypatch.setenv(
+        "FAKE_VLC_NEEDS_PROFILE", "9"
+    )  # rien n'y fait : on ne doit pas relancer sans fin
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(36), box)
+    await wait_for_launches(fakes, 3)
+    try:
+        assert (
+            launches(fakes) == 3
+        )  # matériel, logiciel, logiciel en mémoire partagée : puis plus rien
+        assert "--vout=wl_shm" in json.loads(fakes.log.read_text())["args"]
+        assert s.live_profile == 2
+        text = journal.read_text(encoding="utf-8")
+        assert "on relance en « logiciel, mémoire partagée »" in text
+        assert not box.of("ended")  # la lecture reste : seule l'image manque
+    finally:
+        await s._stop_playback()
+
+
+async def test_a_good_display_is_left_alone(fakes, fast):
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(37), box)
+    await box.wait(
+        lambda m: m["t"] == "state" and m["job"] == 37 and m["state"] == "playing", timeout=15
+    )
+    await asyncio.sleep(1.5)
+    try:
+        assert launches(fakes) == 1
+        assert s.live_profile == 0
+        assert "--avcodec-hw=none" not in json.loads(fakes.log.read_text())["args"]
+    finally:
+        await s._stop_playback()
+
+
+async def test_a_playback_that_shows_nothing_for_too_long_is_declared_stuck(
+    fakes, fast, monkeypatch
+):
+    monkeypatch.setattr(ps, "START_PLAYING_WAIT", 1.0)
+    monkeypatch.setenv("FAKE_VLC_NEVER", "1")  # VLC répond, mais ne joue jamais
+    s, box = session(fakes), Mailbox()
+    await s.handle({"t": "cmd", "name": "play", "job": 38, "url": "/tmp/a.mkv", "volume": 70}, box)
+    await box.wait(lambda m: m["t"] == "ended", timeout=15)
+    assert "VLC ne répond pas" in box.of("ended")[0]["error"]
 
 
 async def test_a_crash_of_vlc_names_the_signal(fakes, fast, monkeypatch):
