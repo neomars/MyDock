@@ -265,7 +265,11 @@ if profile < int(os.environ.get("FAKE_VLC_NEEDS_PROFILE", "0")):
     else:
         sys.stderr.write("[destroyed object]: error 7: importing the supplied dmabufs failed\\n")
     sys.stderr.flush()
+if os.environ.get("FAKE_VLC_BUFFERED"):
+    sys.stderr.write("[0000007f90000ca0] main input debug: Stream buffering done (1527 ms in 1434 ms)\\n")
+    sys.stderr.flush()
 live = os.environ.get("FAKE_LIVE") == "1"
+t0 = time.monotonic()
 state = {{"playing": 1, "base": 0.0, "since": time.monotonic(), "volume": volume}}
 def now():
     return state["base"] + ((time.monotonic() - state["since"]) if state["playing"] else 0)
@@ -274,7 +278,17 @@ def handle(line):
     if word == "is_playing": return "0" if os.environ.get("FAKE_VLC_NEVER") else "1"  # comme VLC 3 : 1 même en pause
     if word == "status":
         return ("Type 'pause' to continue." if not state["playing"] else "( audio volume: %d )" % state["volume"]) + "\\nstatus: returned 0 (no error)"
-    if word == "get_time": return str(int(now()))
+    # Un flux RTSP en MPEG-TS lu par live555 : le temps de lecture reste à 0 alors que l'image est à l'écran.
+    if word == "get_time": return "0" if os.environ.get("FAKE_VLC_NO_CLOCK") else str(int(now()))
+    if word == "stats":
+        if os.environ.get("FAKE_VLC_NO_STATS"): return ""
+        shown = 0 if os.environ.get("FAKE_VLC_NO_PICTURES") else int((time.monotonic() - t0) * 25) + 1
+        return "\\n".join([
+            "+----[ begin of statistical info ]", "+-[Incoming]", "| input bytes read :      503 KiB",
+            "| demux corrupted  :        0", "| discontinuities  :        3", "|", "+-[Video Decoding]",
+            "| video decoded    :      441", "| frames displayed :  %5d" % shown, "| frames lost      :        2", "|",
+            "+-[Audio Decoding]", "| audio decoded    :      800", "| buffers played   :      %d" % shown,
+            "| buffers lost     :        0", "|", "+----[ end of statistical info ]", "stats: returned 0 (no error)"])
     if word == "get_length": return "0" if live else "120"
     if word == "pause":
         state["base"] = now(); state["playing"] ^= 1; state["since"] = time.monotonic(); return ""
@@ -447,6 +461,120 @@ async def test_a_live_channel_has_neither_position_nor_length_and_cannot_seek(fa
         assert (await pb.status())["position"] is None
     finally:
         await pb.stop()
+
+
+# --- « en lecture » sans le temps de lecture : le chien de garde du dock ne doit plus arrêter la chaîne --------------------
+
+
+def test_the_statistics_of_vlc_are_read_as_numbers():
+    reply = (
+        "+----[ begin of statistical info ]\r\n+-[Incoming]\r\n| input bytes read :      503 KiB\r\n"
+        "| discontinuities  :        3\r\n|\r\n+-[Video Decoding]\r\n| video decoded    :      441\r\n"
+        "| frames displayed :      189\r\n| frames lost      :        0\r\n+-[Audio Decoding]\r\n"
+        "| buffers played   :      399\r\n+----[ end of statistical info ]\r\nstats: returned 0 (no error)\r\n"
+    )
+    stats = ps.parse_stats(reply)
+    assert stats["frames displayed"] == 189
+    assert stats["buffers played"] == 399
+    assert stats["discontinuities"] == 3
+    assert stats["frames lost"] == 0
+    assert ps.parse_stats("") == {}
+    assert ps.parse_stats("status change: ( play state: 3 )\r\n1\r\n") == {}
+
+
+async def test_a_channel_whose_clock_stays_at_zero_is_playing_once_pictures_are_displayed(
+    fakes, monkeypatch, journal
+):
+    """Le cas du Pi : `get_time` reste à 0 sur les chaînes de la Freebox (RTSP en MPEG-TS), l'image est pourtant là."""
+    monkeypatch.setenv("FAKE_LIVE", "1")
+    monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
+    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    await pb.start()
+    try:
+        status = await settled(pb, timeout=5)
+        assert status["state"] == "playing"
+        assert (status["position"], status["length"]) == (
+            None,
+            None,
+        )  # un direct n'a ni l'un ni l'autre
+        text = journal.read_text(encoding="utf-8")
+        assert "la lecture a démarré" in text
+        assert "des images sont affichées" in text
+    finally:
+        await pb.stop()
+
+
+async def test_without_statistics_a_full_buffer_is_enough_to_say_it_plays(
+    fakes, monkeypatch, journal
+):
+    monkeypatch.setenv("FAKE_LIVE", "1")
+    monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
+    monkeypatch.setenv("FAKE_VLC_NO_STATS", "1")  # un VLC qui ne répond rien à « stats »
+    monkeypatch.setenv("FAKE_VLC_BUFFERED", "1")
+    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    await pb.start()
+    try:
+        await settled(pb, timeout=5)
+        assert "la mémoire tampon de VLC est pleine" in journal.read_text(encoding="utf-8")
+    finally:
+        await pb.stop()
+
+
+async def test_a_clock_at_zero_with_nothing_displayed_does_not_pretend_to_play(fakes, monkeypatch):
+    monkeypatch.setenv("FAKE_LIVE", "1")
+    monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
+    monkeypatch.setenv("FAKE_VLC_NO_PICTURES", "1")
+    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    await pb.start()
+    try:
+        await settled(pb, "starting", timeout=5)
+        await asyncio.sleep(0.6)
+        assert (await pb.status())["state"] == "starting"
+    finally:
+        await pb.stop()
+
+
+async def test_the_journal_follows_the_playback_with_the_counters_of_vlc(
+    fakes, monkeypatch, journal
+):
+    monkeypatch.setattr(ps, "FOLLOW_EVERY", 0.2)
+    monkeypatch.setenv("FAKE_LIVE", "1")
+    monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
+    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    await pb.start()
+    try:
+        await settled(pb, timeout=5)
+        await asyncio.sleep(0.5)
+        await pb.status()
+        text = journal.read_text(encoding="utf-8")
+        assert "suivi — images affichées" in text
+        assert "images perdues 2" in text
+        assert "discontinuités 3" in text
+    finally:
+        await pb.stop()
+    assert "lecture 1 : arrêt (mode « direct », la lecture avait démarré)" in journal.read_text(
+        encoding="utf-8"
+    )
+
+
+async def test_a_channel_with_a_frozen_clock_tells_the_dock_it_plays_and_a_stop_is_journaled(
+    fakes, fast, monkeypatch, journal
+):
+    """Le dock arrêtait la chaîne au bout de 40 s faute d'apprendre que ça jouait ; il doit l'apprendre, et on doit le lire."""
+    monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
+    s, box = session(fakes), Mailbox()
+    await s.handle(live_message(60), box)
+    try:
+        await box.wait(
+            lambda m: m["t"] == "state" and m["job"] == 60 and m["state"] == "playing", timeout=15
+        )
+        await s.handle({"t": "cmd", "name": "stop", "job": 60}, box)
+    finally:
+        await s._stop_playback()
+    text = journal.read_text(encoding="utf-8")
+    assert "lecture 60 : arrêt demandé par le dock" in text
+    assert "lecture 60 : arrêt (mode" in text
+    assert "la lecture avait démarré" in text
 
 
 async def test_stopping_kills_vlc_and_removes_its_socket(fakes):
@@ -1191,7 +1319,7 @@ async def test_when_vlc_cannot_open_a_share_file_smbclient_gives_it_to_vlc_throu
     assert "la tentative « direct » a échoué" in text
     assert "tentative 2/2 « smbclient »" in text
     assert "commande smbclient : " in text
-    assert "la lecture a démarré (mode « smbclient »)" in text
+    assert "la lecture a démarré (mode « smbclient » ;" in text
     assert "motdepasse-de-ligon" not in text
     assert playerlog.FAILURE_MARK not in text  # tout s'est bien terminé
 

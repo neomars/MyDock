@@ -303,6 +303,21 @@ async def test_a_start_that_never_comes_is_declared_failed(monkeypatch):
     assert sent(conn)[-1]["name"] == "stop"
 
 
+async def test_the_dock_writes_down_why_it_stopped_a_playback_that_never_reported_playing(
+    monkeypatch, caplog
+):
+    """Sans cette ligne dans dock.log, un arrêt à 40 s ressemblait à un plantage de VLC (constaté sur le Pi)."""
+    monkeypatch.setattr(player_module, "START_TIMEOUT", 0.05)
+    h, _conn, _ = hub()
+    with caplog.at_level("WARNING", logger="mydock_dock.media"):
+        h.play({"title": "x"}, "rtsp://h/x")
+        await asyncio.sleep(0.3)
+    assert any(
+        "toujours « en démarrage »" in r.getMessage() and r.name == "mydock_dock.media"
+        for r in caplog.records
+    )
+
+
 async def test_a_playback_that_starts_in_time_is_not_declared_failed(monkeypatch):
     monkeypatch.setattr(player_module, "START_TIMEOUT", 0.2)
     h, conn, _ = hub()

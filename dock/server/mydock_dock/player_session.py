@@ -169,6 +169,21 @@ def parse_numbers(text: str) -> list[int]:
     return [int(m.group(1)) for line in text.splitlines() if (m := _NUMBER_LINE.match(line))]
 
 
+_STAT_LINE = re.compile(r"^\|\s*([A-Za-z][A-Za-z ]*?)\s*:\s*(\d+)")
+
+
+def parse_stats(text: str) -> dict[str, int]:
+    """Les compteurs que la commande `stats` de VLC répond (« | frames displayed :   189 » → {"frames displayed": 189}).
+
+    Contrairement au temps de lecture (`get_time`, qui reste à 0 sur un flux RTSP en MPEG-TS), ils disent si des images
+    sont vraiment arrivées à l'écran."""
+    found: dict[str, int] = {}
+    for line in text.splitlines():
+        if match := _STAT_LINE.match(line.strip()):
+            found[match.group(1).lower()] = int(match.group(2))
+    return found
+
+
 #: Les lignes de VLC qui n'apprennent rien sur un échec (son interface sans fenêtre, la fin de la liste de lecture…).
 _VLC_NOISE = (
     "dummy interface",
@@ -415,6 +430,12 @@ DISPLAY_PROFILES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("logiciel, mémoire partagée", ("--avcodec-hw=none", "--deinterlace=-1", "--vout=wl_shm")),
 )
 MAX_LOGGED_LINES = 4000  # par lecture : le journal ne doit pas grossir sans fin si VLC bavarde
+#: La ligne que VLC écrit quand sa mémoire tampon est pleine : le flux est ouvert, décodé, la lecture démarre. C'est le
+#: signal de repli quand ni le temps de lecture ni les statistiques ne disent que ça joue.
+BUFFERED_MARK = "Stream buffering done"
+FOLLOW_EVERY = (
+    15.0  # secondes entre deux lignes de suivi (images affichées, perdues…) dans le journal
+)
 
 
 class VlcPlayback:
@@ -462,6 +483,8 @@ class VlcPlayback:
         self._display_trouble = 0
         self._display_fatal = False
         self._played = False
+        self._buffered = False
+        self._followed = time.monotonic()
         self._paused = False
         self._stopped = False
         self._started = time.monotonic()
@@ -512,7 +535,8 @@ class VlcPlayback:
         self._logged = 0
         self._display_trouble = 0
         self._display_fatal = False
-        self._started = time.monotonic()
+        self._buffered = False
+        self._started = self._followed = time.monotonic()
 
     async def _next_attempt(self) -> None:
         self._attempt += 1
@@ -751,6 +775,8 @@ class VlcPlayback:
                         playerlog.event(
                             f"{label} : la suite est omise du journal ({MAX_LOGGED_LINES} lignes)"
                         )
+                if label == "vlc" and BUFFERED_MARK in text:
+                    self._buffered = True
                 if label == "vlc" and DISPLAY_FATAL in text:
                     self._display_fatal = True
                 if label == "vlc" and any(marker in text for marker in DISPLAY_TROUBLE):
@@ -804,13 +830,32 @@ class VlcPlayback:
         reply = await rc.ask("is_playing\nget_time\nget_length\nstatus")
         running, position, length = [*parse_numbers(reply), None, None, None][:3]  # type: ignore[list-item]
         paused = "to continue" in reply
+        moving = (position or 0) > 0
+        # Le temps de lecture ne dit pas tout : sur un flux RTSP en MPEG-TS (les chaînes de la Freebox lues par le module
+        # live555 de VLC) `get_time` reste à 0 alors que l'image est à l'écran, et le dock, qui n'apprenait jamais que ça
+        # jouait, arrêtait la chaîne au bout de 40 s. Les statistiques de VLC (images affichées, tampons audio joués)
+        # disent, elles, que quelque chose arrive vraiment ; la mémoire tampon pleine est le dernier recours.
+        stats: dict[str, int] = {}
+        due = playerlog.active() and time.monotonic() - self._followed >= FOLLOW_EVERY
+        if running == 1 and (due or not (self._played or moving)):
+            stats = parse_stats(await rc.ask("stats"))
+            if due and stats:
+                self._followed = time.monotonic()
+                playerlog.event(self._follow_line(position, stats))
+        shown = stats.get("frames displayed", 0) + stats.get("buffers played", 0)
         if running == 1 and paused:
             self._played, state = True, "paused"
-        elif running == 1 and (self._played or (position or 0) > 0):
-            # Les images (le temps de lecture avance) : avant cela VLC ouvre le flux, la chaîne n'a encore rien montré.
+        elif running == 1 and (self._played or moving or shown > 0 or self._buffered):
             if not self._played:
+                how = (
+                    "le temps de lecture avance"
+                    if moving
+                    else "des images sont affichées"
+                    if shown > 0
+                    else "la mémoire tampon de VLC est pleine"
+                )
                 playerlog.event(
-                    f"lecture {self._job} : la lecture a démarré (mode « {self.mode} »)"
+                    f"lecture {self._job} : la lecture a démarré (mode « {self.mode} » ; {how})"
                 )
             self._played, state = True, "playing"
         else:
@@ -822,6 +867,21 @@ class VlcPlayback:
             "length": None if self.live or not length else length,
             "seekable": self.seekable and not self.live,
         }
+
+    def _follow_line(self, position: int | None, stats: dict[str, int]) -> str:
+        """Une ligne de suivi pour le journal : de quoi voir, après coup, si le flux a perdu des paquets ou des images."""
+        names = (
+            ("frames displayed", "images affichées"),
+            ("frames lost", "images perdues"),
+            ("buffers played", "tampons audio joués"),
+            ("buffers lost", "tampons audio perdus"),
+            ("demux corrupted", "flux abîmé"),
+            ("discontinuities", "discontinuités"),
+        )
+        parts = [f"{label} {stats[key]}" for key, label in names if key in stats]
+        if position:
+            parts.insert(0, f"temps de VLC {position} s")
+        return f"lecture {self._job} : suivi — " + (", ".join(parts) or "aucun compteur")
 
     async def command(self, name: str, **params: Any) -> None:
         rc = await self._connect_rc()
@@ -868,6 +928,15 @@ class VlcPlayback:
             os.unlink(self._socket)
 
     async def stop(self) -> None:
+        if not self._stopped:
+            playerlog.event(
+                f"lecture {self._job} : arrêt (mode « {self.mode} », "
+                + (
+                    "la lecture avait démarré)"
+                    if self._played
+                    else "rien n'avait encore été montré)"
+                )
+            )
         self._stopped = True
         await self._terminate()
         if self._config is not None:
@@ -1183,10 +1252,13 @@ class Session:
             await self._play(message)
         elif name == "stop":
             if job == self._job:
+                playerlog.event(f"lecture {job} : arrêt demandé par le dock")
                 await self._stop_playback()
         elif name == "front":
             await self._set_front(str(message.get("to")))
         elif name in ("pause", "resume", "toggle", "seek", "volume") and self._playback is not None:
+            if name != "volume":  # le curseur du volume enverrait des dizaines de lignes
+                playerlog.event(f"lecture {self._job} : commande du dock « {name} »")
             params = {k: v for k, v in message.items() if k not in ("t", "name", "job")}
             await self._playback.command(str(name), **params)
 
