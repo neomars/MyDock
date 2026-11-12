@@ -1,3 +1,24 @@
+mydock (1.6.5) unstable; urgency=medium
+
+  * Freetv : « une image de quelques centièmes de secondes et plus rien ». Le journal de 1.6.4 (désentrelacement coupé) le
+    montre : une image est présentée, puis VLC écarte tout ce qui suit (« Video discarded due to Wayland congestion »,
+    des dizaines par seconde) ; le reste (images « trop en retard », son qui se resynchronise, discontinuités du flux)
+    en paraît la conséquence. Le premier journal (avec désentrelacement) montrait la cause directe : une erreur fatale
+    de labwc sur les images (dmabuf) du décodeur matériel du Pi (« importing the supplied dmabufs failed »), après
+    laquelle VLC ne montre plus rien ; elle n'est pas dans la partie du second journal reçue, mais le comportement est
+    le même. VLC ne peut pas s'en remettre : il faut le relancer autrement.
+  * L'assistant le fait seul. Quand l'image n'arrive pas à l'écran (l'erreur fatale, ou 20 images écartées dans la
+    minute qui suit le lancement) il relance la lecture avec une façon d'afficher plus sûre : (1) matériel (comme
+    avant), (2) décodage par le processeur avec désentrelacement (--avcodec-hw=none --deinterlace=-1), (3) en plus un
+    affichage par mémoire partagée (--vout=wl_shm). Une chaîne qui a obligé à changer en garde la façon pour les
+    chaînes suivantes (jamais pour les films, trop lourds à décoder sans le matériel) jusqu'au redémarrage de
+    l'assistant ; on s'arrête à la dernière, sans relancer sans fin. Le journal raconte chaque changement (« l'image
+    n'arrive pas à l'écran … on relance en … »). Une lecture qui n'a montré aucune image au bout d'une minute est
+    déclarée en panne au lieu de rester « en démarrage ».
+  * Nouvelle version : 1.6.4 -> 1.6.5 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 17:00:00 +0000
+
 mydock (1.6.4) unstable; urgency=medium
 
   * Freetv : une chaîne « joue » (le son sort, la position avance) mais l'écran reste noir. Cause lue dans le journal

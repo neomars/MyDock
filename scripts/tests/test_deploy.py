@@ -154,7 +154,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 1.6.4")
+    assert version.stdout.startswith("mydock-agent 1.6.5")
 
 
 @pytest.mark.slow

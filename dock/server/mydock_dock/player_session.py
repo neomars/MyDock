@@ -399,6 +399,21 @@ DISPLAY_TROUBLE = (
     "Video discarded due to Wayland congestion",
 )
 DISPLAY_TROUBLE_LINES = 20  # à partir de combien de lignes on le dit dans le journal
+#: L'erreur fatale du protocole Wayland : labwc refuse des images (dmabuf) de VLC et coupe sa connexion ; tout ce qui suit
+#: est « écarté », l'écran reste noir alors que la lecture « avance » (constaté sur le Pi avec une chaîne entrelacée).
+DISPLAY_FATAL = "importing the supplied dmabufs failed"
+DISPLAY_WATCH = 60.0  # secondes après le lancement pendant lesquelles on surveille l'affichage
+START_PLAYING_WAIT = (
+    60.0  # une lecture qui n'a montré aucune image au bout de ce temps est déclarée en panne
+)
+#: Les façons d'afficher, de la plus légère à la plus sûre : quand l'image n'arrive pas à l'écran, la lecture est relancée
+#: avec la suivante. (1) le décodage et l'affichage par le matériel du Pi ; (2) le décodage par le processeur (avec
+#: désentrelacement) ; (3) en plus, un affichage par mémoire partagée, que tout compositeur sait montrer.
+DISPLAY_PROFILES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("matériel", ()),
+    ("logiciel", ("--avcodec-hw=none", "--deinterlace=-1")),
+    ("logiciel, mémoire partagée", ("--avcodec-hw=none", "--deinterlace=-1", "--vout=wl_shm")),
+)
 MAX_LOGGED_LINES = 4000  # par lecture : le journal ne doit pas grossir sans fin si VLC bavarde
 
 
@@ -421,6 +436,7 @@ class VlcPlayback:
         job: int = 0,
         smbclient: str | None = None,
         smb_source: SmbSource | None = None,
+        profile: int = 0,
     ) -> None:
         self.url, self.live, self.volume = url, live, volume
         self._vlc, self._ffmpeg, self._live555 = vlc, ffmpeg, live555
@@ -432,6 +448,9 @@ class VlcPlayback:
         )
         self._attempt = -1
         self.mode = ""
+        self.profile = min(
+            max(profile, 0), len(DISPLAY_PROFILES) - 1
+        )  # la façon d'afficher (DISPLAY_PROFILES)
         self.seekable = True
         self._procs: list[asyncio.subprocess.Process] = []
         self._rc: RcClient | None = None
@@ -441,6 +460,7 @@ class VlcPlayback:
         ] = []  # ce que VLC, ffmpeg, smbclient ont dit d'anormal, de la dernière tentative
         self._logged = 0
         self._display_trouble = 0
+        self._display_fatal = False
         self._played = False
         self._paused = False
         self._stopped = False
@@ -484,25 +504,66 @@ class VlcPlayback:
             return False
         return True
 
-    async def _next_attempt(self) -> None:
-        self._attempt += 1
-        mode = self._attempts[self._attempt]
+    def _reset(self) -> None:
         self._issues = []
         self._rc = None
         self._procs = []
         self._drains = []
         self._logged = 0
         self._display_trouble = 0
+        self._display_fatal = False
         self._started = time.monotonic()
+
+    async def _next_attempt(self) -> None:
+        self._attempt += 1
+        mode = self._attempts[self._attempt]
+        self._reset()
         self.mode = mode
         playerlog.event(
             f"lecture {self._job} : tentative {self._attempt + 1}/{len(self._attempts)} « {mode} » pour {self.url}"
+            f" (affichage : {DISPLAY_PROFILES[self.profile][0]})"
         )
         await self._launch(mode)
 
+    @property
+    def display_failed(self) -> bool:
+        """L'image n'arrive pas à l'écran (erreur fatale de Wayland, ou images écartées en série) et il reste une façon
+        plus sûre d'afficher : la lecture doit être relancée avec elle."""
+        if self._stopped or self.profile + 1 >= len(DISPLAY_PROFILES):
+            return False
+        if time.monotonic() - self._started > DISPLAY_WATCH:
+            return False  # une gêne passagère bien après le début n'est pas ce défaut
+        return self._display_fatal or self._display_trouble >= DISPLAY_TROUBLE_LINES
+
+    async def fix_display(self) -> bool:
+        """Relance la lecture avec la façon d'afficher suivante, si l'image n'arrive pas à l'écran. `True` : relancée."""
+        if not self.display_failed:
+            return False
+        old, new = DISPLAY_PROFILES[self.profile][0], DISPLAY_PROFILES[self.profile + 1][0]
+        playerlog.event(
+            f"lecture {self._job} : l'image n'arrive pas à l'écran (affichage « {old} » : "
+            f"{'erreur fatale de Wayland' if self._display_fatal else f'{self._display_trouble} images écartées'}) ; "
+            f"on relance en « {new} »"
+        )
+        self.profile += 1
+        await self._terminate()
+        self._played = False
+        self._paused = False
+        self._reset()
+        playerlog.event(
+            f"lecture {self._job} : nouveau lancement « {self.mode} » (affichage : {new}) pour {self.url}"
+        )
+        try:
+            await self._launch(self.mode)
+        except (OSError, RuntimeError) as exc:
+            self._issues.append(str(exc))
+            return False
+        return True
+
     async def _launch(self, mode: str) -> None:
         source = self.url
-        extra = list(self._extra)
+        # Les options de /etc/mydock-kiosk/vlc.flags d'abord, celles de la façon d'afficher ensuite : VLC garde la dernière.
+        extra = [*self._extra, *DISPLAY_PROFILES[self.profile][1]]
         bridge: list[str] | None = None
         bridge_label = ""
         bridge_env: dict[str, str] | None = None
@@ -690,6 +751,8 @@ class VlcPlayback:
                         playerlog.event(
                             f"{label} : la suite est omise du journal ({MAX_LOGGED_LINES} lignes)"
                         )
+                if label == "vlc" and DISPLAY_FATAL in text:
+                    self._display_fatal = True
                 if label == "vlc" and any(marker in text for marker in DISPLAY_TROUBLE):
                     self._display_trouble += 1
                     if self._display_trouble == DISPLAY_TROUBLE_LINES:
@@ -736,6 +799,8 @@ class VlcPlayback:
             if time.monotonic() - self._started > RC_WAIT:
                 return {"state": "starting", "position": None, "length": None, "stalled": True}
             return {"state": "starting", "position": None, "length": None}
+        if not self._played and time.monotonic() - self._started > START_PLAYING_WAIT:
+            return {"state": "starting", "position": None, "length": None, "stalled": True}
         reply = await rc.ask("is_playing\nget_time\nget_length\nstatus")
         running, position, length = [*parse_numbers(reply), None, None, None][:3]  # type: ignore[list-item]
         paused = "to continue" in reply
@@ -1077,6 +1142,9 @@ class Session:
         self.vlc = vlc if vlc is not None else find_vlc()
         self.ffmpeg = ffmpeg if ffmpeg is not None else shutil.which("ffmpeg")
         self.live555 = has_live555() if live555 is None else live555
+        self.live_profile = (
+            0  # la façon d'afficher qui a fini par marcher pour les chaînes (voir DISPLAY_PROFILES)
+        )
         self.smbclient = smbclient if smbclient is not None else shutil.which("smbclient")
         self.windows: Any = Windows(self.env)
         self.touch: Any = TouchWatcher(self.env, self._touched)
@@ -1150,6 +1218,7 @@ class Session:
                 url, live=live, volume=volume, vlc=self.vlc, ffmpeg=self.ffmpeg, live555=self.live555,
                 runtime_dir=self.runtime_dir, env=session_environment(self.env), extra=self.extra, smb=smb, job=self._job,
                 smbclient=self.smbclient, smb_source=smb_source_from(message),
+                profile=self.live_profile if live else 0,
             )  # fmt: skip
         try:
             await playback.start()
@@ -1181,6 +1250,9 @@ class Session:
                         continue  # VLC n'a rien lu : une autre façon de lire est lancée (journal : « tentative »)
                     await self._ended(job, playback.error(), playback)
                     return
+                if (fix := getattr(playback, "fix_display", None)) is not None and await fix():
+                    focused = False  # la fenêtre de VLC est une nouvelle : la remettre devant quand elle joue
+                    continue
                 status = await playback.status()
                 if status.get("stalled"):
                     await playback.stop()
@@ -1189,6 +1261,10 @@ class Session:
                 if not focused and status["state"] == "playing" and self.front == "video":
                     focused = True
                     await self.windows.focus("video")
+                if (profile := getattr(playback, "profile", 0)) > self.live_profile and getattr(
+                    playback, "live", False
+                ):
+                    self.live_profile = profile  # les chaînes suivantes partent directement avec cette façon d'afficher
                 await self._report(job, status)
                 await asyncio.sleep(POLL_SECONDS)
         except asyncio.CancelledError:
