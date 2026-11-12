@@ -198,7 +198,7 @@ if [ "$KIOSK" != none ]; then
       put_file "$KETC/chromium.flags" 644
   fi
   if [ ! -e "$KETC/vlc.flags" ]; then
-    printf '# Options supplémentaires de VLC pour le Divertissement, une par ligne (voir « dépannage » du README).\n# --aout=alsa\n# --avcodec-hw=none\n' |
+    printf '# Options supplémentaires de VLC pour le Divertissement, une par ligne (voir « dépannage » du README).\n# --aout=alsa\n# --avcodec-hw=none --deinterlace=1   (désentrelacer par le processeur : chaînes en SD)\n' |
       put_file "$KETC/vlc.flags" 644
   fi
   subst "$HERE/labwc/autostart" "LIB=$R_LIB" | put_file "$KETC/labwc/autostart" 644
