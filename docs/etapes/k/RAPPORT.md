@@ -169,3 +169,21 @@ Ils tournent (1,5 Mo, trois anciens gardés), sont créés par l'installation (d
 | Contrôle (1.6.3) | Résultat |
 |---|---|
 | Suites | `ruff`, `shellcheck` propres ; Python **2 534 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 463 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : **15 réussis** ; l'interface n'a pas changé depuis 1.6.2 (Vitest 371, Playwright 280 alors) et ses parcours liés au Divertissement (stage k, 9, et les 5 du dock simulé) ont été rejoués : réussis |
+
+## Addendum 4 — version 1.6.4 : « les vidéos du Kiosque se lisent, pas le flux des chaînes »
+
+> « Les vidéos via Kiosque se lisent correctement. Mais pas le stream de chaîne TV. » — [extrait de `player.log` : VLC ouvre la chaîne, `h264_v4l2m2m` décode, « Received first picture », « Detected interlaced video », `drm_av_deinterlace` → `deinterlace_v4l2m2m` sur `/dev/video18`, puis `[destroyed object]: error 7: importing the supplied dmabufs failed` et « Video discarded due to Wayland congestion » en boucle]
+
+**Le Kiosque marche.** La lecture de secours par `smbclient` (1.6.3) lit les fichiers de la Freebox : la cause de l'échec du module Samba de VLC reste inconnue, mais elle est contournée.
+
+**La chaîne n'est pas une panne de flux, de ffmpeg ni de réseau : tout le chemin fonctionne jusqu'à l'écran.** Le journal le montre étape par étape : le pont ffmpeg donne le flux, VLC le lit (« Buffering 99 % »), le décodage matériel démarre (`h264_v4l2m2m`), la première image arrive, le son se synchronise (`pulse audio output … started`). **Puis** VLC voit que la chaîne est **entrelacée** (720×576, comme toute chaîne en SD) et lui applique le **désentrelaceur matériel de Raspberry Pi OS** (`drm_av_deinterlace`, qui passe par `v4l2m2m` sur `/dev/video18`). Les images qu'il produit sont **refusées par labwc** (`importing the supplied dmabufs failed`), et toutes les suivantes sont écartées (`Video discarded due to Wayland congestion`). Résultat : la position avance et le son sort, l'écran reste noir — c'est pourquoi l'écran du dock croit que ça « joue ». Les films du Kiosque, progressifs, n'activent pas ce filtre : ils s'affichent.
+
+**Correction.** VLC est lancé avec **`--deinterlace=0`** : sans désentrelaceur, les images décodées par le matériel passent comme celles des films. Le prix : **un peu de « peigne » sur les mouvements rapides** d'une chaîne entrelacée ; `/etc/mydock-kiosk/vlc.flags` permet de rétablir un désentrelacement par le processeur (`--avcodec-hw=none` puis `--deinterlace=1`, raisonnable en SD, trop lourd en HD — une option par ligne, VLC garde la dernière). Je n'ai pas choisi ce désentrelacement logiciel par défaut : **je ne peux pas essayer l'écran du Pi**, et la seule chose que ton journal prouve est que le désentrelaceur matériel casse l'affichage — pas que le chemin logiciel marche mieux.
+
+**Ce que je n'ai pas pu vérifier** : que l'écran s'affiche une fois le désentrelacement coupé. C'est ce que le journal laisse prévoir (les films, décodés par le même matériel et affichés par le même `wl_dmabuf`, passent), mais c'est une déduction, pas une constatation. J'ai vérifié que VLC **accepte** l'option et que le journal **le signale** désormais : au bout de 20 lignes « image écartée », l'assistant écrit une fois `affichage en difficulté` avec la dernière ligne de VLC — jusqu'ici rien ne distinguait une lecture qui avance sur un écran noir d'une lecture qui marche.
+
+| Contrôle (1.6.4) | Résultat |
+|---|---|
+| Tests ajoutés | `--deinterlace=0` présent et avant les options de `vlc.flags` (qui peuvent le rétablir) ; une lecture dont VLC écarte les images écrit « affichage en difficulté » une seule fois sans être une panne |
+| Suites | `ruff`, `shellcheck` propres ; Python **2 536 réussis** (5 ignorés : l'utilisateur ordinaire manque en root) ; avec les versions exactes des paquets d'Ubuntu 26.04 **2 465 réussis** ; essais du vrai VLC sous un utilisateur ordinaire : **15 réussis** ; banc du repli smbclient (3 cas) inchangé ; l'interface n'a pas changé (Vitest 371) et ses parcours liés au Divertissement (stage k, 9, et les 5 du dock simulé) sont réussis |
+

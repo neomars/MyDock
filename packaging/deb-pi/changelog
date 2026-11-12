@@ -1,3 +1,20 @@
+mydock (1.6.4) unstable; urgency=medium
+
+  * Freetv : une chaîne « joue » (le son sort, la position avance) mais l'écran reste noir. Cause lue dans le journal
+    envoyé par l'utilisateur : la chaîne est entrelacée (720x576) ; VLC lui applique le désentrelaceur matériel de
+    Raspberry Pi OS (v4l2m2m), dont les images sont refusées par labwc (« importing the supplied dmabufs failed »), puis
+    toutes les suivantes sont écartées (« Video discarded due to Wayland congestion »). VLC est donc lancé sans
+    désentrelacement (--deinterlace=0) : les images décodées par le matériel passent (c'est le cas des films du Kiosque).
+    Les mouvements rapides d'une chaîne entrelacée montrent un peu de peigne ; /etc/mydock-kiosk/vlc.flags permet de
+    rétablir un désentrelacement par le processeur (--avcodec-hw=none --deinterlace=1, raisonnable pour une chaîne en SD).
+  * Journal : quand VLC écarte des images ou n'arrive pas à les importer (20 lignes), l'assistant l'écrit une fois :
+    « affichage en difficulté », avec la dernière ligne de VLC. Jusqu'ici rien ne signalait une lecture qui avance sur un
+    écran noir.
+  * Le Kiosque lit les fichiers du partage de la Freebox (lecture de secours par smbclient de 1.6.3, constatée par l'utilisateur).
+  * Nouvelle version : 1.6.3 -> 1.6.4 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 15:00:00 +0000
+
 mydock (1.6.3) unstable; urgency=medium
 
   * Kiosque : la lecture de secours par smbclient n'est plus bloquée à tort. Le journal envoyé par l'utilisateur a montré

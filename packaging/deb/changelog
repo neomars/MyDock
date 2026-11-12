@@ -1,3 +1,10 @@
+mydock-agent (1.6.4) unstable; urgency=medium
+
+  * Aucun changement du côté du PC : la version suit celle du dock (1.6.4), dont les chaînes de télévision s'affichent
+    (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 15:00:00 +0000
+
 mydock-agent (1.6.3) unstable; urgency=medium
 
   * Aucun changement du côté du PC : la version suit celle du dock (1.6.3), dont la lecture de secours par smbclient

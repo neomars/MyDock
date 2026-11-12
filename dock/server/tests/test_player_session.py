@@ -186,6 +186,15 @@ def test_vlc_details_put_the_specific_cause_before_the_generic_sentences_and_err
     )  # les avertissements, faute d'erreur
 
 
+def test_the_hardware_deinterlacer_of_the_pi_is_never_used_and_flags_can_still_override_it():
+    command = ps.vlc_command(
+        "vlc", "x", "s", volume=0, extra=["--deinterlace=1", "--avcodec-hw=none"]
+    )
+    assert "--deinterlace=0" in command
+    # vlc.flags vient après : VLC garde la dernière valeur, l'utilisateur peut donc rétablir le désentrelacement
+    assert command.index("--deinterlace=0") < command.index("--deinterlace=1") < command.index("--")
+
+
 def test_vlc_never_asks_questions_nor_looks_for_a_keyring():
     command = ps.vlc_command("vlc", "x", "s", volume=0)
     assert (
@@ -241,6 +250,10 @@ if os.environ.get("FAKE_VLC_FAIL") and args[-1].startswith(os.environ.get("FAKE_
         os.kill(os.getpid(), int(os.environ["FAKE_VLC_SIGNAL"]))
         time.sleep(5)
     sys.exit(int(os.environ.get("FAKE_VLC_EXIT", "0")))
+if os.environ.get("FAKE_VLC_NOISE"):
+    for _ in range(int(os.environ.get("FAKE_VLC_NOISE_COUNT", "25"))):
+        sys.stderr.write(os.environ["FAKE_VLC_NOISE"] + "\\n")
+    sys.stderr.flush()
 live = os.environ.get("FAKE_LIVE") == "1"
 state = {{"playing": 1, "base": 0.0, "since": time.monotonic(), "volume": volume}}
 def now():
@@ -829,6 +842,31 @@ async def test_the_reason_vlc_gives_is_shown_and_written_to_the_journal_without_
     assert "mot-de-passe-secret" not in error
     assert "ligon" not in text  # pas même l'identifiant : on dit seulement qu'il y en a un
     assert "identifiant du partage : oui" in text
+
+
+async def test_vlc_dropping_the_pictures_is_said_in_the_journal_while_the_playback_goes_on(
+    fakes, fast, monkeypatch, journal
+):
+    """Le cas du Pi : la lecture avance, l'écran reste noir, et rien d'autre ne le dirait."""
+    monkeypatch.setenv(
+        "FAKE_VLC_NOISE",
+        "[0000007f500013f0] wl_dmabuf vout display warning: Video discarded due to Wayland congestion",
+    )
+    s, box = session(fakes), Mailbox()
+    await s.handle({"t": "cmd", "name": "play", "job": 21, "url": "/tmp/a.mkv", "volume": 70}, box)
+    await box.wait(lambda m: m["t"] == "state" and m["state"] == "playing")
+    try:
+        text = ""
+        for _ in range(40):
+            text = journal.read_text(encoding="utf-8")
+            if "affichage en difficulté" in text:
+                break
+            await asyncio.sleep(0.1)
+        assert "affichage en difficulté — VLC écarte des images (20 fois)" in text
+        assert text.count("affichage en difficulté") == 1  # dit une fois, pas à chaque image
+        assert not box.of("ended")  # ce n'est pas une panne : VLC joue toujours
+    finally:
+        await s._stop_playback()
 
 
 async def test_a_crash_of_vlc_names_the_signal(fakes, fast, monkeypatch):

@@ -125,6 +125,11 @@ def vlc_command(
         # suite, « Permission denied »), et pas de trousseau de clés (il cherche D-Bus, absent de la session du kiosque).
         "--no-interact",
         "--keystore=memory",
+        # Pas de désentrelacement : celui du Raspberry Pi (v4l2m2m) donne à labwc des images qu'il refuse d'importer
+        # (« importing the supplied dmabufs failed », puis « Video discarded due to Wayland congestion ») : la lecture
+        # avance, le son sort, l'écran reste noir. Constaté sur une chaîne de télévision (720x576 entrelacé). Pour un
+        # désentrelacement par le processeur : --avcodec-hw=none --deinterlace=1 dans /etc/mydock-kiosk/vlc.flags.
+        "--deinterlace=0",
         "--verbose=2",  # tout ce que VLC fait va dans le journal (/var/log/mydock/player.log)
         "--no-snapshot-preview",
         f"--volume={round(volume * VLC_VOLUME_MAX / 100)}",
@@ -388,6 +393,12 @@ _FFMPEG_ISSUE = re.compile(
 SMB_FIRST_BLOCK_WAIT = (
     30.0  # smbclient ouvre un gros fichier d'un disque qui se réveille : on lui laisse le temps
 )
+#: Ce que VLC écrit quand il ne parvient pas à afficher les images (l'écran reste noir alors que la lecture « avance »).
+DISPLAY_TROUBLE = (
+    "importing the supplied dmabufs failed",
+    "Video discarded due to Wayland congestion",
+)
+DISPLAY_TROUBLE_LINES = 20  # à partir de combien de lignes on le dit dans le journal
 MAX_LOGGED_LINES = 4000  # par lecture : le journal ne doit pas grossir sans fin si VLC bavarde
 
 
@@ -429,6 +440,7 @@ class VlcPlayback:
             str
         ] = []  # ce que VLC, ffmpeg, smbclient ont dit d'anormal, de la dernière tentative
         self._logged = 0
+        self._display_trouble = 0
         self._played = False
         self._paused = False
         self._stopped = False
@@ -480,6 +492,7 @@ class VlcPlayback:
         self._procs = []
         self._drains = []
         self._logged = 0
+        self._display_trouble = 0
         self._started = time.monotonic()
         self.mode = mode
         playerlog.event(
@@ -676,6 +689,14 @@ class VlcPlayback:
                     if self._logged == MAX_LOGGED_LINES:
                         playerlog.event(
                             f"{label} : la suite est omise du journal ({MAX_LOGGED_LINES} lignes)"
+                        )
+                if label == "vlc" and any(marker in text for marker in DISPLAY_TROUBLE):
+                    self._display_trouble += 1
+                    if self._display_trouble == DISPLAY_TROUBLE_LINES:
+                        playerlog.event(
+                            f"lecture {self._job} : affichage en difficulté — VLC écarte des images "
+                            f"({DISPLAY_TROUBLE_LINES} fois) : « {text[-110:]} ». La lecture avance mais l'écran peut rester "
+                            "noir (voir « désentrelacement » et vlc.flags dans le README)"
                         )
                 if _is_issue(label, text):
                     self._issues.append(text if label == "vlc" else f"{label} : {text}")
