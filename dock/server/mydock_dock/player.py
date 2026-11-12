@@ -21,6 +21,9 @@ from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger(__name__)
+media_log = logging.getLogger(
+    "mydock_dock.media"
+)  # dock.log : ce que le dock a décidé pour la lecture
 
 #: Une lecture qui ne démarre pas au bout de ce temps est déclarée en échec (VLC a pu se bloquer sur une chaîne muette).
 START_TIMEOUT = 40.0
@@ -288,6 +291,12 @@ class PlayerHub:
     async def _watch(self, job: int) -> None:
         await asyncio.sleep(START_TIMEOUT)
         if self.job == job and self.state == "starting":
+            media_log.warning(
+                "Lecture %d : toujours « en démarrage » après %.0f s, arrêtée par le dock "
+                "(l'assistant de lecture n'a pas dit que ça jouait)",
+                job,
+                START_TIMEOUT,
+            )
             if self.helper is not None:
                 self.helper.send({"t": "cmd", "name": "stop", "job": job})
             self._fail("La lecture n'a pas démarré (la chaîne ou le fichier ne répond pas).")

@@ -1,3 +1,22 @@
+mydock (1.6.6) unstable; urgency=medium
+
+  * Freetv : « le stream tient quelques secondes puis il s'arrête ». Dans le journal de la 1.6.5, les deux lectures
+    s'arrêtent à 40 secondes pile après leur demande (15:09:38 -> 15:10:18, 15:10:28 -> 15:11:08), sans erreur de VLC :
+    c'est le chien de garde du dock (START_TIMEOUT, 40 s), qui arrête toute lecture restée « en démarrage ». L'assistant
+    ne déclarait « en lecture » que si le temps de lecture de VLC (get_time) dépassait 0 ; sur ces flux RTSP en MPEG-TS,
+    lus par le module live555 de VLC, ce temps reste à 0 alors que l'image est à l'écran (déduit de cet arrêt à 40 s :
+    la valeur n'est pas dans le journal). Le dock n'apprenait donc jamais que ça jouait.
+  * L'assistant déclare maintenant la lecture démarrée dès que VLC a affiché des images ou joué du son (compteurs de sa
+    commande « stats »), ou, à défaut, quand sa mémoire tampon est pleine (« Stream buffering done »). Le journal dit
+    lequel de ces signaux a servi.
+  * Journal (player.log) : une ligne de suivi toutes les 15 secondes (images affichées et perdues, tampons audio joués
+    et perdus, flux abîmé, discontinuités : de quoi voir si le flux perd des paquets) ; l'arrêt demandé par le dock
+    (« arrêt demandé par le dock », « rien n'avait encore été montré ») ; les commandes de la télécommande. Journal du
+    dock (dock.log) : la ligne qui dit qu'une lecture est arrêtée faute d'avoir dit qu'elle jouait.
+  * Nouvelle version : 1.6.5 -> 1.6.6 (sans nouveau numéro, « apt install » répond « déjà la version la plus récente »).
+
+ -- neomars <neomars@users.noreply.github.com>  Thu, 12 Nov 2026 18:00:00 +0000
+
 mydock (1.6.5) unstable; urgency=medium
 
   * Freetv : « une image de quelques centièmes de secondes et plus rien ». Le journal de 1.6.4 (désentrelacement coupé) le
