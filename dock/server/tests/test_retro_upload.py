@@ -6,6 +6,7 @@ import zipfile
 import httpx
 import pytest
 
+from mydock_agent.testing import TOKEN
 from mydock_dock import retro_upload
 from mydock_dock.retro_upload import (
     MAX_WRONG,
@@ -170,21 +171,103 @@ def test_connection_attempts_are_throttled_per_address(sessions):
 def test_the_code_never_appears_without_a_session_and_files_are_counted(sessions):
     assert "code" not in sessions.info()
     sessions.start()
-    sessions.reserve(10)
-    sessions.done(10)
+    session = sessions.authorize(PEER, sessions.login(PEER, "ABCDEFGH"))
+    sessions.reserve(session, 10)
+    sessions.done(session, 10)
     assert sessions.info()["files"] == 1
 
 
 def test_a_session_is_limited_in_files_and_bytes(sessions):
     sessions.start()
+    session = sessions.authorize(PEER, sessions.login(PEER, "ABCDEFGH"))
     with pytest.raises(UploadRefused) as full:
-        sessions.reserve(retro_upload.MAX_SESSION_BYTES + 1)
+        sessions.reserve(session, retro_upload.MAX_SESSION_BYTES + 1)
     assert full.value.code == "session_full"
     for _ in range(retro_upload.MAX_FILES):
-        sessions.done(1)
+        sessions.done(session, 1)
     with pytest.raises(UploadRefused) as many:
-        sessions.reserve(1)
+        sessions.reserve(session, 1)
     assert many.value.code == "too_many_files"
+
+
+# --- la session du PC associé (sans code) ------------------------------------------------------------------------------
+
+
+def test_the_associated_pc_gets_a_token_without_any_code_or_open_screen_session(sessions):
+    token, seconds = sessions.trusted_session(PEER)
+    assert 0 < seconds <= retro_upload.SESSION_SECONDS
+    session = sessions.authorize(PEER, token)
+    assert session.code is None
+    assert sessions.info() == {
+        "open": False,
+        "last": None,
+    }  # l'écran n'a rien à montrer : aucun code n'a été ouvert
+    assert not sessions.changes
+
+
+def test_a_trusted_token_serves_only_the_address_that_got_it(sessions):
+    token, _ = sessions.trusted_session(PEER)
+    with pytest.raises(UploadRefused) as refused:
+        sessions.authorize("192.168.1.99", token)
+    assert refused.value.code == "unauthorized"
+
+
+def test_a_trusted_token_is_not_a_screen_token_and_the_reverse(sessions):
+    sessions.start()
+    screen = sessions.login(PEER, "ABCDEFGH")
+    trusted, _ = sessions.trusted_session(PEER)
+    assert sessions.authorize(PEER, screen).code is not None
+    assert sessions.authorize(PEER, trusted).code is None
+    sessions.stop()  # fermer la session de l'écran ne ferme pas celle du PC associé
+    assert sessions.authorize(PEER, trusted).code is None
+    with pytest.raises(UploadRefused):
+        sessions.authorize(PEER, screen)
+
+
+def test_reloading_the_page_keeps_the_same_quota(sessions):
+    first, _ = sessions.trusted_session(PEER)
+    session = sessions.authorize(PEER, first)
+    sessions.done(session, 100)
+    second, _ = sessions.trusted_session(PEER)
+    assert second != first
+    assert (
+        sessions.authorize(PEER, second) is session
+    )  # la même session : mêmes plafonds, rien remis à zéro
+    assert session.total == 100
+
+
+def test_a_trusted_session_expires(sessions, clock):
+    token, _ = sessions.trusted_session(PEER)
+    clock.now += retro_upload.SESSION_SECONDS + 1
+    with pytest.raises(UploadRefused) as refused:
+        sessions.authorize(PEER, token)
+    assert refused.value.code == "not_open"
+    fresh, _ = sessions.trusted_session(PEER)  # une nouvelle, avec de nouveaux plafonds
+    assert sessions.authorize(PEER, fresh).total == 0
+
+
+def test_forgetting_the_trusted_pc_cancels_its_tokens(sessions):
+    token, _ = sessions.trusted_session(PEER)
+    sessions.forget_trusted()
+    with pytest.raises(UploadRefused):
+        sessions.authorize(PEER, token)
+
+
+def test_probing_is_throttled_like_the_other_attempts(sessions):
+    refused = []
+    for _ in range(retro_upload.THROTTLE_MAX + 2):
+        try:
+            sessions.trusted_session("10.0.0.5")
+        except UploadRefused as refusal:
+            refused.append(refusal.code)
+    assert "too_many" in refused
+
+
+def test_trusted_files_do_not_wake_the_screen(sessions):
+    token, _ = sessions.trusted_session(PEER)
+    session = sessions.authorize(PEER, token)
+    sessions.done(session, 10)
+    assert not sessions.changes  # l'écran du dock ne montre que la session à code
 
 
 # --- le nom d'un fichier --------------------------------------------------------------------------------------
@@ -632,3 +715,135 @@ async def test_a_big_file_streams_through_the_real_portal_in_pieces(dock):
     assert reply.json()["size"] == len(data)
     assert (dock.roms / "gros.zip").stat().st_size == len(data)
     assert [p.name for p in dock.roms.iterdir()] == ["gros.zip"]
+
+
+# --- le PC associé, serveur réel -----------------------------------------------------------------------------------------
+
+
+async def associate(dock, host="127.0.0.1"):
+    """Le PC qui joint le portail (ici 127.0.0.1) est le PC associé au dock."""
+    dock.config.agent_host = host
+    dock.config.token = TOKEN
+
+
+async def test_a_dock_without_an_associated_pc_asks_for_the_code(dock):
+    async with web(dock) as client:
+        reply = await client.post("/api/retro/me", json={})
+    assert reply.status_code == 200  # pas une erreur : la page affiche alors le champ du code
+    assert reply.json() == {"ok": True, "trusted": False}
+
+
+async def test_probing_never_spends_a_wrong_code_of_the_screen_session(dock):
+    dock.server.uploads.start()
+    async with web(dock) as client:
+        for _ in range(MAX_WRONG + 2):
+            await client.post("/api/retro/me", json={})
+    assert dock.server.uploads.info()["wrong_left"] == MAX_WRONG
+    assert dock.server.uploads.info()["open"] is True
+
+
+async def test_the_associated_pc_sends_a_game_without_any_code(dock):
+    await associate(dock)
+    data = make_zip("pong.bin")
+    async with web(dock) as client:
+        me = await client.post("/api/retro/me", json={})
+        assert me.json()["trusted"] is True
+        token = me.json()["token"]
+        reply = await client.post(
+            "/api/retro/upload?name=Pong.zip", content=data, headers={"X-Upload-Token": token}
+        )
+    assert reply.status_code == 200, reply.text
+    assert (dock.roms / "pong.zip").read_bytes() == data
+    assert dock.server.uploads.info()["open"] is False  # rien n'a été demandé sur l'écran du dock
+
+
+async def test_another_device_is_not_trusted_even_with_a_paired_dock(dock):
+    await associate(dock, host="192.0.2.50")  # le PC associé est une autre machine
+    async with web(dock) as client:
+        reply = await client.post("/api/retro/me", json={})
+    assert reply.json() == {"ok": True, "trusted": False}
+
+
+async def test_the_associated_pc_can_be_known_by_name(dock):
+    await associate(dock, host="localhost")
+    async with web(dock) as client:
+        reply = await client.post("/api/retro/me", json={})
+    assert reply.json()["trusted"] is True
+
+
+async def test_turning_the_setting_off_asks_everyone_for_the_code(dock):
+    await associate(dock)
+    dock.config.upload_without_code = False
+    async with web(dock) as client:
+        reply = await client.post("/api/retro/me", json={})
+    assert reply.json() == {"ok": True, "trusted": False}
+
+
+async def test_a_trusted_token_stops_working_the_moment_the_setting_is_turned_off(dock):
+    await associate(dock)
+    async with web(dock) as client:
+        token = (await client.post("/api/retro/me", json={})).json()["token"]
+        dock.config.upload_without_code = False
+        reply = await client.post(
+            "/api/retro/upload?name=pong.zip", content=make_zip(), headers={"X-Upload-Token": token}
+        )
+    assert reply.status_code == 401
+    assert reply.json()["error"] == "unauthorized"
+    assert not dock.roms.exists() or list(dock.roms.iterdir()) == []
+
+
+async def test_a_trusted_token_stops_working_when_another_pc_is_associated(dock):
+    await associate(dock)
+    async with web(dock) as client:
+        token = (await client.post("/api/retro/me", json={})).json()["token"]
+        dock.config.agent_host = "192.0.2.50"
+        reply = await client.post(
+            "/api/retro/upload?name=pong.zip", content=make_zip(), headers={"X-Upload-Token": token}
+        )
+    assert reply.status_code == 401
+
+
+async def test_the_screen_code_still_works_for_other_devices_on_a_paired_dock(dock):
+    await associate(dock, host="192.0.2.50")
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await client.post(
+            "/api/retro/upload?name=pong.zip", content=make_zip(), headers={"X-Upload-Token": token}
+        )
+    assert reply.status_code == 200, reply.text
+
+
+async def test_the_probe_answers_only_json_requests_within_the_size_limit(dock):
+    await associate(dock)
+    async with web(dock) as client:
+        big = await client.post("/api/retro/me", content=b"x" * 10_000)
+    assert big.status_code == 413
+
+
+@pytest.mark.parametrize(
+    ("peer", "agent", "expected"),
+    [
+        ("192.168.1.20", "192.168.1.20", True),
+        ("::ffff:192.168.1.20", "192.168.1.20", True),
+        ("192.168.1.21", "192.168.1.20", False),
+        ("?", "192.168.1.20", False),
+        ("192.168.1.20", "", False),
+    ],
+)
+async def test_the_associated_pc_is_recognised_by_its_address(peer, agent, expected):
+    from types import SimpleNamespace
+
+    from mydock_dock.portal import is_associated_pc
+
+    config = SimpleNamespace(
+        upload_without_code=True, agent_host=agent, token="t" * 40, agent_port=8765
+    )
+    assert await is_associated_pc(SimpleNamespace(config=config), peer) is expected
+
+
+async def test_the_portal_home_links_to_the_upload_page(dock):
+    async with web(dock) as client:
+        page = (await client.get("/")).text
+        jeux = await client.get("/jeux")
+    assert 'href="/jeux"' in page
+    assert jeux.status_code == 200

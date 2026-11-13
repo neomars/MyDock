@@ -100,7 +100,10 @@ def test_everything_in_place_is_green(tmp_path):
     assert "✔ mydock-kiosk est dans le groupe gpio" in out
     assert "✔ mydock-kiosk est dans le groupe input" in out
     assert "✔ Écran tactile vu par le noyau : ILITEK Multi-Touch-V5100 (/dev/input/event3)" in out
-    assert "✔ Manettes vues par le noyau : Xbox Wireless Controller (/dev/input/event6)" in out
+    assert (
+        "✔ Manettes vues par le noyau : Xbox Wireless Controller (/dev/input/event6, Bluetooth)"
+        in out
+    )
     assert "✔ BlueZ présent" in out
     assert "✔ Adaptateur Bluetooth : hci0" in out
     assert "✔ Le serveur du dock (mydock) est dans le groupe bluetooth" in out
@@ -145,6 +148,17 @@ def test_a_custom_rom_folder_is_the_one_checked(tmp_path):
     assert f"Dossier des jeux : {elsewhere} (1 archive(s)" in out
 
 
+def test_the_upload_rule_is_stated(tmp_path):
+    config = config_for(tmp_path)
+    make_roms(config)
+    config.agent_host = "192.168.1.20"
+    assert "sans code pour le PC associé (192.168.1.20)" in render(config)
+    config.agent_host = ""
+    assert "aucun pour l'instant" in render(config)
+    config.upload_without_code = False
+    assert "le code de l'écran est exigé pour tous" in render(config)
+
+
 def test_the_configured_pin_is_shown(tmp_path):
     out = render(config_for(tmp_path, button_gpio=22))
     assert "GPIO22 (broche 15)" in out
@@ -178,6 +192,12 @@ def test_in_desktop_mode_the_session_user_is_not_guessed(tmp_path):
     out = render(config_for(tmp_path), kiosk=lambda: None)
     assert "Mode bureau" in out
     assert "groupe gpio" in out
+
+
+def test_a_usb_pad_is_named_as_such(tmp_path):
+    usb = TOUCH_AND_PAD.replace("Bus=0005", "Bus=0003")
+    out = render(config_for(tmp_path), devices=lambda: usb)
+    assert "Xbox Wireless Controller (/dev/input/event6, USB)" in out
 
 
 def test_no_touchscreen_and_no_pad_are_noticed(tmp_path):

@@ -1,0 +1,1 @@
+import{Cn as e,Sn as t,yn as n}from"./index-B_5suEAt.js";var r={name:`minus`,size:24,node:[[`path`,{d:`M5 12h14`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=t(o,i);n(a,e(()=>s,{get icon(){return r}}))}export{a as t};

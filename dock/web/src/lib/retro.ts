@@ -49,7 +49,7 @@ export function padSummary(pads: PadsSnapshot | null | undefined): { label: stri
   if (connected.length === 0) return { label: 'Aucune manette', detail: '', text: 'Aucune manette', connected: false }
   if (connected.length === 1) {
     const [pad] = connected
-    const charge = batteryText(pad.battery)
+    const charge = pad.wired ? 'USB' : batteryText(pad.battery)
     const detail = `${pad.name}${charge ? ` · ${charge}` : ''}`
     return { label: 'Manette connectée', detail, text: `Manette connectée : ${detail}`, connected: true }
   }
@@ -63,9 +63,11 @@ export const noPadWarning = (pads: PadsSnapshot | null | undefined): string | nu
     ? null
     : 'Aucune manette connectée : le jeu se lancera quand même. Touche « Manettes » pour en associer une.'
 
-/** Les manettes associées, puis celles que la recherche vient de trouver. */
-export const pairedPads = (pads: PadsSnapshot | null | undefined): PadDevice[] => (pads?.devices ?? []).filter((d) => d.paired)
-export const foundPads = (pads: PadsSnapshot | null | undefined): PadDevice[] => (pads?.devices ?? []).filter((d) => !d.paired)
+/** Les manettes Bluetooth associées, puis celles que la recherche vient de trouver ; les manettes USB sont à part. */
+export const pairedPads = (pads: PadsSnapshot | null | undefined): PadDevice[] => (pads?.devices ?? []).filter((d) => d.paired && !d.wired)
+export const foundPads = (pads: PadsSnapshot | null | undefined): PadDevice[] => (pads?.devices ?? []).filter((d) => !d.paired && !d.wired)
+/** Les manettes branchées en USB : elles n'ont rien à associer, elles sont là. */
+export const wiredPads = (pads: PadsSnapshot | null | undefined): PadDevice[] => (pads?.devices ?? []).filter((d) => d.wired)
 
 /** Les secondes qu'il reste à une recherche de manettes (0 : terminée). */
 export function scanSecondsLeft(pads: PadsSnapshot | null | undefined, now: number): number {

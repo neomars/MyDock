@@ -80,8 +80,8 @@ class RetroStore {
     await sock.act('dock.retro.upload.close', {})
   }
 
-  /** Réglages → Retrogame : le dossier des ROMs (vide : celui par défaut) et la broche du bouton. */
-  async saveSettings(patch: { roms_dir?: string; button_gpio?: number }): Promise<boolean> {
+  /** Réglages → Retrogame : le dossier des ROMs (vide : celui par défaut), la broche du bouton, l'envoi sans code du PC associé. */
+  async saveSettings(patch: { roms_dir?: string; button_gpio?: number; upload_without_code?: boolean }): Promise<boolean> {
     const ack = await sock.act('dock.retro.set', patch)
     if (!ack.ok) notify(ack.e?.msg ?? 'Réglage non enregistré.', 'bad', 8_000)
     return ack.ok

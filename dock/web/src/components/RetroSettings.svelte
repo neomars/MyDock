@@ -23,6 +23,13 @@
     if (typed !== null && (await retro.saveSettings({ roms_dir: typed.trim() }))) notify('Dossier enregistré.', 'good')
   }
 
+  const withoutCode = $derived(info?.upload_without_code ?? true)
+
+  async function toggleUpload(): Promise<void> {
+    const next = !withoutCode
+    if (await retro.saveSettings({ upload_without_code: next })) notify(next ? 'Le PC associé envoie sans code.' : 'Le code de l’écran est exigé pour tous.', 'good')
+  }
+
   async function step(direction: 1 | -1): Promise<void> {
     const next = stepGpio(pin, direction)
     if (next !== pin && (await retro.saveSettings({ button_gpio: next }))) notify(`Bouton sur ${gpioLabel(next)}.`, 'good')
@@ -48,6 +55,14 @@
   </div>
   <p class="dim small" data-testid="retro-wiring">
     Un bouton entre la broche {PHYSICAL_PIN[pin] ?? '?'} ({gpioLabel(pin).split(' ')[0]}) et une masse (broche 9, 14 ou 20…), sans résistance : un appui quitte le jeu ou rallume l’écran.
+  </p>
+  <div class="setting">
+    <span class="label">Envoi</span>
+    <span class="value" data-testid="retro-upload-mode">{withoutCode ? 'sans code depuis le PC associé' : 'avec le code de l’écran'}</span>
+    <button class="btn toggle" class:on={withoutCode} aria-pressed={withoutCode} data-testid="retro-upload-toggle" onclick={toggleUpload}>{withoutCode ? 'Sans code' : 'Avec code'}</button>
+  </div>
+  <p class="dim small" data-testid="retro-upload-help">
+    Depuis le PC associé, la page <span class="mono">/jeux</span> du dock (lien sur sa page d’installation) reçoit les jeux sans rien demander ; un autre appareil recopie le code affiché sur cet écran. « Avec code » : tout le monde le recopie.
   </p>
   <p class="small" class:dim={!report} data-testid="retro-gpio-report">{report ?? 'L’assistant de l’écran n’a pas encore dit si le bouton est prêt.'}</p>
 </section>
@@ -75,6 +90,13 @@
   .small {
     font-size: var(--fs-cap);
     margin: 8px 0 0;
+  }
+  .btn.toggle {
+    min-width: 170px;
+  }
+  .btn.toggle.on {
+    background: var(--accent);
+    color: var(--accent-ink);
   }
   .btn.inline {
     margin-left: 10px;

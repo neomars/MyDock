@@ -33,6 +33,8 @@ log = logging.getLogger("mydock.player")
 DEVICES_FILE = "/proc/bus/input/devices"
 EV_KEY, EV_ABS = 0x01, 0x03
 BTN_SOUTH, BTN_SELECT, BTN_START, BTN_TOUCH = 0x130, 0x13A, 0x13B, 0x14A
+BUS_USB, BUS_BLUETOOTH = 0x03, 0x05  # « I: Bus=… » de /proc/bus/input/devices
+INPUT_PROP_POINTER = 0  # un pavé tactile (jamais un écran tactile, qui est « direct »)
 ABS_MT_TRACKING_ID = 0x39
 EVENT = struct.Struct(
     "@llHHi"
@@ -48,6 +50,7 @@ class Device:
     name: str
     path: str  # /dev/input/eventN
     kind: str  # « touch » ou « pad »
+    bus: int = 0  # BUS_USB (manette filaire), BUS_BLUETOOTH…
 
 
 def _bits(text: str) -> list[int]:
@@ -72,11 +75,17 @@ def parse_devices(text: str, word_bits: int = struct.calcsize("P") * 8) -> list[
     """Les écrans tactiles et les manettes de `/proc/bus/input/devices`."""
     found: list[Device] = []
     for block in re.split(r"\n\s*\n", text.strip()):
-        name, handlers = "", ""
+        name, handlers, bus = "", "", 0
         key: list[int] = []
         abs_bits: list[int] = []
+        prop: list[int] = []
         for line in block.splitlines():
-            if line.startswith("N: Name="):
+            if line.startswith("I: "):
+                match = re.search(r"\bBus=([0-9a-fA-F]+)", line)
+                bus = int(match.group(1), 16) if match else 0
+            elif line.startswith("B: PROP="):
+                prop = _bits(line.partition("=")[2])
+            elif line.startswith("N: Name="):
                 name = line.partition("=")[2].strip().strip('"')
             elif line.startswith("H: Handlers="):
                 handlers = line.partition("=")[2]
@@ -91,13 +100,15 @@ def parse_devices(text: str, word_bits: int = struct.calcsize("P") * 8) -> list[
         if has_bit(key, BTN_TOUCH, word_bits) and (
             has_bit(abs_bits, 0x00, word_bits) or has_bit(abs_bits, 0x35, word_bits)
         ):
-            found.append(
-                Device(name, path, "touch")
-            )  # BTN_TOUCH et une position : un écran tactile (ou une tablette)
+            # BTN_TOUCH et une position : un écran tactile... ou le pavé tactile d'une manette Sony, qui n'est pas l'écran :
+            # il se reconnaît à sa propriété « pointeur » (un écran est « direct ») et à son nom.
+            if has_bit(prop, INPUT_PROP_POINTER, word_bits) or "touchpad" in name.lower():
+                continue
+            found.append(Device(name, path, "touch", bus))
         elif has_bit(key, BTN_SOUTH, word_bits) or (
             has_bit(key, BTN_SELECT, word_bits) and has_bit(key, BTN_START, word_bits)
         ):
-            found.append(Device(name, path, "pad"))
+            found.append(Device(name, path, "pad", bus))
     return found
 
 

@@ -483,6 +483,8 @@ export interface RetroInfo {
   roms_dir_custom: boolean
   /** Le numéro GPIO (BCM) du bouton physique. */
   button_gpio: number
+  /** Le PC associé (reconnu à son adresse) envoie des jeux sans le code de l'écran ; absent d'un dock plus ancien. */
+  upload_without_code?: boolean
   upload: UploadInfo
   /** Le portail (port 80) est-il en marche ? L'envoi de jeux en dépend. */
   portal: boolean
@@ -524,6 +526,8 @@ export interface PadDevice {
   connected: boolean
   /** 0 à 100 ; `null` quand la manette ne le dit pas. */
   battery: number | null
+  /** Branchée en USB : toujours connectée, rien à associer ni à oublier, pas de batterie. Absent d'un dock plus ancien. */
+  wired?: boolean
 }
 
 export interface PadsPairing {

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from mydock_dock.bluetooth import PadsError, valid_mac
+from mydock_dock.inputs import BUS_USB, Device
 from mydock_dock.retrogame import Game, GameLibrary
 
 DEMO_GAMES = (
@@ -272,3 +273,27 @@ class DemoPads:
         if address == EIGHTBITDO:  # elle se retrouvera à la prochaine recherche
             self._hidden[address] = {**device, "paired": False, "connected": False, "battery": None}
         self._on_change()
+
+
+# --- les manettes USB de la démonstration -------------------------------------------------------------------------------------
+
+
+def demo_usb_source(state_dir: Path) -> Callable[[], list[Device]]:
+    """Une manette USB « branchée » : un nom par ligne dans `<état>/demo-usb-pads.txt` (le créer, c'est brancher ; l'effacer, débrancher)."""
+    path = state_dir / "demo-usb-pads.txt"
+
+    def source() -> list[Device]:
+        try:
+            names = [
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except OSError:
+            return []
+        return [
+            Device(name[:60], f"/dev/input/event{90 + n}", "pad", BUS_USB)
+            for n, name in enumerate(names[:4])
+        ]
+
+    return source
