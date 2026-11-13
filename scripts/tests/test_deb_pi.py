@@ -546,11 +546,56 @@ def test_remove_keeps_the_configuration_and_purge_erases_it(fake_system):
     run_script(script, "purge", path=fake_system["bin"], log=fake_system["log"])
     log = calls(fake_system)
     assert (
-        log[0]
-        == "rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock /var/lib/mydock-kiosk /var/log/mydock"
-    )  # les journaux du Divertissement s'en vont aussi
+        log[0] == "rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock-kiosk /var/log/mydock"
+    )  # les journaux du Divertissement s'en vont aussi ; /var/lib/mydock est traité à part (les jeux restent)
     assert "userdel mydock" in log
     assert "userdel mydock-kiosk" in log
+
+
+def postrm_under(root: Path) -> Path:
+    """Le postrm du paquet, avec chaque chemin de /etc et /var placé sous `root` : on le lance pour de vrai sans rien risquer."""
+    text = (ROOT / "packaging" / "deb-pi" / "postrm").read_text()
+    script = root / "postrm"
+    script.write_text(
+        re.sub(r"(?<![\w/])/(etc|var/log|var/lib)/mydock", rf"{root}/\1/mydock", text)
+    )
+    return script
+
+
+def purge(root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/bin/sh", str(postrm_under(root)), "purge"],
+        env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+
+
+def test_purge_erases_the_state_but_keeps_the_arcade_games(tmp_path):
+    """Les jeux de Retrogame sont à l'utilisateur (parfois des gigaoctets envoyés un à un) : « apt purge » ne les efface pas."""
+    state = tmp_path / "var" / "lib" / "mydock"
+    (state / "roms").mkdir(parents=True)
+    (state / "roms" / "pacman.zip").write_bytes(b"PK")
+    (state / "store.json").write_text("{}")
+    (state / "retrogame").mkdir()
+    (state / "retrogame" / "games.json").write_text("{}")
+    (tmp_path / "etc" / "mydock").mkdir(parents=True)
+    (tmp_path / "etc" / "mydock" / "dock.toml").write_text("token")
+    result = purge(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert (state / "roms" / "pacman.zip").exists()
+    assert not (state / "store.json").exists()
+    assert not (state / "retrogame").exists()
+    assert not (tmp_path / "etc" / "mydock").exists()  # la configuration (le jeton) s'en va, elle
+    assert "conservés" in result.stderr
+
+
+def test_purge_removes_the_state_folder_when_there_are_no_games(tmp_path):
+    state = tmp_path / "var" / "lib" / "mydock"
+    state.mkdir(parents=True)
+    (state / "store.json").write_text("{}")
+    result = purge(tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not state.exists()
+    assert result.stderr == ""
 
 
 def test_purge_does_not_fail_when_the_users_are_already_gone(fake_system):

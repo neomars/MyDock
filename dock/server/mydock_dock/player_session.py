@@ -40,6 +40,16 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from mydock_dock import playerlog, samba
+from mydock_dock.gpio_button import DEFAULT_PIN, GpioButton, LibgpiodBackend, describe_pin
+from mydock_dock.inputs import InputWatcher
+from mydock_dock.mame_playback import (
+    GAME_RE,
+    DemoGamePlayback,
+    MamePlayback,
+    valid_rompath,
+)
+from mydock_dock.mame_playback import read_flags as read_mame_flags
+from mydock_dock.retrogame import find_mame
 
 log = logging.getLogger("mydock.player")
 
@@ -51,6 +61,11 @@ POLL_SECONDS = 1.0
 RC_WAIT = 20.0  # temps laissé à VLC pour ouvrir son socket de commande
 #: Après être passé à la vidéo, un toucher n'est pas pris pour une demande de retour au dock (c'est celui qui l'a lancée).
 TOUCH_GRACE = 1.5
+#: Pendant un jeu, un toucher quitte : celui qui a lancé le jeu (et le doigt qui s'attarde) ne doit pas compter.
+GAME_TOUCH_GRACE = 2.0
+#: Les fichiers qui, en mode démo, tiennent lieu du bouton et de l'écran tactile (le test les crée dans XDG_RUNTIME_DIR).
+DEMO_BUTTON = "mydock-demo-button"
+DEMO_TOUCH = "mydock-demo-touch"
 VLC_VOLUME_MAX = 256  # 100 % pour VLC
 
 _NUMBER_LINE = re.compile(r"^\s*(?:>\s*)?(-?\d+)\s*$")
@@ -1084,23 +1099,43 @@ class Windows:
         return found if code == 0 else []
 
     async def focus(self, which: str) -> bool:
-        """`video` : la fenêtre de VLC ; `dock` : celle du navigateur du dock."""
+        """`video` : la fenêtre de VLC ; `game` : celle de MAME ; `dock` : celle du navigateur du dock."""
         if self._wlrctl is not None and await self._focus_wayland(which):
             return True
+        if which == "game":
+            return False  # MAME est une fenêtre Wayland : pas de repli par XWayland
         return self._xdotool is not None and await self._focus_x11(which)
 
     async def _focus_wayland(self, which: str) -> bool:
         windows = await self.toplevels()
+        known = ("vlc", "org.videolan.vlc", "mame")
         if which == "video":
             wanted = next((a for a, _ in windows if a.lower() in ("vlc", "org.videolan.vlc")), None)
+        elif which == "game":
+            wanted = next(
+                (a for a, t in windows if "mame" in a.lower() or "mame" in t.lower()), None
+            )
         else:
             wanted = next((a for a, _ in windows if "chrom" in a.lower()), None) or next(
-                (a for a, _ in windows if a.lower() not in ("vlc", "org.videolan.vlc")), None
+                (a for a, _ in windows if a.lower() not in known), None
             )
         if wanted is None:
             return False
         code, _ = await self._run(self._wlrctl, "toplevel", "focus", f"app_id:{wanted}")
         return code == 0
+
+    async def close_app(self, word: str) -> int:
+        """Ferme (comme le ferait la croix de la fenêtre) chaque fenêtre dont l'identifiant ou le titre contient `word`."""
+        if self._wlrctl is None:
+            return 0
+        wanted = sorted(
+            {a for a, t in await self.toplevels() if word in a.lower() or word in t.lower()}
+        )
+        closed = 0
+        for app_id in wanted:
+            code, _ = await self._run(self._wlrctl, "toplevel", "close", f"app_id:{app_id}")
+            closed += code == 0
+        return closed
 
     async def _focus_x11(self, which: str) -> bool:
         code, out = await self._run(self._xdotool, "search", "--class", "vlc")
@@ -1173,6 +1208,37 @@ class _NoTouch:
     async def stop(self) -> None: ...
 
 
+async def wake_screen(env: dict[str, str]) -> bool:
+    """Rallume l'écran du dock s'il dort (même commande que `screen-sleep.sh --on`)."""
+    wlopm, randr = shutil.which("wlopm"), shutil.which("wlr-randr")
+    try:
+        if wlopm is not None:
+            process = await asyncio.create_subprocess_exec(
+                wlopm, "--on", "*", stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL, env=env,
+            )  # fmt: skip
+            return await asyncio.wait_for(process.wait(), 4) == 0
+        if randr is not None:
+            listing = await asyncio.create_subprocess_exec(
+                randr, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, env=env,
+            )  # fmt: skip
+            out, _ = await asyncio.wait_for(listing.communicate(), 4)
+            ok = True
+            for line in out.decode("utf-8", "replace").splitlines():
+                if line and not line[0].isspace():
+                    process = await asyncio.create_subprocess_exec(
+                        randr, "--output", line.split()[0], "--on",
+                        stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL, env=env,
+                    )  # fmt: skip
+                    ok = await asyncio.wait_for(process.wait(), 4) == 0 and ok
+            return ok
+    except (OSError, TimeoutError):
+        return False
+    return False
+
+
 def session_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     """L'environnement de la session graphique : l'écran Wayland et, pour VLC (qui passe par XWayland), l'écran X11."""
     env = dict(os.environ if base is None else base)
@@ -1200,6 +1266,9 @@ class Session:
         ffmpeg: str | None = None,
         live555: bool | None = None,
         smbclient: str | None = None,
+        mame: str | None = None,
+        gpio_backend: Callable[[], Any] | None = None,
+        button_pin: int = DEFAULT_PIN,
     ) -> None:
         self.url = url
         self.demo = demo
@@ -1215,10 +1284,23 @@ class Session:
             0  # la façon d'afficher qui a fini par marcher pour les chaînes (voir DISPLAY_PROFILES)
         )
         self.smbclient = smbclient if smbclient is not None else shutil.which("smbclient")
+        self.mame = mame if mame is not None else find_mame()
         self.windows: Any = Windows(self.env)
         self.touch: Any = TouchWatcher(self.env, self._touched)
+        #: Le bouton physique (GPIO) et la lecture directe de l'écran tactile et des manettes pendant un jeu.
+        self.button_pin = button_pin
+        self.gpio_status: str | None = None
+        self.button = GpioButton(
+            self._button_edge, backend=gpio_backend or LibgpiodBackend, on_status=self._gpio_changed
+        )
+        self.inputs = InputWatcher(on_touch=self._game_touched, on_combo=self._game_combo)
+        self.wake_screen: Callable[[], Any] = lambda: wake_screen(self.env)
+        self._engine: str | None = None  # « vlc » ou « mame » : ce qui occupe l'écran
+        self._quitting = False
+        self._demo_task: asyncio.Task[None] | None = None
         if demo:  # pas d'écran réel : ni fenêtres à ordonner ni toucher à guetter
             self.windows, self.touch = _NoWindows(), _NoTouch()
+            self.gpio_status = f"{describe_pin(button_pin)} : démonstration."
         self.front = "dock"
         self._front_since = 0.0
         self._playback: Playback | None = None
@@ -1238,6 +1320,8 @@ class Session:
             # Sans de quoi revenir au dock d'un toucher, la vidéo plein écran garderait l'écran : on ne la lance pas.
             "touch": True if self.demo else (self.touch.available and self.windows.available),
             "demo": self.demo,
+            "mame": True if self.demo else bool(self.mame),
+            "gpio": self.gpio_status,
         }
 
     # --- messages du dock ------------------------------------------------------------------------------------
@@ -1248,7 +1332,9 @@ class Session:
             return
         name = message.get("name")
         job = message.get("job")
-        if name == "play":
+        if name == "configure":
+            await self._configure(message)
+        elif name == "play":
             await self._play(message)
         elif name == "stop":
             if job == self._job:
@@ -1265,6 +1351,10 @@ class Session:
     async def _play(self, message: dict[str, Any]) -> None:
         await self._stop_playback()
         self._job = int(message.get("job", 0))
+        if message.get("engine") == "mame":
+            await self._play_game(message)
+            return
+        self._engine = "vlc"
         url = str(message.get("url", ""))
         live = bool(message.get("live"))
         volume = int(message.get("volume", 70))
@@ -1272,6 +1362,7 @@ class Session:
             playback: Playback = DemoPlayback(url, live=live, volume=volume)
         else:
             if self.vlc is None:
+                self._engine = None
                 await self._ended(
                     self._job,
                     "VLC est absent du Pi : sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output.",
@@ -1296,6 +1387,7 @@ class Session:
             await playback.start()
         except (OSError, RuntimeError) as exc:
             await playback.stop()
+            self._engine = None
             await self._ended(
                 self._job,
                 str(exc)
@@ -1321,6 +1413,8 @@ class Session:
                     ) is not None and await recover():
                         continue  # VLC n'a rien lu : une autre façon de lire est lancée (journal : « tentative »)
                     await self._ended(job, playback.error(), playback)
+                    if isinstance(playback, MamePlayback | DemoGamePlayback):
+                        await playback.stop()  # le jeu a fini seul : on range ce qu'il laisse (drapeau, lecture de sa sortie)
                     return
                 if (fix := getattr(playback, "fix_display", None)) is not None and await fix():
                     focused = False  # la fenêtre de VLC est une nouvelle : la remettre devant quand elle joue
@@ -1332,7 +1426,7 @@ class Session:
                     return
                 if not focused and status["state"] == "playing" and self.front == "video":
                     focused = True
-                    await self.windows.focus("video")
+                    await self.windows.focus("game" if self._engine == "mame" else "video")
                 if (profile := getattr(playback, "profile", 0)) > self.live_profile and getattr(
                     playback, "live", False
                 ):
@@ -1365,7 +1459,9 @@ class Session:
         if playback is not None and playback is not self._playback:
             return
         self._playback = None
+        self._engine = None
         self.front = "dock"
+        self.inputs.stop()
         await self.touch.stop()
         await self.windows.focus("dock")
         await self._emit({"t": "ended", "job": job, "error": error})
@@ -1379,7 +1475,9 @@ class Session:
                 await monitor
         if playback is not None:
             await playback.stop()
+            self._engine = None
             self.front = "dock"
+            self.inputs.stop()
             await self.touch.stop()
             await self.windows.focus("dock")
 
@@ -1391,16 +1489,157 @@ class Session:
         self.front = to
         if to == "video":
             self._front_since = time.monotonic()
-        await self.windows.focus(to)
+        await self.windows.focus("game" if to == "video" and self._engine == "mame" else to)
 
     def _touched(self) -> None:
-        """Un toucher pendant la vidéo : le dock revient devant (la vidéo continue derrière)."""
+        """Un toucher pendant la vidéo : le dock revient devant (la vidéo continue derrière) ; pendant un jeu : on le quitte."""
+        if self._engine == "mame":
+            self._game_touched()
+            return
         if (
             self.front == "video"
             and time.monotonic() - self._front_since > TOUCH_GRACE
             and self._loop is not None
         ):
             self._loop.create_task(self._set_front("dock"))
+
+    # --- les jeux (MAME) -----------------------------------------------------------------------------------
+
+    async def _play_game(self, message: dict[str, Any]) -> None:
+        """Lance un jeu de MAME. Le dock n'envoie qu'un nom de jeu et un dossier : tout le reste est décidé ici."""
+        job = self._job
+        game = message.get("game")
+        rompath = valid_rompath(message.get("rompath"))
+        title = str(message.get("title") or "")[:80]
+        if not isinstance(game, str) or not GAME_RE.fullmatch(game) or rompath is None:
+            await self._ended(job, "Demande de jeu refusée par l'assistant.")
+            return
+        if self.demo:
+            playback: Any = DemoGamePlayback(game, title=title)
+        else:
+            if not self.mame:
+                await self._ended(job, "MAME est absent du Pi : sudo apt install mame")
+                return
+            playerlog.event(f"jeu {job} : demandé par le dock — « {game} », ROMs dans {rompath}")
+            playback = MamePlayback(
+                game, rompath=rompath, mame=self.mame, windows=self.windows,
+                env=session_environment(self.env), runtime_dir=self.runtime_dir, job=job, title=title,
+            )  # fmt: skip
+        self._engine = "mame"
+        try:
+            await playback.start()
+        except (OSError, RuntimeError) as exc:
+            await playback.stop()
+            self._engine = None
+            await self._ended(
+                job,
+                str(exc)
+                if isinstance(exc, RuntimeError)
+                else f"MAME ne démarre pas ({exc.strerror}).",
+            )
+            return
+        self._playback = playback
+        self.front = "video"
+        self._front_since = time.monotonic()
+        if not self.demo:
+            self.inputs.start(self._loop)
+            self.inputs.arm(GAME_TOUCH_GRACE)
+            if not self.inputs.touch_seen:
+                # Pas d'écran tactile lisible (groupe input ?) : le toucher passe par swayidle, qui voit toute saisie.
+                playerlog.event(
+                    f"jeu {job} : écran tactile illisible ({self.inputs.summary()}), repli sur swayidle pour le toucher"
+                )
+                await self.touch.start()
+        self._monitor = asyncio.create_task(self._watch(playback, job))
+
+    async def _quit_game(self, why: str) -> None:
+        """Quitte le jeu en cours (toucher, bouton, Select+Start) et le dit au dock : l'écran revient à la liste des jeux."""
+        playback, job = self._playback, self._job
+        if playback is None or self._engine != "mame" or self._quitting:
+            return
+        self._quitting = True
+        try:
+            playerlog.event(f"jeu {job} : sortie demandée ({why})")
+            await self._stop_playback()
+        finally:
+            self._quitting = False
+        await self._emit({"t": "ended", "job": job, "error": None})
+
+    def _game_touched(self) -> None:
+        if (
+            self._engine == "mame"
+            and self._loop is not None
+            and time.monotonic() - self._front_since > GAME_TOUCH_GRACE
+        ):
+            self._loop.create_task(self._quit_game("toucher de l'écran"))
+
+    def _game_combo(self) -> None:
+        if self._engine == "mame" and self._loop is not None:
+            self._loop.create_task(self._quit_game("Select + Start tenus"))
+
+    # --- le bouton physique --------------------------------------------------------------------------------
+
+    def _button_edge(self) -> None:
+        if self._loop is not None:
+            self._loop.create_task(self._button_pressed("bouton physique"))
+
+    async def _button_pressed(self, source: str) -> None:
+        """Un appui : quitter le jeu ; pendant une vidéo, ramener le dock ; sinon, rallumer l'écran. Le dock n'a pas besoin d'être là."""
+        playerlog.event(f"{source} : appui (lecture en cours : {self._engine or 'aucune'})")
+        if self._engine == "mame":
+            await self._quit_game(source)
+        elif self._playback is not None:
+            await self._set_front("dock")
+        else:
+            with contextlib.suppress(Exception):
+                result = self.wake_screen()
+                if asyncio.iscoroutine(result):
+                    await result
+        await self._emit(
+            {"t": "button"}
+        )  # le dock, s'il est là, réveille son écran (économiseur) et le sait
+
+    def _gpio_changed(self, status: str | None) -> None:
+        self.gpio_status = status
+        playerlog.event(
+            f"bouton physique : {status}"
+        )  # le diagnostic (doctor) le relit dans le journal
+        if self._send is not None and self._loop is not None:
+            self._loop.create_task(self._emit(self.hello()))
+
+    async def _configure(self, message: dict[str, Any]) -> None:
+        """La configuration que le dock transmet (la broche du bouton) ; l'assistant ne lit pas dock.toml."""
+        pin = message.get("button_gpio")
+        if (
+            isinstance(pin, int)
+            and not isinstance(pin, bool)
+            and 2 <= pin <= 27
+            and pin != self.button_pin
+        ):
+            self.button_pin = pin
+            self._start_button()
+
+    def _start_button(self) -> None:
+        if self.demo:
+            self._gpio_changed(f"{describe_pin(self.button_pin)} : démonstration.")
+            return
+        if self._loop is None:
+            return
+        self.button.configure(self._loop, self.button_pin)
+
+    async def _demo_triggers(self) -> None:
+        """Démo : le bouton et le toucher de l'écran du jeu sont deux fichiers que l'essai crée dans le dossier d'exécution."""
+        button, touch = self.runtime_dir / DEMO_BUTTON, self.runtime_dir / DEMO_TOUCH
+        while True:
+            await asyncio.sleep(0.2)
+            for path, action in (
+                (button, lambda: self._button_pressed("bouton physique (démo)")),
+                (touch, lambda: self._quit_game("toucher (démo)")),
+            ):
+                if path.exists():
+                    with contextlib.suppress(OSError):
+                        path.unlink()
+                    await action()
 
     async def _emit(self, message: dict[str, Any]) -> None:
         if self._send is not None:
@@ -1445,8 +1684,15 @@ class Session:
         ):
             version = await _version_of(path, args) if path else "absent"
             playerlog.event(f"{name} : {path or '-'} ({version})")
-        for name in ("wlrctl", "xdotool", "swayidle", "Xwayland"):
+        for name in ("wlrctl", "xdotool", "swayidle", "Xwayland", "wlopm"):
             playerlog.event(f"{name} : {shutil.which(name) or 'absent'}")
+        version = await _version_of(self.mame, ("-version",)) if self.mame else "absent"
+        playerlog.event(
+            f"MAME : {self.mame or '-'} ({version}) — options en plus : {read_mame_flags() or 'aucune'}"
+        )
+        playerlog.event(
+            f"bouton physique : {describe_pin(self.button_pin)} (libgpiod {'oui' if LibgpiodBackend().available else 'NON'})"
+        )
         playerlog.event(
             "modules de VLC : "
             + ", ".join(
@@ -1458,13 +1704,24 @@ class Session:
         playerlog.event(f"options de VLC en plus ({FLAGS_FILE}) : {self.extra or 'aucune'}")
 
     async def serve(self) -> None:
-        from websockets.asyncio.client import (
-            connect,
-        )  # importé ici : inutile pour les tests des fonctions pures
-
         self._loop = asyncio.get_running_loop()
         with contextlib.suppress(Exception):  # le journal ne doit jamais empêcher de lire une vidéo
             await self.log_startup()
+        # Le bouton physique est lu ici, pas par le dock : il marche même si le dock redémarre ou si Chromium est bloqué.
+        self._start_button()
+        if self.demo:
+            self._demo_task = asyncio.create_task(self._demo_triggers())
+        try:
+            await self._serve_dock()
+        finally:
+            self.button.stop()
+            self.inputs.stop()
+            if self._demo_task is not None:
+                self._demo_task.cancel()
+
+    async def _serve_dock(self) -> None:
+        from websockets.asyncio.client import connect
+
         delay = 1.0
         linked = False
         while True:

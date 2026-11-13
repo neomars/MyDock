@@ -9,10 +9,10 @@ import { reconnectDelay } from './backoff'
 import { refreshIfOutdated } from './build'
 import { askConfirmation } from './confirm.svelte'
 import { latencyStats, type LatencyStats } from './format'
-import type { Ack, DockInfo, HostData, LinkStatus, PlayerSnapshot, UiState } from './protocol'
+import type { Ack, DockInfo, HostData, LinkStatus, PadsSnapshot, PlayerSnapshot, RetroSnapshot, UiState } from './protocol'
 
 type ConnectionStatus = 'connecting' | 'open' | 'closed'
-const LOCAL_TOPICS = new Set(['link', 'dock', 'ui', 'player'])
+const LOCAL_TOPICS = new Set(['link', 'dock', 'ui', 'player', 'retro', 'pads'])
 const ACT_TIMEOUT_MS = 10_000
 
 function failure(id: string, code: string, msg: string): Ack {
@@ -29,6 +29,10 @@ class DockSocket {
   ui = $state<UiState | null>(null)
   /** Ce que joue l'écran du dock (Divertissement) ; `null` d'un dock plus ancien. */
   player = $state<PlayerSnapshot | null>(null)
+  /** La liste des jeux de Retrogame (MAME) ; `null` d'un dock plus ancien. */
+  retro = $state.raw<RetroSnapshot | null>(null)
+  /** Les manettes Bluetooth ; `null` d'un dock plus ancien. */
+  pads = $state<PadsSnapshot | null>(null)
   /** Derniers instantanés des thèmes du PC, par nom de thème. */
   topics = $state.raw<Record<string, unknown>>({})
   /** Heure (`performance.now()`) de réception du dernier instantané de chaque thème : la page
@@ -129,6 +133,8 @@ class DockSocket {
     } else if (topic === 'dock') this.dock = data as DockInfo
     else if (topic === 'ui') this.ui = data as UiState
     else if (topic === 'player') this.player = data as PlayerSnapshot
+    else if (topic === 'retro') this.retro = data as RetroSnapshot
+    else if (topic === 'pads') this.pads = data as PadsSnapshot
     else {
       this.topics = { ...this.topics, [topic]: data }
       this.stamps = { ...this.stamps, [topic]: performance.now() }

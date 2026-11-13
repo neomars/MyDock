@@ -47,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="cotations de démonstration, sans réseau (captures d'écran et tests)",
     )
 
+    run.add_argument(
+        "--demo-retro",
+        action="store_true",
+        help="Retrogame de démonstration : de faux jeux et de fausses manettes (captures d'écran et tests)",
+    )
+
     init = sub.add_parser("init", help="crée ou met à jour la configuration (idempotent)")
     init.add_argument("--config", type=Path)
     init.add_argument("--pc", metavar="HOTE", help="nom (.local) ou adresse IPv4 du PC")
@@ -62,6 +68,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument(
         "--smb-host", help="Divertissement : le serveur de fichiers Samba (la Freebox)"
+    )
+    init.add_argument(
+        "--roms-dir",
+        help="Retrogame : le dossier des jeux (chemin absolu ; vide : /var/lib/mydock/roms)",
+    )
+    init.add_argument(
+        "--button-gpio",
+        type=int,
+        help="Retrogame : le numéro GPIO (BCM, 2 à 27) du bouton physique qui quitte le jeu (défaut : 17, broche 11)",
     )
     secret = init.add_mutually_exclusive_group()
     secret.add_argument(
@@ -126,6 +141,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         config.state_dir = args.state_dir
     if args.demo_markets:
         config.demo_markets = True
+    if args.demo_retro:
+        config.demo_retro = True
     logging.basicConfig(level=config.log_level, format="%(levelname)s %(name)s: %(message)s")
     from mydock_dock import playerlog
 
@@ -216,6 +233,8 @@ def cmd_init(args: argparse.Namespace) -> int:
             web_dir=args.web_dir,
             playlist_url=args.playlist_url,
             smb_host=args.smb_host,
+            roms_dir=args.roms_dir,
+            button_gpio=args.button_gpio,
         )
     except (ConfigError, ValidationFailure) as exc:
         print(f"Erreur : {exc}", file=sys.stderr)

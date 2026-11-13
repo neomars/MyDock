@@ -1,11 +1,14 @@
 #!/bin/sh
 # MyDock - lance l'assistant de lecture du Divertissement (Freetv, Kiosque) dans la session de l'écran du dock.
-# Lancé par labwc (autostart), sous Wayland, à côté du navigateur : VLC doit tourner dans cette session pour
-# s'afficher sur l'écran du Pi. L'assistant se connecte au dock en local (127.0.0.1, jamais le réseau) ; il ne
-# lit aucun secret : l'adresse d'une chaîne ou d'un fichier lui arrive du dock au moment de lire.
-# Réglage optionnel :
+# Lancé par labwc (autostart), sous Wayland, à côté du navigateur : VLC (et MAME, pour Retrogame) doivent tourner dans
+# cette session pour s'afficher sur l'écran du Pi. L'assistant se connecte au dock en local (127.0.0.1, jamais le
+# réseau) ; il ne lit aucun secret : l'adresse d'une chaîne ou d'un fichier, ou le nom d'un jeu, lui arrive du dock au
+# moment de lire. C'est aussi lui qui lit le bouton physique (GPIO) et, pendant un jeu, l'écran tactile et les manettes :
+# il marche donc même si le navigateur est bloqué ou si le dock redémarre.
+# Réglages optionnels :
 #   /etc/mydock-kiosk/vlc.flags   options supplémentaires de VLC, une par ligne (# = commentaire)
-# Sans VLC, l'écran du dock le dit (« VLC est absent du Pi ») : sudo apt install vlc-bin vlc-plugin-base
+#   /etc/mydock-kiosk/mame.flags  options supplémentaires de MAME, une par ligne (# = commentaire)
+# Sans VLC ou sans MAME, l'écran du dock le dit : sudo apt install vlc-bin vlc-plugin-base ; sudo apt install mame
 PORT="${MYDOCK_PORT:-8080}"
 URL="http://127.0.0.1:${PORT}/"
 DOCK="${MYDOCK_DOCK_BIN:-/usr/bin/mydock-dock}"

@@ -5,7 +5,15 @@ set -e
 
 case "$1" in
     purge)
-        rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock /var/lib/mydock-kiosk /var/log/mydock
+        rm -rf /etc/mydock /etc/mydock-kiosk /var/lib/mydock-kiosk /var/log/mydock
+        # Les jeux de Retrogame (/var/lib/mydock/roms) sont à toi, parfois des gigaoctets envoyés un à un : on les garde.
+        if [ -d /var/lib/mydock ]; then
+            find /var/lib/mydock -mindepth 1 -maxdepth 1 ! -name roms -exec rm -rf {} + 2>/dev/null || true
+            rmdir /var/lib/mydock 2>/dev/null || true
+            if [ -d /var/lib/mydock/roms ]; then
+                echo "mydock : les jeux de Retrogame sont conservés dans /var/lib/mydock/roms (rm -r pour les effacer)." >&2
+            fi
+        fi
         for user in mydock mydock-kiosk; do
             if getent passwd "$user" >/dev/null 2>&1; then
                 userdel "$user" >/dev/null 2>&1 || true

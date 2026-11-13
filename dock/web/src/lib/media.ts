@@ -111,7 +111,7 @@ export function stateText(player: PlayerSnapshot): string {
 
 /** Le sous-titre de la tuile « Divertissement » de l'accueil pendant une lecture : « TF1 ». */
 export const nowPlayingTitle = (player: PlayerSnapshot | null | undefined): string | null =>
-  playerActive(player) ? (player?.title ?? null) : null
+  playerActive(player) ? (player?.engine === 'mame' ? `En jeu : ${player.title ?? ''}`.trim() : (player?.title ?? null)) : null
 
 /** Pourquoi la lecture ne peut pas démarrer d'ici (rien : elle le peut). */
 export function playerBlocker(player: PlayerSnapshot | null | undefined): string | null {

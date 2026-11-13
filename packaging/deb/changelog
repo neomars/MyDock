@@ -1,3 +1,10 @@
+mydock-agent (1.7.0) unstable; urgency=medium
+
+  * Aucun changement du côté du PC : la version suit celle du dock (1.7.0), qui ajoute Retrogame, les jeux d'arcade de
+    MAME sur l'écran du Pi (voir le changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 13 Nov 2026 12:00:00 +0000
+
 mydock-agent (1.6.6) unstable; urgency=medium
 
   * Aucun changement du côté du PC : la version suit celle du dock (1.6.6), dont les chaînes de télévision ne sont plus

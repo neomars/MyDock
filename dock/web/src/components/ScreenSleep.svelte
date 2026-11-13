@@ -25,6 +25,21 @@
     return () => clearInterval(timer)
   })
 
+  // Le bouton physique du dock (GPIO) réveille l'écran comme un toucher : l'économiseur ou le noir laisse la place à l'écran.
+  // Le premier instantané ne compte pas (le dock redémarre avec un compte déjà fait).
+  let buttonSeen = untrack(() => sock.player?.button)
+  $effect(() => {
+    const count = sock.player?.button
+    untrack(() => {
+      if (count !== undefined && buttonSeen !== undefined && count !== buttonSeen) {
+        screenSleep.activity()
+        screenSleep.wake()
+        screenSleep.released()
+      }
+      buttonSeen = count
+    })
+  })
+
   // Tout toucher, geste ou touche repousse la veille : on ne note que l'heure, sans rien déclencher.
   $effect(() => {
     const used = () => screenSleep.activity()

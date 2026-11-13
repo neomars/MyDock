@@ -276,7 +276,15 @@ async def test_every_other_address_is_a_plain_404(dock, path):
 @pytest.mark.parametrize("method", ["PUT", "DELETE", "PATCH"])
 async def test_other_methods_are_refused(dock, method):
     async with web(dock) as client:
-        for path in ("/", f"/clients/{DEB}", "/api/portal", "/api/pair"):
+        for path in (
+            "/",
+            f"/clients/{DEB}",
+            "/api/portal",
+            "/api/pair",
+            "/jeux",
+            "/api/retro/login",
+            "/api/retro/upload",
+        ):
             assert (await client.request(method, path)).status_code == 405, (method, path)
         assert (await client.post("/")).status_code == 405
         assert (await client.post(f"/clients/{DEB}")).status_code == 405

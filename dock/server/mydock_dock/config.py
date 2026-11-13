@@ -29,6 +29,10 @@
     smb_user = ""               # vide = accès sans identifiant
     smb_password = ""
 
+    [retrogame]                 # Retrogame : des jeux d'arcade MAME sur l'écran du dock
+    roms_dir = "/var/lib/mydock/roms"   # vide = le dossier « roms » de l'état du dock
+    button_gpio = 17            # broche GPIO (numérotation BCM) du bouton qui quitte le jeu
+
 Les clés d'API des fournisseurs de bourse et le mot de passe du partage vont dans ce fichier (droits 600),
 jamais dans le dépôt, jamais dans un journal, jamais à l'écran. Yahoo Finance et Binance n'en
 demandent pas.
@@ -55,6 +59,8 @@ DEFAULT_AGENT_PORT = 8765
 DEFAULT_STATE_DIR = Path("/var/lib/mydock")
 DEFAULT_CLIENTS_DIR = Path("/usr/share/mydock/clients")
 DEFAULT_SMB_HOST = "mafreebox.freebox.fr"
+DEFAULT_BUTTON_GPIO = 17  # broche physique 11 (la masse est sur la broche 9)
+GPIO_PINS = range(2, 28)  # les GPIO 2 à 27 de l'en-tête de 40 broches
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 API_KEY_RE = re.compile(r"^[A-Za-z0-9_.~-]{8,128}$")
 
@@ -92,7 +98,10 @@ class DockConfig:
     smb_host: str = DEFAULT_SMB_HOST
     smb_user: str = ""
     smb_password: str = field(default="", repr=False)  # un secret : jamais dans un affichage
+    roms_dir: str = ""  # vide : le dossier « roms » de l'état du dock
+    button_gpio: int = DEFAULT_BUTTON_GPIO
     demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
+    demo_retro: bool = False  # idem : de faux jeux, de fausses manettes (essais et captures)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
@@ -104,6 +113,16 @@ class DockConfig:
         """Le dossier des vidéos de l'économiseur d'écran (voir screensaver.py)."""
         return self.state_dir / "screensaver"
 
+    @property
+    def roms_path(self) -> Path:
+        """Le dossier des ROMs de Retrogame (voir retrogame.py)."""
+        return Path(self.roms_dir) if self.roms_dir else self.state_dir / "roms"
+
+    @property
+    def retro_dir(self) -> Path:
+        """Ce que le dock garde pour Retrogame : le cache de la liste, les miniatures."""
+        return self.state_dir / "retrogame"
+
     # --- lecture -------------------------------------------------------------------------
 
     @classmethod
@@ -114,6 +133,7 @@ class DockConfig:
         portal = _section(raw, "portal")
         markets = _section(raw, "markets")
         media = _section(raw, "media")
+        retro = _section(raw, "retrogame")
         try:
             listen_host = str(ipaddress.IPv4Address(str(server.get("listen_host", "127.0.0.1"))))
             port = validate_port(server.get("port", DEFAULT_PORT), "server.port")
@@ -146,6 +166,11 @@ class DockConfig:
             smb_password = clean_smb_password(media.get("smb_password", ""))
         except (ValueError, ValidationFailure) as exc:
             raise ConfigError(f"[media] : {exc}") from None
+        try:
+            roms_dir = clean_roms_dir(retro.get("roms_dir", ""))
+            button_gpio = clean_gpio(retro.get("button_gpio", DEFAULT_BUTTON_GPIO))
+        except ValidationFailure as exc:
+            raise ConfigError(f"[retrogame] : {exc}") from None
         level = str(server.get("log_level", "INFO")).upper()
         if level not in LOG_LEVELS:
             raise ConfigError(f"server.log_level : « {level} » inconnu ({', '.join(LOG_LEVELS)}).")
@@ -170,6 +195,8 @@ class DockConfig:
             smb_host=smb_host,
             smb_user=smb_user,
             smb_password=smb_password,
+            roms_dir=roms_dir,
+            button_gpio=button_gpio,
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:
@@ -193,8 +220,9 @@ class DockConfig:
 
     def to_dict(self) -> dict[str, Any]:
         raw = copy.deepcopy(self._raw)
-        server, pc, paths, portal, media = (
-            raw.setdefault(name, {}) for name in ("server", "pc", "paths", "portal", "media")
+        server, pc, paths, portal, media, retro = (
+            raw.setdefault(name, {})
+            for name in ("server", "pc", "paths", "portal", "media", "retrogame")
         )
         server["listen_host"] = self.listen_host
         server["port"] = self.port
@@ -210,6 +238,8 @@ class DockConfig:
         media["smb_host"] = self.smb_host
         media["smb_user"] = self.smb_user
         media["smb_password"] = self.smb_password
+        retro["roms_dir"] = self.roms_dir
+        retro["button_gpio"] = self.button_gpio
         paths["state_dir"] = str(self.state_dir)
         if self.web_dir is not None:
             paths["web_dir"] = str(self.web_dir)
@@ -281,6 +311,47 @@ class DockConfig:
         )
         self.save()
 
+    def set_retrogame(self, *, roms_dir: object = None, button_gpio: object = None) -> None:
+        """Retrogame : le dossier des ROMs et la broche du bouton (validés avant d'être gardés ; None ne change rien)."""
+        folder = clean_roms_dir(roms_dir) if roms_dir is not None else self.roms_dir
+        pin = clean_gpio(button_gpio) if button_gpio is not None else self.button_gpio
+        self.roms_dir, self.button_gpio = folder, pin
+        self.save()
+
+
+def clean_roms_dir(value: object) -> str:
+    """Le dossier des ROMs : vide (celui du dock) ou un chemin absolu, sans « .. » ni caractère de contrôle."""
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise ValidationFailure("Le dossier des ROMs est invalide.")
+    text = value.strip()
+    if (
+        not text.startswith("/")
+        or len(text) > 200
+        or any(ord(c) < 32 or ord(c) == 127 for c in text)
+        or ".." in Path(text).parts
+    ):
+        raise ValidationFailure(
+            "Le dossier des ROMs doit être un chemin absolu (200 caractères au plus, sans « .. »)."
+        )
+    return str(Path(text))
+
+
+def clean_gpio(value: object) -> int:
+    """La broche GPIO du bouton : un numéro BCM de l'en-tête (2 à 27)."""
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValidationFailure("La broche du bouton est invalide (un numéro GPIO de 2 à 27).")
+    try:
+        pin = int(value)
+    except ValueError:
+        raise ValidationFailure(
+            "La broche du bouton est invalide (un numéro GPIO de 2 à 27)."
+        ) from None
+    if pin not in GPIO_PINS:
+        raise ValidationFailure("La broche du bouton doit être un numéro GPIO de 2 à 27.")
+    return pin
+
 
 def clean_smb_user(value: object) -> str:
     """L'identifiant du partage : vide (accès libre) ou un nom sans « % » (séparateur du mot de passe) ni caractère de contrôle."""
@@ -331,6 +402,8 @@ def init_config(
     web_dir: Path | str | None = None,
     playlist_url: str | None = None,
     smb_host: str | None = None,
+    roms_dir: str | None = None,
+    button_gpio: int | None = None,
 ) -> DockConfig:
     """Crée ou met à jour la configuration (idempotent) ; ne change que ce qui est fourni."""
     path = Path(path) if path else default_config_path()
@@ -361,6 +434,11 @@ def init_config(
             config.set_media(playlist_url=playlist_url, smb_host=smb_host)
         except ValidationFailure as exc:
             raise ConfigError(f"Divertissement : {exc}") from None
+    if roms_dir is not None or button_gpio is not None:
+        try:
+            config.set_retrogame(roms_dir=roms_dir, button_gpio=button_gpio)
+        except ValidationFailure as exc:
+            raise ConfigError(f"Retrogame : {exc}") from None
     if config.portal_enabled and config.portal_port == config.port:
         raise ConfigError("Le port du portail doit différer de celui de l'interface.")
     config.save()

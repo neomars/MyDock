@@ -457,6 +457,95 @@ export interface DockInfo {
   pairing?: PairingInfo
   /** Réglages du Divertissement ; absent d'un dock plus ancien. */
   media?: MediaInfo
+  /** Retrogame : dossier des ROMs, broche du bouton, envoi de jeux ; absent d'un dock plus ancien. */
+  retro?: RetroInfo
+}
+
+/** L'envoi de jeux depuis le navigateur du PC : ouvert, il montre le code à recopier ; fermé, il dit comment il s'est fini. */
+export type UploadInfo =
+  | {
+      open: true
+      /** Le code à saisir sur la page du PC : « ABCD-EFGH ». */
+      code: string
+      /** Heure d'expiration (ms depuis 1970). */
+      expires_at: number
+      files: number
+      wrong_left: number
+      last: null
+      /** Où aller sur le PC (http://adresse/jeux). */
+      urls: string[]
+    }
+  | { open: false; last: { result: 'closed' | 'expired' | 'locked'; files: number; at: number } | null }
+
+/** Retrogame, côté Réglages : où sont les ROMs, la broche du bouton physique, l'envoi en cours. */
+export interface RetroInfo {
+  roms_dir: string
+  roms_dir_custom: boolean
+  /** Le numéro GPIO (BCM) du bouton physique. */
+  button_gpio: number
+  upload: UploadInfo
+  /** Le portail (port 80) est-il en marche ? L'envoi de jeux en dépend. */
+  portal: boolean
+}
+
+/** Un jeu de la liste que MAME a validée. */
+export interface RetroGame {
+  /** Le nom MAME du jeu (« pacman ») : la seule chose que l'écran envoie pour le lancer. */
+  id: string
+  title: string
+  year: string
+  maker: string
+  /** L'état de l'émulation selon MAME : good, imperfect, preliminary. */
+  status: string
+  /** Une capture existe (/retrogame/snap/<id>). */
+  snap: boolean
+}
+
+/** Thème « retro » : la liste des jeux et l'avancement de sa vérification. */
+export interface RetroSnapshot {
+  /** MAME est-il installé sur le Pi ? */
+  mame: boolean
+  roms_dir: string
+  readable: boolean
+  state: 'idle' | 'scanning' | 'error'
+  done: number
+  total: number
+  error: string | null
+  /** Fichiers ignorés (nom qui n'est pas celui d'un jeu), les premiers seulement. */
+  skipped: string[]
+  games: RetroGame[]
+}
+
+export interface PadDevice {
+  /** L'adresse Bluetooth : « AA:BB:CC:DD:EE:FF ». */
+  id: string
+  name: string
+  paired: boolean
+  connected: boolean
+  /** 0 à 100 ; `null` quand la manette ne le dit pas. */
+  battery: number | null
+}
+
+export interface PadsPairing {
+  id: string
+  state: 'pairing' | 'connecting' | 'done' | 'failed'
+  message: string
+}
+
+/** Thème « pads » : les manettes Bluetooth (BlueZ), suivies en direct. */
+export interface PadsSnapshot {
+  /** Un adaptateur Bluetooth est-il utilisable ? */
+  available: boolean
+  /** Pourquoi pas (une phrase pour l'écran). */
+  reason: string | null
+  powered: boolean
+  /** Le Bluetooth est coupé par rfkill. */
+  blocked: boolean
+  scanning: boolean
+  /** Heure de fin de la recherche (ms depuis 1970). */
+  scan_until: number | null
+  pairing: PadsPairing | null
+  devices: PadDevice[]
 }
 
 /** Divertissement : où le dock prend les chaînes (Freebox) et les fichiers (partage Samba). Jamais le mot de passe. */
@@ -476,7 +565,7 @@ export interface PlayerSnapshot {
   /** L'assistant de lecture de l'écran est-il connecté ? */
   available: boolean
   state: PlayerStateName
-  kind: 'tv' | 'file' | null
+  kind: 'tv' | 'file' | 'game' | null
   title: string | null
   subtitle: string | null
   /** Un direct (une chaîne) : ni position ni durée. */
@@ -490,7 +579,23 @@ export interface PlayerSnapshot {
   /** Faux quand le fichier arrive par un tube (smbclient) : pas d'avance ni de retour rapides. Absent d'un dock plus ancien. */
   seekable?: boolean
   error: string | null
-  helper: { vlc: boolean; live555: boolean; ffmpeg: boolean; touch: boolean; demo: boolean } | null
+  /** Ce qui occupe l'écran : VLC (vidéo) ou MAME (jeu). Absent d'un dock plus ancien. */
+  engine?: 'vlc' | 'mame'
+  /** Le nom MAME du jeu en cours. */
+  game?: string | null
+  /** Le nombre d'appuis sur le bouton physique depuis le démarrage du dock : un changement réveille l'écran. */
+  button?: number
+  helper: {
+    vlc: boolean
+    live555: boolean
+    ffmpeg: boolean
+    touch: boolean
+    demo: boolean
+    /** MAME est-il installé ? */
+    mame?: boolean
+    /** L'état du bouton physique, en une phrase (« GPIO17 (broche 11) : prêt. »). */
+    gpio?: string | null
+  } | null
 }
 
 /** Une chaîne de la Freebox, sans l'adresse de son flux (le dock la garde). */

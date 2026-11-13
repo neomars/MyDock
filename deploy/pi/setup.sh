@@ -109,10 +109,14 @@ fi
 
 # --- 1. Configuration du dock (droits 600) -----------------------------------------------------
 step "Configuration ($R_ETC/dock.toml)"
+# La configuration (le jeton) reste en 750. Le dossier d'état est en 751 : on peut le traverser sans le lister, ce qui laisse
+# l'utilisateur de l'écran (MAME) lire les jeux de Retrogame dans $R_STATE/roms (755) sans voir le reste.
 if [ "$STAGING" = 1 ]; then
-  run install -d -m 750 "$ETC" "$STATE"
+  run install -d -m 750 "$ETC"
+  run install -d -m 751 "$STATE"
 else
-  run install -d -m 750 -o mydock -g mydock "$ETC" "$STATE"
+  run install -d -m 750 -o mydock -g mydock "$ETC"
+  run install -d -m 751 -o mydock -g mydock "$STATE"
 fi
 # Sans « --pc » : un dock neuf n'a pas de PC, il affiche un code que le PC saisit (portail). Sur un
 # dock qui en a déjà un, init ne change que les chemins (l'ancien installateur les mettait ailleurs).
@@ -133,6 +137,25 @@ fi
 step "Journaux ($R_LOG)"
 run install -d -m 1777 "$LOGDIR"
 ok "Journaux : $R_LOG/player.log (lecture) et $R_LOG/dock.log (serveur)"
+
+# --- 1c. Retrogame : le dossier des jeux, et le droit de parler à BlueZ ------------------------------------------
+# « mydock » (le serveur) écrit les jeux que le PC envoie ; l'utilisateur de l'écran, lui, lit les jeux pour MAME.
+# BlueZ n'accepte les ordres D-Bus (associer une manette…) que du groupe « bluetooth » : le serveur y entre.
+step "Retrogame (jeux d'arcade, manettes Bluetooth)"
+if [ "$STAGING" = 1 ]; then
+  run install -d -m 755 "$STATE/roms"
+else
+  run install -d -m 755 -o mydock -g mydock "$STATE/roms"
+fi
+ok "Dossier des jeux : $R_STATE/roms (des .zip ou .7z ; ou « Envoyer des jeux » depuis l'écran)"
+if [ "$STAGING" != 1 ]; then
+  if getent group bluetooth >/dev/null 2>&1; then
+    run usermod -aG bluetooth mydock
+    ok "Le serveur du dock est dans le groupe bluetooth (manettes)"
+  else
+    warn "Le groupe bluetooth n'existe pas : sudo apt install bluez, puis relance « sudo /usr/lib/mydock/setup »."
+  fi
+fi
 
 # --- 2. Ancienne installation (script install-dock.sh, environnement dans /opt/mydock) ---------
 # Son unité, dans /etc/systemd/system, masquerait celle du paquet : on la retire.
@@ -181,6 +204,12 @@ if [ "$KIOSK" = systemd ] && [ "$STAGING" != 1 ]; then
   fi
   # « audio » : le son des vidéos du Divertissement (VLC) sort par la carte son du Pi (HDMI ou prise).
   run usermod -aG video,render,input,audio mydock-kiosk
+  # « input » : MAME lit les manettes et l'assistant lit l'écran tactile ; « gpio » : le bouton physique de Retrogame.
+  if getent group gpio >/dev/null 2>&1; then
+    run usermod -aG gpio mydock-kiosk
+  else
+    warn "Le groupe gpio n'existe pas (autre chose que Raspberry Pi OS ?) : le bouton physique ne pourra pas être lu."
+  fi
   ok "Utilisateur mydock-kiosk (navigateur, sans accès au jeton)"
 fi
 
@@ -200,6 +229,10 @@ if [ "$KIOSK" != none ]; then
   if [ ! -e "$KETC/vlc.flags" ]; then
     printf '# Options supplémentaires de VLC pour le Divertissement, une par ligne (voir « dépannage » du README).\n# --aout=alsa\n# --avcodec-hw=none --deinterlace=1   (désentrelacer par le processeur : chaînes en SD)\n' |
       put_file "$KETC/vlc.flags" 644
+  fi
+  if [ ! -e "$KETC/mame.flags" ]; then
+    printf '# Options supplémentaires de MAME pour Retrogame, une par ligne (voir « Retrogame » du README).\n# -video opengl   (au lieu de accel, le défaut)\n# -sound none\n' |
+      put_file "$KETC/mame.flags" 644
   fi
   subst "$HERE/labwc/autostart" "LIB=$R_LIB" | put_file "$KETC/labwc/autostart" 644
 fi
@@ -228,6 +261,16 @@ case "$KIOSK" in
       run install -d -m 755 "$USER_HOME/.config/labwc"
     else
       run install -d -m 755 -o "$USER_NAME" -g "$(id -gn "$USER_NAME")" "$USER_HOME/.config" "$USER_HOME/.config/labwc"
+    fi
+    # Retrogame : l'utilisateur de la session lit les manettes (input) et le bouton physique (gpio). Raspberry Pi OS les lui
+    # donne déjà ; on ne les ajoute que s'ils existent, et c'est à sa prochaine ouverture de session qu'ils comptent.
+    if [ "$STAGING" != 1 ]; then
+      for group in input gpio; do
+        if getent group "$group" >/dev/null 2>&1 && ! id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx "$group"; then
+          run usermod -aG "$group" "$USER_NAME"
+          say "  $USER_NAME ajouté au groupe $group (Retrogame)"
+        fi
+      done
     fi
     subst "$HERE/labwc/autostart" "LIB=$R_LIB" | put_file "$AUTOSTART" 644 "$USER_NAME:"
     if grep -rqhsE '(autologin-session|user-session)=(rpd-x|LXDE|wayfire)' /etc/lightdm/ 2>/dev/null; then

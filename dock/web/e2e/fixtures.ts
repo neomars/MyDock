@@ -41,6 +41,9 @@ export interface Stack {
   stateDir: string
   /** Le dossier des vidéos de l'économiseur d'écran : il n'existe qu'une fois qu'on y a mis une vidéo. */
   saverDir: string
+  /** Le dossier d'exécution de l'assistant de lecture en démonstration : y créer `mydock-demo-button` ou `mydock-demo-touch`
+   *  fait comme un appui sur le bouton physique ou un toucher de l'écran pendant un jeu. */
+  runDir: string
   /** « PC éteint » : plus rien ne répond sur le port de l'agent. */
   pcOff(): void
   /** « Agent arrêté seul » : le PC répond mais l'agent est absent (connexion refusée). */
@@ -107,6 +110,7 @@ export const test = base.extend<{
       webDir,
       stateDir,
       saverDir: path.join(stateDir, 'screensaver'),
+      runDir: path.join(stateDir, 'run'),
       pcOff: () => child.kill('SIGUSR1'),
       agentDown: () => child.kill('SIGHUP'),
       pcOn: () => child.kill('SIGUSR2'),
@@ -232,7 +236,7 @@ export function rehashInterface(dir: string): void {
  * MYDOCK_SHOTS=j ne refait que les captures de l'étape j, MYDOCK_SHOTS=a, b, c, d, e, f, g, h ou i celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' | 'l' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)

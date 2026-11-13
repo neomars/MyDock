@@ -5,6 +5,7 @@
   import Link2 from '@lucide/svelte/icons/link-2'
   import PlugZap from '@lucide/svelte/icons/plug-zap'
   import MediaSettings from '../components/MediaSettings.svelte'
+  import RetroSettings from '../components/RetroSettings.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import PairingPanel from '../components/PairingPanel.svelte'
   import { editText } from '../lib/keyboard.svelte'
@@ -342,6 +343,8 @@
     </section>
 
     <MediaSettings />
+
+    <RetroSettings />
   </div>
 
   <div class="col">
