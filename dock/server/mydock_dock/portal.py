@@ -14,7 +14,8 @@ l'interface, jamais le WebSocket, jamais la configuration, et n'a rien d'autre �
     GET  /clients/<fichier>      un paquet de la liste (jamais un chemin construit à partir de l'adresse)
     GET  /api/portal             l'état public : version, PC associé ou non, paquets proposés
     POST /api/pair               l'association par code (limitée, voir pairing.py)
-    GET  /jeux                   la page d'envoi de jeux d'arcade (Retrogame), protégée par un code de l'écran
+    GET  /jeux                   la page d'envoi de jeux d'arcade (Retrogame)
+    POST /api/retro/me           le PC associé (reconnu à son adresse) reçoit un jeton d'envoi, sans code ; les autres : « il faut le code »
     POST /api/retro/login        le code de l'écran du dock, contre un jeton d'envoi (voir retro_upload.py)
     POST /api/retro/upload       un jeu (.zip ou .7z) : écrit dans le dossier des ROMs, après le contrôle du nom et de l'archive
 
@@ -44,6 +45,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mydock_common.auth import is_valid_token_format
 from mydock_dock import __version__
+from mydock_dock.agent_link import LinkFailure, resolve_ipv4_all
 from mydock_dock.clients import DEB_RE, Client
 from mydock_dock.netinfo import is_lan_candidate, local_address_towards, local_ipv4_addresses
 from mydock_dock.pairing import PairingRefused
@@ -95,6 +97,8 @@ details{margin-top:8px;color:var(--text2)}
 summary{cursor:pointer}
 .warnbox{border-color:var(--warn)}
 footer{margin-top:28px;color:var(--text2);font-size:16px}
+.more{margin-top:22px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 20px}
+.more h2{font-size:20px}
 """
 
 SCRIPT = """
@@ -163,6 +167,11 @@ PAGE = """<!doctype html>
 <ol>
 {steps}
 </ol>
+<section class="more">
+<h2>🎮 Envoyer des jeux d'arcade</h2>
+<p class="dim">Retrogame : les jeux MAME du dock. Depuis ce PC, sans code, si c'est lui qui est associé.</p>
+<a class="btn" href="/jeux">Envoyer des jeux</a>
+</section>
 <footer>
 <p>Cette page est servie par le dock lui-même, sur ton réseau local : rien ne sort sur Internet.
 Pour un autre type de PC, voir le README du projet.</p>
@@ -287,6 +296,23 @@ async def _discard(request: Request, limit: int = 262_144, seconds: float = 2.0)
                     break
 
 
+async def is_associated_pc(server: DockServer, peer: str) -> bool:
+    """`peer` est-il le PC associé au dock (l'adresse IP qu'il a enregistrée à l'association) ?
+
+    L'adresse vient de la connexion elle-même (jamais d'un en-tête : le portail n'écoute pas derrière un relais). Un dock sans
+    PC associé, ou dont le réglage « envoi sans code » est coupé, ne reconnaît personne.
+    """
+    config = server.config
+    if not (config.upload_without_code and config.agent_host and config.token):
+        return False
+    address = peer.removeprefix("::ffff:")
+    try:
+        known = await resolve_ipv4_all(config.agent_host, config.agent_port, timeout=1.5)
+    except LinkFailure:
+        return False
+    return address in known
+
+
 def clean_name(value: object) -> str:
     """Le nom que le PC se donne : du texte affichable, de longueur raisonnable."""
     text = value if isinstance(value, str) else ""
@@ -398,6 +424,24 @@ def create_portal_app(server: DockServer) -> FastAPI:
             headers={"Cache-Control": "no-store", "Content-Security-Policy": UPLOAD_CSP},
         )
 
+    @app.post("/api/retro/me")
+    async def retro_me(request: Request) -> JSONResponse:
+        """La page demande, en s'ouvrant, si ce PC a le droit d'envoyer sans code. Toujours 200 : ce n'est pas une erreur."""
+        peer = request.client.host if request.client else "?"
+        raw = await _read_limited(request)
+        if raw is None:
+            return _error(413, "too_large", "Demande trop volumineuse.")
+        headers = {"Cache-Control": "no-store"}
+        if not await is_associated_pc(server, peer):
+            return JSONResponse({"ok": True, "trusted": False}, headers=headers)
+        try:
+            token, seconds = server.uploads.trusted_session(peer)
+        except UploadRefused as refusal:
+            return _error(refusal.status, refusal.code, refusal.message)
+        return JSONResponse(
+            {"ok": True, "trusted": True, "token": token, "seconds": seconds}, headers=headers
+        )
+
     @app.post("/api/retro/login")
     async def retro_login(request: Request) -> JSONResponse:
         peer = request.client.host if request.client else "?"
@@ -426,13 +470,20 @@ def create_portal_app(server: DockServer) -> FastAPI:
         declared = request.headers.get("content-length")
         size = int(declared) if declared and declared.isdigit() else None
         try:
-            server.uploads.authorize(peer, request.headers.get("x-upload-token"))
+            session = server.uploads.authorize(peer, request.headers.get("x-upload-token"))
+            if session.code is None and not await is_associated_pc(server, peer):
+                # Le droit du PC associé se revérifie à chaque envoi : réglage coupé ou autre PC associé depuis, plus rien ne passe.
+                raise UploadRefused(
+                    "unauthorized",
+                    "Ce PC n'est plus celui qui est associé au dock : recopie le code de l'écran.",
+                    status=401,
+                )
             if uploading.locked():
                 raise UploadRefused(
                     "busy", "Un autre envoi est en cours : patiente un instant.", status=429
                 )
             async with uploading:
-                server.uploads.reserve(size or 0)
+                server.uploads.reserve(session, size or 0)
                 saved = await save_rom(request.stream(), name, size, server.config.roms_path)
         except UploadRefused as refusal:
             media_log.warning("Envoi de jeu refusé (%s) : %s", peer, refusal.code)
@@ -442,7 +493,7 @@ def create_portal_app(server: DockServer) -> FastAPI:
             reply = _error(refusal.status, refusal.code, refusal.message)
             reply.headers["Connection"] = "close"  # le reste d'un gros fichier n'est pas lu
             return reply
-        server.uploads.done(saved.size)
+        server.uploads.done(session, saved.size)
         server.retro.refresh()
         media_log.info("Jeu reçu : %s (%d octets) depuis %s", saved.name, saved.size, peer)
         return JSONResponse(

@@ -1,6 +1,6 @@
 # Étape l — Retrogame : les jeux d'arcade de MAME, à la manette Bluetooth
 
-Livrée le 13 novembre 2026, branche `claude/jolly-dirac-5np79y`, **version 1.7.0** (agent, dock, protocole, et les deux paquets `.deb`).
+Livrée le 13 novembre 2026, branche `claude/jolly-dirac-5np79y`, **version 1.7.0** (puis **1.7.1** : voir l'[addendum 1](#addendum-1--version-171--envoyer-un-jeu-depuis-la-page-du-pc-pas-depuis-le-pi-et-la-manette-filaire-usb)) (agent, dock, protocole, et les deux paquets `.deb`).
 Les captures de ce dossier sont en **mode démo** (`mydock-dock run --demo-retro` : douze faux jeux avec de vraies images, trois fausses manettes ; l'assistant de l'écran en démonstration) en 1024×600 tactile, texte doublé. Rien n'y touche MAME ni le Bluetooth : ce qu'un conteneur ne peut pas produire est dit plus bas.
 
 > **À lire d'abord — ce que je n'ai pas pu vérifier.**
@@ -144,3 +144,41 @@ Dans l'ordre où je les essaierais :
 - Télécharger les **captures** des jeux (un fichier `.png` par jeu) depuis une source de ton choix : la place est prête (`/var/lib/mydock/retrogame/snap/`), pas le téléchargement.
 - **Deux joueurs** : MAME les prend en charge ; l'écran montre déjà « 2 manettes connectées » ; rien d'autre n'a été fait pour eux.
 - **Favoris et jeux récents** en tête de liste, si la liste devient longue.
+
+## Addendum 1 — version 1.7.1 : « envoyer un jeu depuis la page du PC, pas depuis le Pi » et la manette filaire USB
+
+Deux demandes après la livraison de la 1.7.0.
+
+### Envoyer un jeu depuis le PC, sans toucher au Pi
+
+> « Je veux pouvoir uploader un jeu via la page html du site depuis le pc (pas depuis le raspi). »
+
+Le constat : l'envoi existait (page `/jeux` du portail), mais (1) la page d'accueil du portail n'y renvoyait pas, et (2) il fallait **recopier un code affiché sur l'écran du Pi**, donc aller au Pi. Je t'ai demandé comment trancher entre commodité et prudence ; tu as choisi **« sans code pour le PC associé »**. Ce qui est livré :
+
+- **Un lien « Envoyer des jeux »** sur la page d'accueil du portail (`http://IP_DU_PI/`), avec une capture : [13](13-portail-accueil-lien.png).
+- **Le PC associé n'a plus de code à saisir** : la page `/jeux` demande au dock, en s'ouvrant, « ce PC est-il le PC associé ? » (`POST /api/retro/me`, toujours 200, jamais une erreur dans la console) ; si oui, elle montre **directement le choix des fichiers** ([14](14-page-pc-sans-code.png), [15](15-page-pc-envois.png)). Le PC associé est reconnu à l'**adresse IP enregistrée à l'association** (un nom `.local` saisi à la main est résolu), lue **sur la connexion** elle-même.
+- **Tout autre appareil garde le code de l'écran** (un portable, un téléphone) : la page montre alors le champ du code, comme avant. Essayé avec un dock sans PC associé.
+- **La page vérifie le nom du fichier avant d'envoyer** (minuscules, chiffres, `_`, `.zip` ou `.7z`, 400 Mo) et le dit en une ligne ; le dock revérifie tout. Un refus rapide d'un gros fichier n'est plus un « le dock ne répond pas » (le dock lit le début du corps avant de refuser, pour que la réponse arrive).
+- **Réglage** : Réglages → Retrogame → **Envoi : Sans code / Avec code** (`upload_without_code` dans `[retrogame]`, vrai par défaut). « Avec code » : tout le monde, PC associé compris, recopie le code. Le droit du PC associé est **revérifié à chaque envoi** : couper le réglage ou associer un autre PC coupe aussitôt les jetons déjà donnés.
+- **Plafonds** : la session du PC associé a les siens (15 minutes, 3 Go, 300 fichiers) ; recharger la page ne les remet pas à zéro. Le sondage compte dans les vingt demandes par minute et par adresse.
+
+**Ce que ça change pour la sécurité, honnêtement.** Écrire dans le dossier des jeux n'exige plus d'être devant le dock **pour le PC associé** : c'est une confiance par **adresse IP**, du même ordre que la liste `allowed_clients` de l'agent. Quelqu'un qui usurperait l'adresse du PC sur ton réseau local pourrait envoyer des `.zip`/`.7z` (rien d'exécuté, mêmes noms, mêmes archives vérifiées, mêmes bornes) ; il pourrait de toute façon lire le jeton qui circule en clair, limite déjà connue. Ça ne marche que si un PC est associé et si le réglage est actif. Tout est dans le README (Sécurité).
+
+### Une manette filaire (USB)
+
+> « Ajoute la possibilité de manette filaire en usb »
+
+Une manette USB marchait déjà côté MAME (SDL) et pour « Select + Start tenus », mais l'écran **ne la voyait pas** : il ne connaissait que BlueZ, donc « Aucune manette » et un avertissement à tort. Maintenant :
+
+- **Le dock suit les manettes USB à chaud** (`wired_pads.py`) : il relit `/proc/bus/input/devices` (lisible malgré le bac à sable du dock) toutes les 2 secondes et ne prévient l'écran que si la liste change. Une manette dont le **bus est l'USB** est « connectée » ; une manette Bluetooth y figure aussi (bus Bluetooth) mais n'est pas comptée deux fois.
+- **L'en-tête de la liste** dit « Manette connectée — Nom · USB » (ou « 2 manettes connectées »), **sans avertissement** ; l'écran **Manettes** a une section « Manettes USB » ([16](16-manette-usb.png)) : « Branchée en USB : rien à associer », **sans « Oublier »** ni batterie. Sans Bluetooth, la page le dit et rappelle qu'une manette USB marche quand même.
+- **Un détail attrapé au passage** : le **pavé tactile des manettes Sony** (DualShock 4, DualSense) apparaît au noyau comme un écran tactile ; un toucher dessus aurait pu quitter le jeu. Il est maintenant écarté (propriété « pointeur » du noyau, ou « touchpad » dans son nom), pour l'USB comme pour le Bluetooth.
+- `mydock-dock doctor` dit, pour chaque manette vue par le noyau, **par où elle est branchée** (USB ou Bluetooth), et la règle d'envoi de jeux.
+- Démonstration : un fichier `demo-usb-pads.txt` du dossier d'état « branche » des manettes USB fictives.
+
+Tests ajoutés : `test_wired_pads.py` (14 : reconnaissance sur un `/proc` réaliste avec DualShock 4 en USB, sa manette de mouvement et son pavé tactile, une Xbox en Bluetooth, un écran, un clavier ; branchement et débranchement à chaud ; lecture ratée ; thème « pads » du dock ; association et oubli refusés pour une manette USB), 19 de plus pour l'envoi sans code (sessions, serveur réel, réglage coupé en cours de route, autre PC associé, adresse `::ffff:`), des essais Vitest et 5 de bout en bout (`stage-l.spec.ts` : PC associé avec le lien de l'accueil et la vraie page, autre appareil avec le code, réglage, manette USB branchée puis débranchée).
+
+### Ce qu'il reste à vérifier sur ton Pi (en plus de la liste ci-dessus)
+
+- **Le PC associé est bien reconnu** : ouvre `http://IP_DU_PI/jeux` depuis lui ; la page doit dire « Ce PC est celui qui est associé au dock : aucun code à saisir ». Si elle demande le code, l'adresse du PC vue par le Pi n'est pas celle enregistrée (PC à deux adresses, Wi-Fi et Ethernet, ou adresse qui a changé) : `mydock-dock doctor` l'indique.
+- **Une vraie manette USB** : elle doit apparaître en 2 secondes à chaque branchement, et MAME la lire. Je n'ai pu essayer que sur des listes de périphériques écrites à la main, modelées sur de vrais `/proc/bus/input/devices`.

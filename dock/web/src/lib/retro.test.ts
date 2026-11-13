@@ -25,6 +25,7 @@ import {
   uploadAddress,
   uploadResultText,
   uploadSecondsLeft,
+  wiredPads,
 } from './retro'
 import type { PadDevice, PadsSnapshot, PlayerSnapshot, RetroGame, RetroSnapshot, UploadInfo } from './protocol'
 
@@ -106,6 +107,28 @@ describe('les manettes', () => {
   })
   it('écrit la charge', () => {
     expect([80, 0, 100, 99.6, 140, -3, null, undefined, Number.NaN].map(batteryText)).toEqual(['80 %', '0 %', '100 %', '100 %', '100 %', '0 %', '', '', ''])
+  })
+  it('compte une manette branchée en USB comme connectée, sans batterie', () => {
+    const usb = pad({ id: 'usb:event6', name: 'Manette USB générique', paired: false, connected: true, battery: null, wired: true })
+    expect(padSummary(pads([usb]))).toEqual({
+      label: 'Manette connectée',
+      detail: 'Manette USB générique · USB',
+      text: 'Manette connectée : Manette USB générique · USB',
+      connected: true,
+    })
+    const two = padSummary(pads([usb, pad()]))
+    expect(two.label).toBe('2 manettes connectées')
+    expect(two.detail).toBe('Manette USB générique, Xbox Wireless Controller')
+    expect(noPadWarning(pads([usb]))).toBeNull() // une manette filaire suffit : pas d'avertissement
+  })
+  it('range les manettes USB à part : ni associées, ni « trouvées », ni à oublier', () => {
+    const usb = pad({ id: 'usb:event6', name: 'Pad USB', paired: false, connected: true, battery: null, wired: true })
+    const list = pads([usb, pad(), pad({ id: 'AA:BB:CC:DD:EE:02', paired: false, connected: false, name: '8BitDo' })])
+    expect(wiredPads(list).map((d) => d.name)).toEqual(['Pad USB'])
+    expect(pairedPads(list).map((d) => d.name)).toEqual(['Xbox Wireless Controller'])
+    expect(foundPads(list).map((d) => d.name)).toEqual(['8BitDo'])
+    expect(connectedPads(list).length).toBe(2)
+    expect(wiredPads(null)).toEqual([])
   })
   it('avertit sans manette, sans bloquer', () => {
     expect(noPadWarning(pads([]))).toContain('Aucune manette connectée')

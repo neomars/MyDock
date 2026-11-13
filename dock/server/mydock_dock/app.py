@@ -62,6 +62,7 @@ from mydock_dock.retrogame import GameLibrary
 from mydock_dock.samba import SambaBrowser, SambaError, clean_path, clean_share, is_video, smb_url
 from mydock_dock.store import StateStore
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
+from mydock_dock.wired_pads import WiredPads
 from mydock_dock.wol import send_magic_packet
 
 log = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ class PadParams(_Strict):
 class RetroSetParams(_Strict):
     roms_dir: str | None = Field(default=None, max_length=200)
     button_gpio: StrictInt | None = None
+    upload_without_code: StrictBool | None = None
 
 
 class MediaBrowseParams(_Strict):
@@ -285,10 +287,11 @@ class DockServer:
         self.player.settings = {"button_gpio": config.button_gpio}
         self.retro: GameLibrary
         self.pads: PadsManager
+        self.wired: WiredPads
         if (
             config.demo_retro
         ):  # de faux jeux et de fausses manettes : captures et essais sans matériel
-            from mydock_dock.demo_retro import DemoGameLibrary, DemoPads
+            from mydock_dock.demo_retro import DemoGameLibrary, DemoPads, demo_usb_source
 
             self.retro = DemoGameLibrary(
                 lambda: self.config.roms_path,
@@ -296,6 +299,9 @@ class DockServer:
                 on_change=lambda: self.push_local("retro"),
             )
             self.pads = DemoPads(on_change=lambda: self.push_local("pads"))  # type: ignore[assignment]
+            self.wired = WiredPads(
+                lambda: self.push_local("pads"), source=demo_usb_source(config.state_dir)
+            )
         else:
             self.retro = GameLibrary(
                 lambda: self.config.roms_path,
@@ -303,6 +309,7 @@ class DockServer:
                 on_change=lambda: self.push_local("retro"),
             )
             self.pads = PadsManager(on_change=lambda: self.push_local("pads"))
+            self.wired = WiredPads(lambda: self.push_local("pads"))
         self.uploads = UploadSessions(on_change=lambda: self.push_local("dock"))
         self._pads_tasks: set[asyncio.Task[None]] = set()
         self.link = AgentLink(
@@ -341,6 +348,7 @@ class DockServer:
         if self.retro.is_stale():
             self.retro.refresh()
         self._spawn_pads(self.pads.start())
+        self._spawn_pads(self.wired.start())
         self._pairing_task = asyncio.create_task(self._run_pairing(), name="pairing")
         if not self.config.demo_markets:
             self._aerial_task = asyncio.create_task(self.aerial.run(), name="aerial")
@@ -382,6 +390,7 @@ class DockServer:
         for task in tuple(self._pads_tasks):
             task.cancel()
         await asyncio.gather(*self._pads_tasks, return_exceptions=True)
+        await self.wired.stop()
         await self.pads.stop()
         self.player.shutdown()
         self.markets.save()
@@ -480,6 +489,7 @@ class DockServer:
             "roms_dir": str(self.config.roms_path),
             "roms_dir_custom": bool(self.config.roms_dir),
             "button_gpio": self.config.button_gpio,
+            "upload_without_code": self.config.upload_without_code,
             "upload": upload,
             "portal": self.portal.running,
         }
@@ -513,10 +523,18 @@ class DockServer:
         if topic == "retro":
             return self.retro.payload()
         if topic == "pads":
-            return self.pads.snapshot()
+            return self.pads_snapshot()
         if topic == "markets":
             return self.markets.payload()
         raise KeyError(topic)
+
+    def pads_snapshot(self) -> dict[str, Any]:
+        """Les manettes Bluetooth (BlueZ) et, devant, celles qui sont branchées en USB."""
+        snapshot = self.pads.snapshot()
+        wired = self.wired.snapshot()
+        if wired:
+            snapshot = {**snapshot, "devices": [*wired, *snapshot["devices"]]}
+        return snapshot
 
     def local_text(self, topic: str) -> str:
         return proto.dumps(proto.snap(topic, self._revs[topic], self.payload(topic)))
@@ -940,9 +958,10 @@ class DockServer:
         self.player.settings = {"button_gpio": self.config.button_gpio}
         self.player.send_settings()
         media_log.info(
-            "Réglages de Retrogame changés : dossier %s, bouton GPIO%d",
+            "Réglages de Retrogame changés : dossier %s, bouton GPIO%d, envoi sans code du PC associé : %s",
             self.config.roms_path,
             self.config.button_gpio,
+            "oui" if self.config.upload_without_code else "non",
         )
         self.retro.refresh()
         self.push_local("dock")

@@ -3,9 +3,10 @@
   import Bluetooth from '@lucide/svelte/icons/bluetooth'
   import BluetoothSearching from '@lucide/svelte/icons/bluetooth-searching'
   import Gamepad2 from '@lucide/svelte/icons/gamepad-2'
+  import Usb from '@lucide/svelte/icons/usb'
   import { onMount } from 'svelte'
   import { askConfirmation } from '../lib/confirm.svelte'
-  import { batteryText, foundPads, PAD_HELP, padsBlocker, pairedPads, pairingText, scanSecondsLeft } from '../lib/retro'
+  import { batteryText, foundPads, PAD_HELP, padsBlocker, pairedPads, pairingText, scanSecondsLeft, wiredPads } from '../lib/retro'
   import { retro } from '../lib/retro.svelte'
   import { sock } from '../lib/socket.svelte'
 
@@ -14,6 +15,7 @@
   const pads = $derived(sock.pads)
   const paired = $derived(pairedPads(pads))
   const found = $derived(foundPads(pads))
+  const wired = $derived(wiredPads(pads))
   const blocker = $derived(padsBlocker(pads))
   const message = $derived(pairingText(pads?.pairing, pads))
   const pairing = $derived(pads?.pairing ?? null)
@@ -42,6 +44,7 @@
   <section class="card problem" data-testid="pads-blocker">
     <h2>Le Bluetooth n’est pas disponible</h2>
     <p>{blocker}</p>
+    <p class="dim">Une manette USB marche sans Bluetooth : branche-la, elle apparaît ici.</p>
   </section>
 {/if}
 
@@ -49,7 +52,19 @@
   <p class="pairing" class:good={pairing?.state === 'done'} class:bad={pairing?.state === 'failed'} data-testid="pads-pairing" data-state={pairing?.state}>{message}</p>
 {/if}
 
-<h2 class="head">Mes manettes</h2>
+{#if wired.length > 0}
+  <h2 class="head">Manettes USB</h2>
+  <ul class="list" data-testid="pads-wired">
+    {#each wired as pad (pad.id)}
+      <li class="row" data-testid="pad-{pad.id}" data-connected="true" data-wired="true">
+        <Usb size={40} aria-hidden="true" />
+        <span class="what"><strong class="name">{pad.name}</strong><span class="meta dim">Branchée en USB : rien à associer</span></span>
+      </li>
+    {/each}
+  </ul>
+{/if}
+
+<h2 class="head">Mes manettes Bluetooth</h2>
 <ul class="list" data-testid="pads-paired">
   {#each paired as pad (pad.id)}
     <li class="row" data-testid="pad-{pad.id}" data-connected={pad.connected}>
@@ -66,7 +81,7 @@
       <button class="btn" data-testid="pad-forget-{pad.id}" onclick={() => forget(pad.id, pad.name)}>Oublier</button>
     </li>
   {:else}
-    <li class="none dim" data-testid="pads-none">Aucune manette associée.</li>
+    <li class="none dim" data-testid="pads-none">Aucune manette Bluetooth associée.{wired.length === 0 ? ' Une manette USB se branche simplement : elle apparaît ici.' : ''}</li>
   {/each}
 </ul>
 

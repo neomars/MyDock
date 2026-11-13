@@ -1,3 +1,21 @@
+mydock (1.7.1) unstable; urgency=medium
+
+  * Retrogame : envoyer un jeu depuis la page web du PC, sans toucher au Pi. Le PC associé au dock (reconnu à l'adresse IP
+    enregistrée à l'association) ouvre la page /jeux du portail et dépose ses fichiers directement : plus de code à
+    recopier depuis l'écran. Un lien « Envoyer des jeux » est sur la page d'accueil du portail. Tout autre appareil du
+    réseau doit toujours recopier le code affiché sur l'écran du dock (15 minutes, cinq essais, jeton lié à l'appareil).
+    Le droit du PC associé est revérifié à chaque envoi ; sa session a ses propres plafonds (15 minutes, 3 Go, 300 fichiers).
+  * Réglages -> Retrogame : « Envoi » sans code ou avec code (clé upload_without_code de [retrogame], vraie par défaut) :
+    pour qui ne veut aucun envoi sans le code de l'écran.
+  * Manettes filaires : une manette USB branchée est « connectée » sans rien associer. Elle apparaît dans l'en-tête de la
+    liste des jeux (« Manette connectée : … · USB »), dans l'écran Manettes (section « Manettes USB », sans « Oublier »),
+    et ne déclenche plus l'avertissement « aucune manette ». Branchement et débranchement sont suivis à chaud
+    (/proc/bus/input/devices, toutes les 2 secondes). MAME et Select + Start tenus les lisent déjà, comme les manettes
+    Bluetooth. Le pavé tactile d'une manette Sony n'est plus pris pour l'écran tactile du dock.
+  * mydock-dock doctor : la règle d'envoi de jeux, et le bus (USB ou Bluetooth) de chaque manette vue par le noyau.
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 13 Nov 2026 16:00:00 +0000
+
 mydock (1.7.0) unstable; urgency=medium
 
   * Retrogame : les jeux d'arcade de MAME sur l'écran du dock, joués à la manette Bluetooth. Une troisième entrée du

@@ -1,10 +1,16 @@
 """L'envoi des jeux depuis le navigateur du PC : la page `/jeux` du portail, protégée par un code affiché sur le dock.
 
 Le portail est la seule porte du Pi vers le réseau local, et jusqu'ici il ne faisait rien d'écrit. Envoyer des ROMs, c'est
-**écrire des fichiers sur le Pi** depuis le réseau : il faut donc la même preuve que pour associer un PC — être devant le
-dock. Sur l'écran, « Envoyer des jeux » ouvre une session et affiche un code de huit caractères et l'adresse de la page ;
-sur le PC, la page demande ce code, puis accepte des fichiers. La session dure un quart d'heure, se ferme d'elle-même
-après cinq codes faux, et ne sert qu'à ça.
+**écrire des fichiers sur le Pi** depuis le réseau. Deux façons d'y être autorisé :
+
+  * **le PC associé au dock** (celui dont l'adresse IP est enregistrée à l'association : il a déjà prouvé qu'il était devant le
+    dock) envoie **sans rien saisir** : la page `/jeux` s'ouvre sur le choix des fichiers (réglable : Réglages → Retrogame) ;
+  * **tout autre appareil** doit être devant le dock : sur l'écran, « Envoyer des jeux » ouvre une session et affiche un code
+    de huit caractères ; la page le demande, puis accepte des fichiers. La session dure un quart d'heure et se ferme d'elle-même
+    après cinq codes faux.
+
+Dans les deux cas, ce qu'on peut écrire est borné de la même façon (voir plus bas), et la session du PC associé a ses propres
+plafonds (15 minutes, 3 Go, 300 fichiers).
 
 Ce que la page peut écrire est très borné :
 
@@ -70,7 +76,7 @@ class UploadRefused(Exception):
 
 @dataclass
 class _Session:
-    code: str
+    code: str | None  # None : la session du PC associé, qui n'a pas de code
     expires_at: float
     expires_ms: int
     wrong: int = 0
@@ -95,6 +101,7 @@ class UploadSessions:
         self._on_change, self._clock, self._wall = on_change, clock, wall
         self._seconds, self._max_wrong, self._choose = session_seconds, max_wrong, choose
         self._session: _Session | None = None
+        self._trusted: dict[str, _Session] = {}  # la session du PC associé, par adresse (sans code)
         self._hits: dict[str, deque[float]] = {}
         self.last: dict[str, Any] | None = None
 
@@ -133,7 +140,7 @@ class UploadSessions:
             return {"open": False, "last": self.last}
         return {
             "open": True,
-            "code": format_code(session.code),
+            "code": format_code(session.code or ""),
             "expires_at": session.expires_ms,
             "files": session.files,
             "wrong_left": self._max_wrong - session.wrong,
@@ -160,8 +167,37 @@ class UploadSessions:
             ]:
                 del self._hits[other]
 
+    def trusted_session(self, peer: str) -> tuple[str, int]:
+        """Le jeton d'envoi du PC associé (`peer`) : sans code. L'appelant a vérifié que `peer` est bien ce PC.
+
+        Renvoie (jeton, secondes restantes). La session de ce PC se réutilise tant qu'elle dure : recharger la page ne
+        remet pas à zéro les plafonds de fichiers et d'octets.
+        """
+        self._throttle(peer)
+        now = self._clock()
+        for gone in [p for p, s in self._trusted.items() if now >= s.expires_at]:
+            del self._trusted[gone]
+        session = self._trusted.get(peer)
+        if session is None:
+            session = self._trusted[peer] = _Session(
+                code=None,
+                expires_at=now + self._seconds,
+                expires_ms=int((self._wall() + self._seconds) * 1000),
+            )
+            while len(self._trusted) > MAX_TOKENS:
+                del self._trusted[next(iter(self._trusted))]
+        token = secrets.token_urlsafe(24)
+        session.tokens[token] = peer
+        while len(session.tokens) > MAX_TOKENS:
+            del session.tokens[next(iter(session.tokens))]
+        return token, max(0, int(session.expires_at - now))
+
+    def forget_trusted(self) -> None:
+        """Le PC associé n'a plus ce droit (réglage changé, autre PC associé) : ses jetons ne valent plus rien."""
+        self._trusted.clear()
+
     def login(self, peer: str, presented: object) -> str:
-        """Le code est bon : un jeton pour les envois qui suivent (lié à l'adresse du PC). Sinon `UploadRefused`."""
+        """Le code de l'écran est bon : un jeton pour les envois qui suivent (lié à l'adresse du PC). Sinon `UploadRefused`."""
         self._throttle(peer)
         if not self.is_open():
             raise UploadRefused(
@@ -172,6 +208,7 @@ class UploadSessions:
             )
         session = self._session
         assert session is not None
+        assert session.code is not None
         candidate = normalize_code(presented)
         good = hmac.compare_digest((candidate or "-" * CODE_LENGTH).encode(), session.code.encode())
         if good and candidate is not None:
@@ -192,25 +229,36 @@ class UploadSessions:
         self._on_change()
         raise UploadRefused("bad_code", "Code incorrect.", status=403)
 
-    def authorize(self, peer: str, token: object) -> None:
-        """Le jeton donné à ce PC par `login` : sinon `UploadRefused`."""
-        session = self._session if self.is_open() else None
-        if session is None:
+    def _live(self) -> list[_Session]:
+        """Les sessions en cours : celle de l'écran (si ouverte) et celle du PC associé (si elle dure encore)."""
+        now = self._clock()
+        live = [s for s in self._trusted.values() if now < s.expires_at]
+        if self.is_open() and self._session is not None:
+            live.append(self._session)
+        return live
+
+    def authorize(self, peer: str, token: object) -> _Session:
+        """Le jeton donné à ce PC (par le code de l'écran, ou parce qu'il est le PC associé) : sa session, sinon `UploadRefused`."""
+        live = self._live()
+        if not live:
             raise UploadRefused(
                 "not_open", "La session d'envoi est terminée : rouvre-la sur le dock.", status=409
             )
-        known = next(
-            (t for t in session.tokens if isinstance(token, str) and hmac.compare_digest(t, token)),
-            None,
-        )
-        if known is None or session.tokens[known] != peer:
-            raise UploadRefused("unauthorized", "Code à saisir de nouveau.", status=401)
+        for session in live:
+            known = next(
+                (
+                    t
+                    for t in session.tokens
+                    if isinstance(token, str) and hmac.compare_digest(t, token)
+                ),
+                None,
+            )
+            if known is not None and session.tokens[known] == peer:
+                return session
+        raise UploadRefused("unauthorized", "Code à saisir de nouveau.", status=401)
 
-    def reserve(self, size: int) -> None:
+    def reserve(self, session: _Session, size: int) -> None:
         """Compte un fichier de plus dans la session (ou refuse : trop de fichiers, trop d'octets)."""
-        session = self._session
-        if session is None:
-            raise UploadRefused("not_open", "La session d'envoi est terminée.", status=409)
         if session.files >= MAX_FILES:
             raise UploadRefused(
                 "too_many_files", f"{MAX_FILES} fichiers au plus par session d'envoi.", status=429
@@ -220,12 +268,11 @@ class UploadSessions:
                 "session_full", "Cette session d'envoi a atteint 3 Go : rouvre-en une.", status=413
             )
 
-    def done(self, size: int) -> None:
-        session = self._session
-        if session is not None:
-            session.files += 1
-            session.total += size
-            self._on_change()
+    def done(self, session: _Session, size: int) -> None:
+        session.files += 1
+        session.total += size
+        if session is self._session:
+            self._on_change()  # l'écran du dock montre « N jeux reçus »
 
 
 # --- l'écriture d'un fichier ---------------------------------------------------------------------------------------------
@@ -383,11 +430,20 @@ SCRIPT = """
   var msg=$('msg'),list=$('list');
   function say(t,c){msg.textContent=t;msg.className='msg '+(c||'')}
   function fmt(n){return n<1048576?Math.max(1,Math.round(n/1024))+' Ko':(n/1048576).toFixed(1).replace('.',',')+' Mo'}
+  function showLogin(){$('probe').hidden=true;$('send-card').hidden=true;$('login-card').hidden=false}
+  function showSend(note){$('probe').hidden=true;$('login-card').hidden=true;$('send-card').hidden=false;$('note').textContent=note||''}
+  function probe(){
+    fetch('/api/retro/me',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(function(r){return r.json()}).then(function(d){
+        if(d.ok&&d.trusted){token=d.token;showSend('Ce PC est celui qui est associé au dock : aucun code à saisir.')}
+        else{token=null;showLogin()}
+      }).catch(function(){$('probe').hidden=true;say('Le dock ne répond pas.','ko')})
+  }
   $('login').addEventListener('submit',function(e){
     e.preventDefault();
     fetch('/api/retro/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('code').value})})
       .then(function(r){return r.json()}).then(function(d){
-        if(d.ok){token=d.token;$('login-card').hidden=true;$('send-card').hidden=false;say('')}
+        if(d.ok){token=d.token;showSend('');say('')}
         else{say(d.message||'Code refusé.','ko')}
       }).catch(function(){say('Le dock ne répond pas.','ko')})
   });
@@ -406,7 +462,7 @@ SCRIPT = """
       var d={};try{d=JSON.parse(xhr.responseText)}catch(e){}
       if(xhr.status===200&&d.ok){job.out.textContent='envoyé ✔';job.out.className='ok'}
       else{job.out.textContent=d.message||('refusé ('+xhr.status+')');job.out.className='ko'}
-      if(xhr.status===401||xhr.status===409){token=null;$('login-card').hidden=false;$('send-card').hidden=true;say(d.message||'','ko')}
+      if(xhr.status===401||xhr.status===409){token=null;say(d.message||'','ko');probe()}
       busy=false;next()
     };
     xhr.onerror=function(){job.out.textContent='envoi interrompu : le dock n’a pas répondu (fichier refusé ?)';job.out.className='ko';busy=false;next()};
@@ -427,6 +483,7 @@ SCRIPT = """
   drop.addEventListener('dragleave',function(){drop.className='drop'});
   drop.addEventListener('drop',function(e){e.preventDefault();drop.className='drop';add(e.dataTransfer.files)});
   $('pick').addEventListener('change',function(e){add(e.target.files);e.target.value=''});
+  probe();
 })();
 """
 
@@ -454,14 +511,17 @@ PAGE = """<!doctype html>
 <main>
 <h1>Retrogame</h1>
 <p class="sub">Envoie des jeux d'arcade (MAME) au dock <b>{hostname}</b>.</p>
-<section id="login-card" class="card">
+<section id="probe" class="card"><p class="dim">Connexion au dock…</p></section>
+<section id="login-card" class="card" hidden>
 <form id="login">
-<p>Sur l'écran du dock : <b>Divertissement → Retrogame → Envoyer des jeux</b>. Recopie le code affiché.</p>
+<p>Ce PC n'est pas celui qui est associé au dock : il faut être devant le dock.
+Sur son écran : <b>Divertissement → Retrogame → Envoyer des jeux</b>. Recopie le code affiché.</p>
 <input id="code" type="text" inputmode="text" autocomplete="off" maxlength="12" placeholder="XXXX-XXXX" aria-label="Code affiché sur le dock">
 <br><button class="btn" type="submit">Continuer</button>
 </form>
 </section>
 <section id="send-card" class="card" hidden>
+<p id="note" class="dim"></p>
 <p>Dépose des fichiers <b>.zip</b> ou <b>.7z</b>, nommés comme MAME les appelle (<code>pacman.zip</code>, <code>galaga.zip</code>…).</p>
 <div id="drop" class="drop">Glisse les fichiers ici<br>ou<br>
 <label class="btn" for="pick">Choisir des fichiers</label>

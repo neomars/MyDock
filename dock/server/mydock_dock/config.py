@@ -32,6 +32,7 @@
     [retrogame]                 # Retrogame : des jeux d'arcade MAME sur l'écran du dock
     roms_dir = "/var/lib/mydock/roms"   # vide = le dossier « roms » de l'état du dock
     button_gpio = 17            # broche GPIO (numérotation BCM) du bouton qui quitte le jeu
+    upload_without_code = true  # le PC associé envoie des jeux depuis la page /jeux sans code (les autres : le code de l'écran)
 
 Les clés d'API des fournisseurs de bourse et le mot de passe du partage vont dans ce fichier (droits 600),
 jamais dans le dépôt, jamais dans un journal, jamais à l'écran. Yahoo Finance et Binance n'en
@@ -100,6 +101,8 @@ class DockConfig:
     smb_password: str = field(default="", repr=False)  # un secret : jamais dans un affichage
     roms_dir: str = ""  # vide : le dossier « roms » de l'état du dock
     button_gpio: int = DEFAULT_BUTTON_GPIO
+    #: Le PC associé (reconnu à son adresse IP) envoie des jeux sans le code de l'écran ; un autre appareil le recopie.
+    upload_without_code: bool = True
     demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
     demo_retro: bool = False  # idem : de faux jeux, de fausses manettes (essais et captures)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -197,6 +200,7 @@ class DockConfig:
             smb_password=smb_password,
             roms_dir=roms_dir,
             button_gpio=button_gpio,
+            upload_without_code=bool(retro.get("upload_without_code", True)),
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:
@@ -240,6 +244,7 @@ class DockConfig:
         media["smb_password"] = self.smb_password
         retro["roms_dir"] = self.roms_dir
         retro["button_gpio"] = self.button_gpio
+        retro["upload_without_code"] = self.upload_without_code
         paths["state_dir"] = str(self.state_dir)
         if self.web_dir is not None:
             paths["web_dir"] = str(self.web_dir)
@@ -311,11 +316,21 @@ class DockConfig:
         )
         self.save()
 
-    def set_retrogame(self, *, roms_dir: object = None, button_gpio: object = None) -> None:
-        """Retrogame : le dossier des ROMs et la broche du bouton (validés avant d'être gardés ; None ne change rien)."""
+    def set_retrogame(
+        self,
+        *,
+        roms_dir: object = None,
+        button_gpio: object = None,
+        upload_without_code: object = None,
+    ) -> None:
+        """Retrogame : le dossier des ROMs, la broche du bouton, l'envoi sans code du PC associé (validés avant d'être gardés ; None ne change rien)."""
         folder = clean_roms_dir(roms_dir) if roms_dir is not None else self.roms_dir
         pin = clean_gpio(button_gpio) if button_gpio is not None else self.button_gpio
+        if upload_without_code is not None and not isinstance(upload_without_code, bool):
+            raise ValidationFailure("Le choix « envoi sans code » doit être vrai ou faux.")
         self.roms_dir, self.button_gpio = folder, pin
+        if upload_without_code is not None:
+            self.upload_without_code = upload_without_code
         self.save()
 
 

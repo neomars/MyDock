@@ -808,6 +808,11 @@ def _pads_snapshot() -> dict[str, Any] | None:
         return None
 
 
+def _bus_name(bus: int) -> str:
+    """Par où une manette est branchée, d'après `/proc/bus/input/devices` : USB (filaire) ou Bluetooth."""
+    return {inputs.BUS_USB: "USB", inputs.BUS_BLUETOOTH: "Bluetooth"}.get(bus, "autre bus")
+
+
 def _gpiochips() -> list[str]:
     return sorted(glob.glob("/dev/gpiochip*"))
 
@@ -879,6 +884,22 @@ def check_retrogame(
             report.add(
                 INFO,
                 "Aucun jeu dans ce dossier : copie des .zip (par SSH, ou « Envoyer des jeux » depuis l'écran)",
+            )
+        if config.upload_without_code:
+            who = (
+                f"le PC associé ({config.agent_host})"
+                if config.agent_host
+                else "le PC associé (aucun pour l'instant)"
+            )
+            report.add(
+                INFO,
+                f"Envoi de jeux depuis le navigateur : sans code pour {who}, avec le code de l'écran pour tout autre appareil "
+                "(page /jeux du portail)",
+            )
+        else:
+            report.add(
+                INFO,
+                "Envoi de jeux depuis le navigateur : le code de l'écran est exigé pour tous (Réglages → Retrogame)",
             )
         blocked = _roms_traversable(folder)
         if blocked:
@@ -975,12 +996,14 @@ def check_retrogame(
     if gamepads:
         report.add(
             OK,
-            "Manettes vues par le noyau : " + ", ".join(f"{d.name} ({d.path})" for d in gamepads),
+            "Manettes vues par le noyau : "
+            + ", ".join(f"{d.name} ({d.path}, {_bus_name(d.bus)})" for d in gamepads),
         )
     else:
         report.add(
             INFO,
-            "Aucune manette vue par le noyau pour l'instant (elles apparaissent une fois connectées)",
+            "Aucune manette vue par le noyau pour l'instant (une manette USB apparaît dès qu'on la branche ; "
+            "une manette Bluetooth une fois connectée)",
         )
     # --- Bluetooth
     if (

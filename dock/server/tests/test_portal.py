@@ -282,6 +282,7 @@ async def test_other_methods_are_refused(dock, method):
             "/api/portal",
             "/api/pair",
             "/jeux",
+            "/api/retro/me",
             "/api/retro/login",
             "/api/retro/upload",
         ):

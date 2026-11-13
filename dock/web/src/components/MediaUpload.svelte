@@ -37,6 +37,9 @@
     <p class="addr mono" data-testid="upload-address">{address}</p>
     <p class="step codeline">2. Recopie ce code : <span class="code mono" data-testid="upload-code">{upload.code}</span></p>
     <p class="step small">3. Dépose des fichiers <strong>.zip</strong> ou <strong>.7z</strong> (ex. <span class="mono">pacman.zip</span>).</p>
+    {#if info?.upload_without_code !== false}
+      <p class="dim small" data-testid="upload-trusted-hint">Le PC associé n’a pas besoin du code : il envoie directement.</p>
+    {/if}
     <div class="foot">
       <button class="btn primary" data-testid="upload-done" onclick={onDone}>Terminé</button>
       <p class="status dim" data-testid="upload-status">
@@ -73,7 +76,7 @@
     font-size: var(--fs-small);
   }
   .addr {
-    font-size: var(--fs-large);
+    font-size: var(--fs);
     color: var(--accent);
     overflow-wrap: anywhere;
   }
@@ -87,7 +90,7 @@
     gap: 6px 16px;
   }
   .code {
-    font-size: calc(48px * var(--ts) * 0.7);
+    font-size: calc(42px * var(--ts) * 0.7);
     font-weight: 700;
     letter-spacing: 0.12em;
     color: var(--text);
