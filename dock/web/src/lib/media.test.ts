@@ -128,6 +128,11 @@ describe('la lecture en cours', () => {
     expect(nowPlayingTitle(player({ state: 'idle' }))).toBeNull()
     expect(nowPlayingTitle(null)).toBeNull()
   })
+  it('dit « En jeu » pendant une partie', () => {
+    expect(nowPlayingTitle(player({ engine: 'mame', title: 'Pac-Man' }))).toBe('En jeu : Pac-Man')
+    expect(nowPlayingTitle(player({ engine: 'mame', title: 'Pac-Man', state: 'idle' }))).toBeNull()
+    expect(nowPlayingTitle(player({ engine: 'vlc' }))).toBe('Un film')
+  })
 })
 
 describe('ce qui empêche de lire', () => {

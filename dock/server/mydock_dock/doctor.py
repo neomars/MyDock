@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import glob
+import importlib.util
 import json
 import os
 import re
@@ -21,7 +23,16 @@ from urllib.parse import urljoin, urlsplit
 
 from mydock_common.config import ConfigError
 from mydock_common.report import FAIL, INFO, OK, WARN, Report
-from mydock_dock import __version__, player_session, playerlog, screensaver
+from mydock_dock import (
+    __version__,
+    bluetooth,
+    inputs,
+    mame_playback,
+    player_session,
+    playerlog,
+    retrogame,
+    screensaver,
+)
 from mydock_dock.agent_link import (
     UNREACHABLE_ERRNOS,
     LinkFailure,
@@ -33,6 +44,7 @@ from mydock_dock.agent_link import (
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig, default_config_path
 from mydock_dock.freebox import ChannelList, FreeboxError
+from mydock_dock.gpio_button import describe_pin
 from mydock_dock.markets.diagnose import PROBES
 from mydock_dock.markets.errors import ProviderError
 from mydock_dock.markets.factory import build_providers
@@ -719,6 +731,315 @@ def check_media(
         report.add(INFO, "Partages Samba : aucun serveur (Réglages → Divertissement)")
 
 
+# --- Retrogame ---------------------------------------------------------------------------------------------------
+
+
+def mame_version(mame: str) -> str:
+    """La première ligne de `mame -version` (« 0.264 (unknown) »), ou « version inconnue »."""
+    try:
+        result = subprocess.run(
+            [mame, "-version"], capture_output=True, text=True, timeout=15, check=False,
+            env={**os.environ, "LC_ALL": "C.UTF-8"},
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return "version inconnue"
+    lines = (result.stdout or "").strip().splitlines()
+    return lines[0][:80] if lines else "version inconnue"
+
+
+def group_members(name: str) -> tuple[bool, set[str]]:
+    """(le groupe existe, ses membres) : ceux qui y sont listés et ceux dont c'est le groupe principal."""
+    try:
+        import grp
+        import pwd
+
+        group = grp.getgrnam(name)
+        members = set(group.gr_mem) | {
+            u.pw_name for u in pwd.getpwall() if u.pw_gid == group.gr_gid
+        }
+    except (ImportError, KeyError):
+        return False, set()
+    return True, members
+
+
+def kiosk_user() -> str | None:
+    """L'utilisateur qui fait tourner l'écran en mode systemd (en mode bureau, c'est celui de la session : inconnu d'ici)."""
+    try:
+        import pwd
+
+        pwd.getpwnam("mydock-kiosk")
+    except (ImportError, KeyError):
+        return None
+    return "mydock-kiosk"
+
+
+def _proc_devices() -> str:
+    try:
+        return Path("/proc/bus/input/devices").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _bluetooth_adapters() -> list[str]:
+    try:
+        return sorted(
+            p.name for p in Path("/sys/class/bluetooth").iterdir() if p.name.startswith("hci")
+        )
+    except OSError:
+        return []
+
+
+def _pads_snapshot() -> dict[str, Any] | None:
+    """Ce que BlueZ dit des manettes (None : impossible de lui parler d'ici)."""
+    from mydock_dock.bluetooth import PadsManager
+
+    async def read() -> dict[str, Any]:
+        manager = PadsManager()
+        try:
+            await asyncio.wait_for(manager.start(), 8)
+            return manager.snapshot()
+        finally:
+            with contextlib.suppress(Exception):
+                await manager.stop()
+
+    try:
+        return asyncio.run(read())
+    except Exception:
+        return None
+
+
+def _gpiochips() -> list[str]:
+    return sorted(glob.glob("/dev/gpiochip*"))
+
+
+def _libgpiod_present() -> bool:
+    return importlib.util.find_spec("gpiod") is not None
+
+
+def _roms_traversable(folder: Path) -> list[str]:
+    """Les dossiers, de la racine au dossier des jeux, qu'un autre utilisateur ne peut pas traverser (ou lire, pour le dernier)."""
+    blocked: list[str] = []
+    chain = [*reversed(folder.parents), folder]
+    for path in chain:
+        try:
+            mode = path.stat().st_mode
+        except OSError:
+            break
+        need = (
+            0o005 if path == folder else 0o001
+        )  # lire et traverser le dossier des jeux ; traverser les autres
+        if mode & need != need:
+            blocked.append(str(path))
+    return blocked
+
+
+def check_retrogame(
+    report: Report,
+    config: DockConfig,
+    *,
+    find: Callable[[], str | None] = retrogame.find_mame,
+    version: Callable[[str], str] = mame_version,
+    groups: Callable[[str], tuple[bool, set[str]]] = group_members,
+    kiosk: Callable[[], str | None] = kiosk_user,
+    devices: Callable[[], str] = _proc_devices,
+    adapters: Callable[[], list[str]] = _bluetooth_adapters,
+    pads: Callable[[], dict[str, Any] | None] = _pads_snapshot,
+    gpiochips: Callable[[], list[str]] = lambda: sorted(__import__("glob").glob("/dev/gpiochip*")),
+    libgpiod: Callable[[], bool] = lambda: (
+        __import__("importlib.util").util.find_spec("gpiod") is not None
+    ),
+    rfkill: Callable[[], bool | None] | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    journal: Callable[[], Path | None] = playerlog.existing_path,
+) -> None:
+    """Retrogame : MAME, le dossier des jeux, le bouton GPIO, les manettes Bluetooth et ce que le noyau voit de la saisie."""
+    report.section("Retrogame (jeux d'arcade, manette, bouton)")
+    # --- MAME
+    program = find()
+    if program:
+        report.add(OK, f"MAME présent ({program}, {version(program)})")
+    else:
+        report.add(WARN, "MAME est absent : Retrogame ne lancera aucun jeu (sudo apt install mame)")
+    # --- le dossier des jeux
+    folder = config.roms_path
+    if not folder.is_dir():
+        report.add(
+            WARN,
+            f"Dossier des jeux absent : {folder} (sudo /usr/lib/mydock/setup le crée ; « Envoyer des jeux » aussi)",
+        )
+    else:
+        archives = [p for p in folder.iterdir() if p.suffix.lower() in retrogame.ROM_SUFFIXES]
+        library = retrogame.GameLibrary(lambda: folder, config.retro_dir, mame=lambda: program)
+        report.add(
+            OK,
+            f"Dossier des jeux : {folder} ({len(archives)} archive(s) .zip ou .7z, "
+            f"{len(library.games())} jeu(x) que MAME a validé(s))",
+        )
+        if not archives:
+            report.add(
+                INFO,
+                "Aucun jeu dans ce dossier : copie des .zip (par SSH, ou « Envoyer des jeux » depuis l'écran)",
+            )
+        blocked = _roms_traversable(folder)
+        if blocked:
+            report.add(
+                WARN,
+                f"L'utilisateur de l'écran (MAME) ne peut pas lire les jeux : {', '.join(blocked)} "
+                "n'est pas ouvert aux autres (chmod o+x sur les dossiers, o+rx sur celui des jeux)",
+            )
+        try:
+            free = shutil.disk_usage(folder).free
+            level = OK if free > 1 << 30 else WARN
+            report.add(level, f"Place libre pour les jeux : {free / (1 << 30):.1f} Go")
+        except OSError:
+            pass
+        snaps = library.snap_dir
+        report.add(
+            INFO,
+            f"Captures d'écran des jeux : {snaps} (un fichier <nom>.png par jeu ; sans elles, une manette s'affiche)",
+        )
+    # --- le bouton physique
+    pin = describe_pin(config.button_gpio)
+    chips = gpiochips()
+    if libgpiod():
+        report.add(OK, "libgpiod (python3-libgpiod) présente : le bouton physique est lisible")
+    else:
+        report.add(
+            WARN,
+            "python3-libgpiod est absente : le bouton physique ne marchera pas (sudo apt install python3-libgpiod)",
+        )
+    if chips:
+        report.add(OK, f"Puces GPIO : {', '.join(chips)}")
+    else:
+        report.add(
+            WARN,
+            "Aucune puce GPIO (/dev/gpiochip*) : ni bouton ni diagnostic possible sur cette machine",
+        )
+    report.add(
+        INFO,
+        f"Bouton physique : {pin}, entre la broche et une masse (résistance de rappel interne)",
+    )
+    user = kiosk()
+    for group, why in (
+        ("gpio", "le bouton physique"),
+        ("input", "l'écran tactile et les manettes"),
+    ):
+        exists, members = groups(group)
+        if not exists:
+            report.add(
+                WARN, f"Le groupe {group} n'existe pas : {why} ne sera pas lisible par l'écran"
+            )
+        elif user is None:
+            report.add(
+                INFO,
+                f"Mode bureau : l'utilisateur de la session doit être dans le groupe {group} ({why}) : groups",
+            )
+        elif user in members:
+            report.add(OK, f"{user} est dans le groupe {group} ({why})")
+        else:
+            report.add(
+                WARN,
+                f"{user} n'est pas dans le groupe {group} ({why}) : sudo /usr/lib/mydock/setup --kiosk systemd",
+            )
+    log_path = journal()
+    if log_path is not None:
+        last = None
+        with contextlib.suppress(OSError):
+            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-4000:]:
+                if "bouton physique :" in line and "appui" not in line:
+                    last = line.split("bouton physique :", 1)[1].strip()
+        if last:
+            report.add(
+                OK if last.endswith("prêt.") else WARN,
+                f"Bouton physique, d'après l'assistant de l'écran : {last}",
+            )
+        else:
+            report.add(
+                INFO,
+                "L'assistant de l'écran n'a encore rien dit du bouton physique (il démarre avec l'écran)",
+            )
+    # --- ce que le noyau voit de la saisie
+    found = inputs.parse_devices(devices())
+    touch = [d for d in found if d.kind == "touch"]
+    gamepads = [d for d in found if d.kind == "pad"]
+    if touch:
+        report.add(
+            OK,
+            "Écran tactile vu par le noyau : " + ", ".join(f"{d.name} ({d.path})" for d in touch),
+        )
+    else:
+        report.add(
+            WARN,
+            "Aucun écran tactile dans /proc/bus/input/devices : un toucher ne quittera pas le jeu",
+        )
+    if gamepads:
+        report.add(
+            OK,
+            "Manettes vues par le noyau : " + ", ".join(f"{d.name} ({d.path})" for d in gamepads),
+        )
+    else:
+        report.add(
+            INFO,
+            "Aucune manette vue par le noyau pour l'instant (elles apparaissent une fois connectées)",
+        )
+    # --- Bluetooth
+    if (
+        which("bluetoothd")
+        or Path("/usr/libexec/bluetooth/bluetoothd").exists()
+        or Path("/usr/lib/bluetooth/bluetoothd").exists()
+    ):
+        report.add(OK, "BlueZ présent (bluetoothd)")
+    else:
+        report.add(WARN, "BlueZ est absent : pas de manette Bluetooth (sudo apt install bluez)")
+    hci = adapters()
+    if hci:
+        report.add(OK, f"Adaptateur Bluetooth : {', '.join(hci)}")
+    else:
+        report.add(
+            WARN,
+            "Aucun adaptateur Bluetooth (/sys/class/bluetooth) : le Pi 4 en a un intégré ; est-il activé (dtoverlay=disable-bt ?)",
+        )
+    blocked_bt = (rfkill or bluetooth.rfkill_blocked)()
+    if blocked_bt:
+        report.add(WARN, "Le Bluetooth est coupé (rfkill) : sudo rfkill unblock bluetooth")
+    exists, members = groups("bluetooth")
+    if exists and "mydock" in members:
+        report.add(OK, "Le serveur du dock (mydock) est dans le groupe bluetooth")
+    elif exists:
+        report.add(
+            WARN,
+            "mydock n'est pas dans le groupe bluetooth : il ne pourra pas associer de manette (sudo /usr/lib/mydock/setup)",
+        )
+    snapshot = pads() if hci else None
+    if snapshot is None:
+        if hci:
+            report.add(INFO, "BlueZ n'a pas répondu d'ici : les manettes ne sont pas listées")
+    elif not snapshot.get("available"):
+        report.add(WARN, f"BlueZ : {snapshot.get('reason') or 'indisponible'}")
+    else:
+        devices_seen = snapshot.get("devices", [])
+        if devices_seen:
+            rows = [
+                f"{d['name']} ({'connectée' if d['connected'] else 'hors ligne'}"
+                + (f", {d['battery']} %" if d.get("battery") is not None else "")
+                + ")"
+                for d in devices_seen
+                if d.get("paired")
+            ]
+            report.add(OK, "Manettes associées : " + (", ".join(rows) or "aucune"))
+        else:
+            report.add(INFO, "Aucune manette associée (Divertissement → Retrogame → Manettes)")
+    options = retrogame_flags()
+    if options:
+        report.add(
+            INFO, f"Options de MAME ajoutées ({mame_playback.FLAGS_FILE}) : {' '.join(options)}"
+        )
+
+
+def retrogame_flags() -> list[str]:
+    return mame_playback.read_flags()
+
+
 async def check_media_network(report: Report, config: DockConfig, *, online: bool = True) -> None:
     """Divertissement : la Freebox répond-elle (liste des chaînes, partages Samba) ?"""
     if not online:
@@ -792,6 +1113,7 @@ def run_doctor(
         check_saver(report, config)
         check_portal(report, config)
         check_media(report, config)
+        check_retrogame(report, config)
         asyncio.run(check_media_network(report, config, online=not offline))
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)

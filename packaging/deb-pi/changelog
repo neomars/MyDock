@@ -1,3 +1,28 @@
+mydock (1.7.0) unstable; urgency=medium
+
+  * Retrogame : les jeux d'arcade de MAME sur l'écran du dock, joués à la manette Bluetooth. Une troisième entrée du
+    Divertissement, à côté de Freetv et du Kiosque : la liste des jeux (nom entier, année, éditeur, capture, recherche au
+    clavier tactile), l'état de la manette en direct (nom, batterie), un jeu qui se lance en plein écran d'un toucher.
+  * Quitter : un toucher de l'écran (lu directement sur le périphérique, donc même si MAME est devant), le bouton physique
+    câblé sur un GPIO (GPIO17, broche 11, par défaut ; lu par libgpiod dans l'assistant de l'écran, donc même si le
+    navigateur est bloqué ou si le dock redémarre), ou Select + Start tenus deux secondes. Sortie en trois temps : script
+    Lua de MAME (qui écrit les meilleurs scores), fermeture de sa fenêtre, SIGKILL. Au retour : la liste des jeux, avec
+    une phrase claire si le jeu n'a pas démarré (ROM manquante ou incomplète, BIOS, MAME absent).
+  * Manettes : écran « Manettes » (associées, connectée ou non, batterie, « Oublier » avec confirmation ; « Associer une
+    manette » : 30 secondes de recherche qui ne montre que des manettes, avec la manière de les mettre en mode association).
+    Tout passe par BlueZ en D-Bus, sans appeler bluetoothctl.
+  * Envoyer des jeux depuis le PC : l'écran du dock affiche un code ; la page /jeux du portail le demande, puis reçoit des
+    .zip ou .7z (nom de jeu vérifié, archive vérifiée, écriture atomique, 400 Mo par fichier, 3 Go par session). Rien d'écrit
+    sans le code, qui s'invalide au bout de 15 minutes ou de 5 essais ratés.
+  * Réglages -> Retrogame : dossier des jeux (défaut /var/lib/mydock/roms), broche du bouton. Nouvelles options de
+    « mydock-dock init » : --roms-dir et --button-gpio. Options de MAME en plus : /etc/mydock-kiosk/mame.flags.
+  * Paquet : mame, python3-libgpiod, python3-dbus-fast et bluez recommandés ; le kiosque entre dans le groupe gpio, le
+    serveur du dock dans le groupe bluetooth ; /var/lib/mydock passe en 751 (traversable, pas listable) pour que MAME lise
+    les jeux. « apt purge » garde /var/lib/mydock/roms. « mydock-dock doctor » a une section Retrogame.
+  * Mode démonstration : « mydock-dock run --demo-retro » (faux jeux avec captures, trois fausses manettes).
+
+ -- neomars <neomars@users.noreply.github.com>  Fri, 13 Nov 2026 12:00:00 +0000
+
 mydock (1.6.6) unstable; urgency=medium
 
   * Freetv : « le stream tient quelques secondes puis il s'arrête ». Dans le journal de la 1.6.5, les deux lectures

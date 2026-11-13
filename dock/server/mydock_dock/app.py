@@ -44,6 +44,7 @@ from mydock_dock.agent_link import (
     backoff_delay,
     probe,
 )
+from mydock_dock.bluetooth import PadsError, PadsManager
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig
 from mydock_dock.freebox import ChannelList, FreeboxError
@@ -56,6 +57,8 @@ from mydock_dock.netinfo import local_address_towards, local_ipv4_addresses
 from mydock_dock.pairing import Pairing, PairingRefused
 from mydock_dock.player import HelperConn, PlayerError, PlayerHub
 from mydock_dock.portal import Portal
+from mydock_dock.retro_upload import UploadSessions
+from mydock_dock.retrogame import GameLibrary
 from mydock_dock.samba import SambaBrowser, SambaError, clean_path, clean_share, is_video, smb_url
 from mydock_dock.store import StateStore
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
@@ -144,8 +147,8 @@ class TvListParams(_Strict):
 class PlayParams(_Strict):
     """Ce qu'on peut demander de lire : une chaîne que le dock a listée, ou un fichier d'un partage. Jamais une adresse."""
 
-    kind: Literal["tv", "file"]
-    id: str | None = Field(default=None, max_length=16)
+    kind: Literal["tv", "file", "game"]
+    id: str | None = Field(default=None, max_length=24)
     hd: StrictBool | None = None
     share: str | None = Field(default=None, max_length=255)
     path: str | None = Field(default=None, max_length=1000)
@@ -168,6 +171,15 @@ class MediaSetParams(_Strict):
     smb_host: str | None = Field(default=None, max_length=253)
     smb_user: str | None = Field(default=None, max_length=64)
     smb_password: str | None = Field(default=None, max_length=128)
+
+
+class PadParams(_Strict):
+    id: str = Field(max_length=17)  # l'adresse de la manette, « AA:BB:CC:DD:EE:FF »
+
+
+class RetroSetParams(_Strict):
+    roms_dir: str | None = Field(default=None, max_length=200)
+    button_gpio: StrictInt | None = None
 
 
 class MediaBrowseParams(_Strict):
@@ -270,6 +282,29 @@ class DockServer:
             lambda: self.config.smb_password,
         )
         self.player = PlayerHub(on_change=lambda: self.push_local("player"))
+        self.player.settings = {"button_gpio": config.button_gpio}
+        self.retro: GameLibrary
+        self.pads: PadsManager
+        if (
+            config.demo_retro
+        ):  # de faux jeux et de fausses manettes : captures et essais sans matériel
+            from mydock_dock.demo_retro import DemoGameLibrary, DemoPads
+
+            self.retro = DemoGameLibrary(
+                lambda: self.config.roms_path,
+                config.retro_dir,
+                on_change=lambda: self.push_local("retro"),
+            )
+            self.pads = DemoPads(on_change=lambda: self.push_local("pads"))  # type: ignore[assignment]
+        else:
+            self.retro = GameLibrary(
+                lambda: self.config.roms_path,
+                config.retro_dir,
+                on_change=lambda: self.push_local("retro"),
+            )
+            self.pads = PadsManager(on_change=lambda: self.push_local("pads"))
+        self.uploads = UploadSessions(on_change=lambda: self.push_local("dock"))
+        self._pads_tasks: set[asyncio.Task[None]] = set()
         self.link = AgentLink(
             self._link_settings,
             on_status=self._on_link_status,
@@ -303,9 +338,26 @@ class DockServer:
         self._link_task = asyncio.create_task(self._run_link(), name="agent-link")
         self._markets_task = asyncio.create_task(self.markets.run(), name="markets")
         self.portal.start()
+        if self.retro.is_stale():
+            self.retro.refresh()
+        self._spawn_pads(self.pads.start())
         self._pairing_task = asyncio.create_task(self._run_pairing(), name="pairing")
         if not self.config.demo_markets:
             self._aerial_task = asyncio.create_task(self.aerial.run(), name="aerial")
+
+    def _spawn_pads(self, work: Any) -> None:
+        """Lance un travail sur les manettes en tâche de fond (une association dure jusqu'à 45 s) sans le perdre."""
+        task = asyncio.ensure_future(self._pads_job(work))
+        self._pads_tasks.add(task)
+        task.add_done_callback(self._pads_tasks.discard)
+
+    async def _pads_job(self, work: Any) -> None:
+        try:
+            await work
+        except PadsError as exc:
+            log.info("Manettes : %s", exc)
+        except Exception:
+            log.exception("Erreur dans une tâche sur les manettes")
 
     async def _run_link(self) -> None:
         while True:  # la liaison ne doit jamais rester morte à cause d'une erreur inattendue
@@ -327,6 +379,10 @@ class DockServer:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.portal.stop()
+        for task in tuple(self._pads_tasks):
+            task.cancel()
+        await asyncio.gather(*self._pads_tasks, return_exceptions=True)
+        await self.pads.stop()
         self.player.shutdown()
         self.markets.save()
         await self.link.close()
@@ -351,6 +407,7 @@ class DockServer:
         while True:
             try:
                 self.pairing.tick()
+                self.uploads.is_open()  # constate l'expiration d'une session d'envoi de jeux
                 if not self.is_paired and not self.pairing.is_open() and self.portal.running:
                     self.pairing.start()
             except Exception:
@@ -414,6 +471,19 @@ class DockServer:
             "smbclient": self.samba.available(),
         }
 
+    def retro_info(self) -> dict[str, Any]:
+        """Retrogame, pour les Réglages et l'écran d'envoi : où sont les ROMs, la broche du bouton, l'envoi en cours."""
+        upload = self.uploads.info()
+        if upload["open"]:
+            upload["urls"] = [f"{url}/jeux" for url in self.portal_info()["urls"]]
+        return {
+            "roms_dir": str(self.config.roms_path),
+            "roms_dir_custom": bool(self.config.roms_dir),
+            "button_gpio": self.config.button_gpio,
+            "upload": upload,
+            "portal": self.portal.running,
+        }
+
     def payload(self, topic: str) -> dict[str, Any]:
         if topic == "link":
             return self.link.status.to_dict()
@@ -434,11 +504,16 @@ class DockServer:
                 "portal": self.portal_info(),
                 "pairing": self.pairing.info(),
                 "media": self.media_info(),
+                "retro": self.retro_info(),
             }
         if topic == "ui":
             return self.store.ui
         if topic == "player":
             return self.player.snapshot()
+        if topic == "retro":
+            return self.retro.payload()
+        if topic == "pads":
+            return self.pads.snapshot()
         if topic == "markets":
             return self.markets.payload()
         raise KeyError(topic)
@@ -611,6 +686,15 @@ class DockServer:
         reg.register("dock.player.volume", self._act_player_volume, params=PlayerVolumeParams)
         reg.register("dock.player.front", self._act_player_front, params=PlayerFrontParams)
         reg.register("dock.player.dismiss", self._act_player_dismiss)
+        reg.register("dock.retro.list", self._act_retro_list)
+        reg.register("dock.retro.refresh", self._act_retro_refresh)
+        reg.register("dock.retro.set", self._act_retro_set, params=RetroSetParams)
+        reg.register("dock.retro.upload.open", self._act_retro_upload_open)
+        reg.register("dock.retro.upload.close", self._act_retro_upload_close)
+        reg.register("dock.pads.scan", self._act_pads_scan, timeout=30.0)
+        reg.register("dock.pads.stop", self._act_pads_stop)
+        reg.register("dock.pads.pair", self._act_pads_pair, params=PadParams)
+        reg.register("dock.pads.forget", self._act_pads_forget, params=PadParams, timeout=20.0)
         reg.register("dock.pairing.open", self._act_pairing_open)
         reg.register("dock.pairing.close", self._act_pairing_close)
         reg.register("dock.markets.set", self._act_markets_set, params=MarketsSetParams)
@@ -839,8 +923,92 @@ class DockServer:
         )
         return result
 
+    async def _act_retro_list(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        """L'écran Retrogame s'ouvre : si le dossier des ROMs a changé, la liste est relue en tâche de fond."""
+        stale = await asyncio.to_thread(self.retro.is_stale)
+        if stale:
+            self.retro.refresh()
+        return {"started": stale}
+
+    async def _act_retro_refresh(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        self.retro.refresh(force=True)
+        return {"started": True}
+
+    async def _act_retro_set(self, _ctx: ActionContext, params: RetroSetParams) -> dict[str, Any]:
+        patch = params.model_dump(exclude_none=True)
+        self._persist(lambda: self.config.set_retrogame(**patch))
+        self.player.settings = {"button_gpio": self.config.button_gpio}
+        self.player.send_settings()
+        media_log.info(
+            "Réglages de Retrogame changés : dossier %s, bouton GPIO%d",
+            self.config.roms_path,
+            self.config.button_gpio,
+        )
+        self.retro.refresh()
+        self.push_local("dock")
+        return self.retro_info()
+
+    async def _act_pads_scan(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        """Cherche des manettes pendant une trentaine de secondes (allume le Bluetooth si besoin)."""
+        try:
+            await self.pads.scan()
+        except PadsError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        return {"scanning": True}
+
+    async def _act_pads_stop(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
+        await self.pads.stop_scan()
+        return {"scanning": False}
+
+    async def _act_pads_pair(self, _ctx: ActionContext, params: PadParams) -> dict[str, Any]:
+        """Associe une manette trouvée : le travail continue en tâche de fond, l'écran suit le thème « pads »."""
+        try:
+            self.pads._known(params.id)  # refuse tout de suite une adresse que BlueZ n'a pas vue
+        except PadsError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        self._spawn_pads(self.pads.pair(params.id))
+        media_log.info("Association d'une manette demandée (%s)", params.id)
+        return {"started": True}
+
+    async def _act_pads_forget(self, _ctx: ActionContext, params: PadParams) -> dict[str, Any]:
+        try:
+            await self.pads.forget(params.id)
+        except PadsError as exc:
+            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
+        media_log.info("Manette oubliée (%s)", params.id)
+        return {}
+
+    async def _act_retro_upload_open(
+        self, _ctx: ActionContext, _params: NoParams
+    ) -> dict[str, Any]:
+        """Affiche le code qui ouvre la page d'envoi de jeux du portail (l'ancien code cesse de valoir)."""
+        if not self.portal.running:
+            raise ActionError(
+                "portal_down",
+                self.portal.error or "Le portail est désactivé ([portal] enabled dans dock.toml).",
+            )
+        self.uploads.start()
+        media_log.info("Envoi de jeux ouvert depuis l'écran du dock")
+        return {"open": True}
+
+    async def _act_retro_upload_close(
+        self, _ctx: ActionContext, _params: NoParams
+    ) -> dict[str, Any]:
+        self.uploads.stop("closed")
+        return {"open": False}
+
     async def _act_player_play(self, _ctx: ActionContext, params: PlayParams) -> dict[str, Any]:
         try:
+            if params.kind == "game":
+                media, extra = self._game_request(params)
+                self.player.play(media, "", extra=extra)
+                media_log.info(
+                    "Lecture %d demandée à l'assistant : jeu « %s » (%s)",
+                    self.player.job,
+                    media["title"],
+                    media["game"],
+                )
+                return {"started": media["title"]}
             if params.kind == "tv":
                 media, url, secrets = await self._tv_request(params)
             else:
@@ -857,6 +1025,27 @@ class DockServer:
             url,
         )
         return {"started": media["title"]}
+
+    def _game_request(self, params: PlayParams) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Un jeu de la liste que MAME a validée : le dock reconstruit tout, l'écran n'a envoyé qu'un identifiant."""
+        game = self.retro.find(params.id)
+        if game is None:
+            raise PlayerError("Ce jeu n'est plus dans la liste : touche « Actualiser ».")
+        if self.retro.mame is None:
+            raise PlayerError("MAME est absent du Pi : sudo apt install mame.")
+        media = {
+            "kind": "game",
+            "title": game.title,
+            "subtitle": " · ".join(part for part in (game.year, game.maker) if part),
+            "live": False,
+            "game": game.name,
+        }
+        return media, {
+            "engine": "mame",
+            "game": game.name,
+            "title": game.title,
+            "rompath": str(self.config.roms_path),
+        }
 
     async def _tv_request(self, params: PlayParams) -> tuple[dict[str, Any], str, dict[str, str]]:
         if not params.id:
@@ -1129,6 +1318,17 @@ def create_app(server: DockServer) -> FastAPI:
             raise HTTPException(status_code=404)
         return FileResponse(
             video.path, media_type=video.mime, headers={"Cache-Control": "private, max-age=600"}
+        )
+
+    @app.get("/retrogame/snap/{name}")
+    async def retro_snap(name: str) -> FileResponse:
+        """La capture d'un jeu de la liste (jamais un chemin : le nom doit être celui d'un jeu que MAME a validé)."""
+        found = await asyncio.to_thread(server.retro.snap_file, name)
+        if found is None:
+            raise HTTPException(status_code=404)
+        path, media_type = found
+        return FileResponse(
+            path, media_type=media_type, headers={"Cache-Control": "private, max-age=600"}
         )
 
     @app.websocket("/ws")

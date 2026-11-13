@@ -154,7 +154,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 1.6.6")
+    assert version.stdout.startswith("mydock-agent 1.7.0")
 
 
 @pytest.mark.slow
@@ -351,6 +351,38 @@ def test_pi_kiosk_configuration_is_readable_by_the_browser_user(pi_setup):
         if path.is_file():
             # lisible par mydock-kiosk, jamais ce qui tient le jeton (dans /etc/mydock)
             assert mode(path) == 0o644
+
+
+def test_pi_setup_prepares_retrogame(pi_setup):
+    """Le dossier des jeux est lisible par l'utilisateur de l'écran (MAME) sans ouvrir le reste de l'état du dock."""
+    prefix = pi_setup["prefix"]
+    assert mode(prefix / "var/lib/mydock") == 0o751  # traversable, jamais listable par les autres
+    assert mode(prefix / "var/lib/mydock/roms") == 0o755
+    assert mode(prefix / "etc/mydock") == 0o750  # la configuration (le jeton) reste fermée
+    flags = (prefix / "etc/mydock-kiosk/mame.flags").read_text()
+    assert flags.startswith("# Options supplémentaires de MAME")
+    assert "# -video opengl" in flags
+    assert mode(prefix / "etc/mydock-kiosk/mame.flags") == 0o644
+    assert "Retrogame" in pi_setup["first"].stdout
+
+
+def test_pi_setup_keeps_the_arcade_flags_the_user_edited(pi_setup):
+    flags = pi_setup["prefix"] / "etc/mydock-kiosk/mame.flags"
+    flags.write_text("-video opengl\n")
+    again = sh(
+        [
+            PI / "setup.sh",
+            "--prefix",
+            str(pi_setup["prefix"]),
+            "--kiosk",
+            "systemd",
+            "--force-mode",
+            "1024x600@60",
+        ],
+        env=pi_setup["env"],
+    )
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert flags.read_text() == "-video opengl\n"
 
 
 def test_pi_kiosk_unit_is_rendered(pi_setup):
@@ -699,6 +731,23 @@ def test_player_launcher_explains_a_missing_dock_program(tmp_path):
 def test_kiosk_user_can_use_the_sound_card():
     setup = (PI / "setup.sh").read_text()
     assert "usermod -aG video,render,input,audio mydock-kiosk" in setup
+
+
+def test_retrogame_groups_are_only_added_when_they_exist():
+    """gpio (le bouton) pour l'utilisateur de l'écran, bluetooth (BlueZ) pour le serveur : jamais un groupe inventé."""
+    setup = (PI / "setup.sh").read_text()
+    assert "getent group gpio" in setup
+    assert "usermod -aG gpio mydock-kiosk" in setup
+    assert "getent group bluetooth" in setup
+    assert "usermod -aG bluetooth mydock" in setup
+    assert "groupadd" not in setup
+
+
+def test_the_pi_package_recommends_what_retrogame_needs():
+    control = (ROOT / "packaging/deb-pi/control.in").read_text()
+    recommends = re.search(r"^Recommends:(.*?)^Section:", control, re.S | re.M).group(1)
+    for package in ("mame", "python3-libgpiod", "python3-dbus-fast", "bluez"):
+        assert package in recommends
 
 
 def test_put_file_only_writes_when_content_or_mode_changes(tmp_path):

@@ -78,6 +78,10 @@ class PlayerHub:
         )
         self.error: str | None = None
         self.job = 0
+        #: Le nombre d'appuis sur le bouton physique : l'écran s'en sert pour se réveiller.
+        self.button = 0
+        #: Ce que l'assistant doit savoir de la configuration du dock (la broche du bouton) : envoyé à sa connexion.
+        self.settings: dict[str, Any] = {}
         self._started_at = 0.0
         self._watchdog: asyncio.Task[None] | None = None
 
@@ -101,13 +105,19 @@ class PlayerHub:
             "title": media.get("title"),
             "subtitle": media.get("subtitle"),
             "live": bool(media.get("live")),
+            "engine": "mame" if media.get("kind") == "game" else "vlc",
+            "game": media.get("game"),
+            "button": self.button,
             "position": self.position,
             "length": self.length,
             "volume": self.volume,
             "front": self.front,
             "seekable": self.seekable,
             "error": self.error,
-            "helper": {k: helper.get(k) for k in ("vlc", "live555", "ffmpeg", "touch", "demo")}
+            "helper": {
+                k: helper.get(k)
+                for k in ("vlc", "live555", "ffmpeg", "touch", "demo", "mame", "gpio")
+            }
             if helper
             else None,
         }
@@ -124,7 +134,13 @@ class PlayerHub:
             old.close()
         if self.active:  # l'ancien assistant gardait la lecture : le nouveau ne la connaît pas
             self._fail("L'assistant de lecture a redémarré : la lecture s'est arrêtée.")
+        self.send_settings()
         self._changed()
+
+    def send_settings(self) -> None:
+        """Donne à l'assistant la configuration qu'il ne peut pas lire lui-même (il ne lit pas dock.toml)."""
+        if self.helper is not None and self.settings:
+            self.helper.send({"t": "cmd", "name": "configure", **self.settings})
 
     def detach(self, conn: HelperConn) -> None:
         if self.helper is not conn:
@@ -146,7 +162,12 @@ class PlayerHub:
                 "ffmpeg": bool(message.get("ffmpeg")),
                 "touch": bool(message.get("touch")),
                 "demo": bool(message.get("demo")),
+                "mame": bool(message.get("mame")),
+                "gpio": str(message.get("gpio") or "")[:120] or None,
             }
+            self._changed()
+        elif kind == "button":
+            self.button += 1
             self._changed()
         elif kind == "state":
             if message.get("job") != self.job:
@@ -203,21 +224,33 @@ class PlayerHub:
         return self.helper
 
     def play(
-        self, media: dict[str, Any], url: str, *, secrets: dict[str, str] | None = None
+        self,
+        media: dict[str, Any],
+        url: str,
+        *,
+        secrets: dict[str, str] | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> None:
-        """Lance `url` sur l'écran du dock. `media` : de quoi l'afficher (kind, title, subtitle, live)."""
+        """Lance `url` sur l'écran du dock. `media` : de quoi l'afficher (kind, title, subtitle, live).
+
+        `extra` : ce qui est propre au moteur (un jeu de MAME : son nom et le dossier des ROMs ; jamais une commande)."""
         helper = self._require_helper()
-        if not helper.info.get("vlc", False):
-            raise PlayerError(
-                "VLC est absent du Pi : sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output."
-            )
-        if not helper.info.get("touch", False):
-            raise PlayerError(
-                "Il manque swayidle, ou wlrctl (ou xdotool), pour revenir au dock d'un toucher : "
-                "sudo apt install swayidle wlrctl (la vidéo plein écran garderait l'écran)."
-            )
+        engine = (extra or {}).get("engine", "vlc")
+        if engine == "mame":
+            if not helper.info.get("mame", False):
+                raise PlayerError("MAME est absent du Pi : sudo apt install mame.")
+        else:
+            if not helper.info.get("vlc", False):
+                raise PlayerError(
+                    "VLC est absent du Pi : sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output."
+                )
+            if not helper.info.get("touch", False):
+                raise PlayerError(
+                    "Il manque swayidle, ou wlrctl (ou xdotool), pour revenir au dock d'un toucher : "
+                    "sudo apt install swayidle wlrctl (la vidéo plein écran garderait l'écran)."
+                )
         self.job += 1
-        self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "live")}
+        self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "live", "game")}
         self.state, self.error = "starting", None
         self.position = self.length = None
         self.seekable = True
@@ -234,6 +267,7 @@ class PlayerHub:
                 # Où est le fichier d'un partage (jamais le mot de passe : voir `secrets`) : de quoi le lire par smbclient.
                 **({"smb": media["smb"]} if isinstance(media.get("smb"), dict) else {}),
                 **(secrets or {}),
+                **(extra or {}),
             }
         )
         self._arm_watchdog(self.job)
@@ -299,7 +333,12 @@ class PlayerHub:
             )
             if self.helper is not None:
                 self.helper.send({"t": "cmd", "name": "stop", "job": job})
-            self._fail("La lecture n'a pas démarré (la chaîne ou le fichier ne répond pas).")
+            if (self.media or {}).get("kind") == "game":
+                self._fail(
+                    "Le jeu n'a pas démarré : MAME n'a pas ouvert sa fenêtre en 40 secondes."
+                )
+            else:
+                self._fail("La lecture n'a pas démarré (la chaîne ou le fichier ne répond pas).")
             self._changed()
 
     def shutdown(self) -> None:

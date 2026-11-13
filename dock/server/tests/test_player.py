@@ -356,7 +356,21 @@ async def helper(dock, **hello):
 
 
 async def command_of(ws, timeout=3.0):
-    return json.loads(await asyncio.wait_for(ws.recv(), timeout))
+    """La prochaine commande que le dock envoie à l'assistant (hors « configure », envoyé à chaque connexion)."""
+    while True:
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout))
+        if message.get("name") != "configure":
+            return message
+
+
+async def test_the_helper_is_told_the_button_pin_when_it_connects_and_when_it_changes(dock):
+    async with helper(dock) as ws:
+        first = json.loads(await asyncio.wait_for(ws.recv(), 3))
+        assert first == {"t": "cmd", "name": "configure", "button_gpio": 17}
+        async with dock.connect() as browser:
+            await call(browser, "a1", "dock.retro.set", {"button_gpio": 22})
+        again = json.loads(await asyncio.wait_for(ws.recv(), 3))
+        assert again == {"t": "cmd", "name": "configure", "button_gpio": 22}
 
 
 @pytest.fixture
@@ -403,6 +417,8 @@ async def test_the_screen_learns_when_the_helper_is_there(dock):
                 "ffmpeg": True,
                 "touch": True,
                 "demo": False,
+                "mame": False,
+                "gpio": None,
             }
         await eventually(lambda: dock.server.player.helper is None)
 
@@ -731,3 +747,130 @@ async def test_a_browse_request_that_climbs_is_refused_before_smbclient_runs(
         ack = await call(browser, "b", "dock.media.browse", params)
     assert ack["e"]["code"] in ("unavailable", "bad_params")
     assert "invalide" in ack["e"]["msg"] or ack["e"]["code"] == "bad_params"
+
+
+# --- les jeux (MAME) : le même écran, un seul occupant ---------------------------------------------------------------
+
+
+@pytest.fixture
+def arcade(dock):
+    """Une liste de jeux sans MAME : le dock les croit validés."""
+    from mydock_dock.retrogame import Game
+
+    games = [Game("pong", "Pong", "1972", "Atari", "good")]
+    dock.server.retro.games = lambda: games
+    dock.server.retro._mame = lambda: "/usr/games/mame"
+    return dock
+
+
+async def test_a_game_is_launched_by_name_and_the_screen_learns_what_runs(arcade):
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=True) as ws:
+        ack = await call(browser, "g", "dock.player.play", {"kind": "game", "id": "pong"})
+        assert ack["ok"], ack
+        assert ack["r"] == {"started": "Pong"}
+        command = await command_of(ws)
+        assert command["name"] == "play"
+        assert command["engine"] == "mame"
+        assert command["game"] == "pong"
+        assert command["title"] == "Pong"
+        assert command["rompath"] == str(dock.config.roms_path)
+        assert "url" in command
+        assert not {"smb_user", "smb_password"} & command.keys()
+        snap = dock.server.player.snapshot()
+        assert snap["engine"] == "mame"
+        assert snap["game"] == "pong"
+        assert snap["state"] == "starting"
+        assert snap["title"] == "Pong"
+        assert snap["subtitle"] == "1972 · Atari"
+        assert snap["live"] is False
+
+
+async def test_a_game_that_is_not_in_the_list_is_never_launched(arcade):
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=True) as ws:
+        for name in ("inconnu", "../../bin/sh", "PONG", "pong;rm"):
+            ack = await call(browser, "g", "dock.player.play", {"kind": "game", "id": name})
+            assert not ack["ok"], name
+        with pytest.raises(asyncio.TimeoutError):  # rien n'a été envoyé à l'assistant
+            await command_of(ws, timeout=0.3)
+
+
+async def test_a_game_needs_mame_on_the_pi(arcade):
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=False):
+        ack = await call(browser, "g", "dock.player.play", {"kind": "game", "id": "pong"})
+    assert not ack["ok"]
+    assert "MAME est absent du Pi" in ack["e"]["msg"]
+    assert "sudo apt install mame" in ack["e"]["msg"]
+
+
+async def test_a_video_does_not_need_the_touch_tools_to_play_a_game(arcade):
+    """Le jeu se quitte aussi au bouton et à la manette : swayidle n'est pas exigé, comme il l'est pour une vidéo."""
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=True, touch=False) as ws:
+        ack = await call(browser, "g", "dock.player.play", {"kind": "game", "id": "pong"})
+        assert ack["ok"], ack
+        assert (await command_of(ws))["engine"] == "mame"
+
+
+async def test_a_game_plays_then_ends_and_the_dock_goes_back_to_idle(arcade):
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=True) as ws:
+        await call(browser, "g", "dock.player.play", {"kind": "game", "id": "pong"})
+        job = (await command_of(ws))["job"]
+        await ws.send(json.dumps({"t": "state", "job": job, "state": "playing", "front": "video"}))
+        await eventually(lambda: dock.server.player.snapshot()["state"] == "playing")
+        await ws.send(json.dumps({"t": "ended", "job": job, "error": None}))
+        await eventually(lambda: dock.server.player.snapshot()["state"] == "idle")
+        snap = dock.server.player.snapshot()
+        assert snap["engine"] == "vlc"
+        assert snap["game"] is None
+        assert snap["error"] is None
+
+
+async def test_a_game_that_cannot_start_leaves_an_error_for_the_screen(arcade):
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=True) as ws:
+        await call(browser, "g", "dock.player.play", {"kind": "game", "id": "pong"})
+        job = (await command_of(ws))["job"]
+        message = "Le jeu « Pong » est incomplet : MAME ne trouve pas toutes ses ROMs."
+        await ws.send(json.dumps({"t": "ended", "job": job, "error": message}))
+        await eventually(lambda: dock.server.player.snapshot()["state"] == "error")
+        snap = dock.server.player.snapshot()
+        assert snap["error"] == message
+        assert (
+            snap["engine"] == "mame"
+        )  # l'écran sait que c'est un jeu : il revient à la liste des jeux
+
+
+async def test_the_button_is_counted_so_the_screen_can_wake_up(arcade):
+    dock = arcade
+    async with helper(dock, mame=True) as ws:
+        before = dock.server.player.snapshot()["button"]
+        await ws.send(json.dumps({"t": "button"}))
+        await eventually(lambda: dock.server.player.snapshot()["button"] == before + 1)
+        await ws.send(json.dumps({"t": "button"}))
+        await eventually(lambda: dock.server.player.snapshot()["button"] == before + 2)
+
+
+async def test_the_helper_describes_its_button_and_mame(dock):
+    async with helper(dock, mame=True, gpio="GPIO17 (broche 11) : prêt."):
+        info = dock.server.player.snapshot()["helper"]
+        assert info["mame"] is True
+        assert info["gpio"] == "GPIO17 (broche 11) : prêt."
+    async with helper(dock, mame="oui", gpio="x" * 500):
+        assert (
+            len(dock.server.player.snapshot()["helper"]["gpio"]) == 120
+        )  # borné : l'assistant n'est pas cru sur parole
+
+
+async def test_a_game_stuck_before_its_window_is_stopped_by_the_watchdog(arcade, monkeypatch):
+    monkeypatch.setattr(player_module, "START_TIMEOUT", 0.3)
+    dock = arcade
+    async with dock.connect() as browser, helper(dock, mame=True) as ws:
+        await call(browser, "g", "dock.player.play", {"kind": "game", "id": "pong"})
+        await command_of(ws)
+        await eventually(lambda: dock.server.player.snapshot()["state"] == "error", timeout=3)
+        assert "Le jeu n'a pas démarré" in dock.server.player.snapshot()["error"]
+        assert (await command_of(ws))["name"] == "stop"  # l'assistant est prié d'arrêter MAME

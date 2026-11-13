@@ -1,0 +1,1 @@
+import{Sn as e,vn as t,xn as n}from"./index-BGAyGJFD.js";var r={name:`minus`,size:24,node:[[`path`,{d:`M5 12h14`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=n(o,i);t(a,e(()=>s,{get icon(){return r}}))}export{a as t};

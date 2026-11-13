@@ -224,6 +224,7 @@ class Stack:
                 "--port",
                 str(self.args.dock_port),
                 "--demo-markets",  # des cotations calculées : aucun accès à Internet
+                "--demo-retro",  # de faux jeux et de fausses manettes : ni MAME ni Bluetooth
             ],
             env=env,
             stdout=subprocess.DEVNULL,
@@ -232,11 +233,16 @@ class Stack:
 
     def start_player(self) -> None:
         """L'assistant de lecture de l'écran, en mode démonstration : une lecture simulée, sans VLC."""
+        # Le bouton physique et le toucher de l'écran d'un jeu sont, en démo, deux fichiers que les essais créent dans ce
+        # dossier (mydock-demo-button, mydock-demo-touch) : voir player_session.py.
+        run_dir = Path(self.args.state_dir or self.tmp / "state") / "run"
+        run_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.player = subprocess.Popen(
             [
                 sys.executable, "-m", "mydock_dock", "player-session", "--demo",
                 "--url", f"ws://127.0.0.1:{self.args.dock_port}/ws/player",
             ],
+            env={**os.environ, "XDG_RUNTIME_DIR": str(run_dir)},
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
         )  # fmt: skip

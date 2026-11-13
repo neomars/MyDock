@@ -777,6 +777,9 @@ def fast(monkeypatch):
 
 
 def session(fakes, **kw):
+    kw.setdefault(
+        "mame", ""
+    )  # ni le MAME de cette machine ni son GPIO ne regardent les essais de VLC
     s = Session(
         "ws://unused",
         vlc=fakes.vlc,
@@ -820,6 +823,8 @@ async def test_hello_says_what_the_screen_can_do(fakes):
         "smbclient": True,
         "touch": True,
         "demo": False,
+        "mame": False,
+        "gpio": None,
     }
     s.touch = type("T", (), {"available": False})()
     assert s.hello()["touch"] is False  # sans swayidle, pas de vidéo plein écran

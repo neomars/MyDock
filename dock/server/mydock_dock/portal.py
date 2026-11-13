@@ -14,6 +14,9 @@ l'interface, jamais le WebSocket, jamais la configuration, et n'a rien d'autre �
     GET  /clients/<fichier>      un paquet de la liste (jamais un chemin construit à partir de l'adresse)
     GET  /api/portal             l'état public : version, PC associé ou non, paquets proposés
     POST /api/pair               l'association par code (limitée, voir pairing.py)
+    GET  /jeux                   la page d'envoi de jeux d'arcade (Retrogame), protégée par un code de l'écran
+    POST /api/retro/login        le code de l'écran du dock, contre un jeton d'envoi (voir retro_upload.py)
+    POST /api/retro/upload       un jeu (.zip ou .7z) : écrit dans le dossier des ROMs, après le contrôle du nom et de l'archive
 
 Tout le reste répond 404. Aucune page n'affiche un en-tête de la requête (le nom du Pi et ses
 adresses viennent du Pi lui-même), la politique de sécurité du contenu n'autorise que le script et
@@ -44,11 +47,21 @@ from mydock_dock import __version__
 from mydock_dock.clients import DEB_RE, Client
 from mydock_dock.netinfo import is_lan_candidate, local_address_towards, local_ipv4_addresses
 from mydock_dock.pairing import PairingRefused
+from mydock_dock.retro_upload import (
+    MAX_CONCURRENT,
+    UPLOAD_CSP,
+    UploadRefused,
+    save_rom,
+)
+from mydock_dock.retro_upload import (
+    render_page as render_upload_page,
+)
 
 if TYPE_CHECKING:
     from mydock_dock.app import DockServer
 
 log = logging.getLogger(__name__)
+media_log = logging.getLogger("mydock_dock.media")  # dock.log
 
 MAX_BODY_BYTES = 4096
 MAX_NAME_LENGTH = 60
@@ -263,6 +276,17 @@ async def _read_limited(request: Request) -> bytes | None:
     return body
 
 
+async def _discard(request: Request, limit: int = 262_144, seconds: float = 2.0) -> None:
+    """Lit et jette le début du corps (256 Ko au plus, 2 s au plus) d'une demande qu'on refuse."""
+    seen = 0
+    with contextlib.suppress(Exception):
+        async with asyncio.timeout(seconds):
+            async for chunk in request.stream():
+                seen += len(chunk)
+                if seen > limit:
+                    break
+
+
 def clean_name(value: object) -> str:
     """Le nom que le PC se donne : du texte affichable, de longueur raisonnable."""
     text = value if isinstance(value, str) else ""
@@ -362,6 +386,69 @@ def create_portal_app(server: DockServer) -> FastAPI:
             log.warning("Association impossible pour %s : %s", peer, refusal.code)
             return _error(refusal.status, refusal.code, refusal.message, **refusal.extra)
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    # --- Retrogame : envoyer des jeux depuis le navigateur du PC -------------------------------------
+
+    uploading = asyncio.Semaphore(MAX_CONCURRENT)
+
+    @app.api_route("/jeux", methods=["GET", "HEAD"])
+    async def retro_page() -> Response:
+        return HTMLResponse(
+            render_upload_page(socket.gethostname()),
+            headers={"Cache-Control": "no-store", "Content-Security-Policy": UPLOAD_CSP},
+        )
+
+    @app.post("/api/retro/login")
+    async def retro_login(request: Request) -> JSONResponse:
+        peer = request.client.host if request.client else "?"
+        if not request.headers.get("content-type", "").lower().startswith("application/json"):
+            return _error(415, "bad_request", "La demande doit être du JSON.")
+        raw = await _read_limited(request)
+        if raw is None:
+            return _error(413, "too_large", "Demande trop volumineuse.")
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            return _error(400, "bad_request", "Demande illisible.")
+        try:
+            token = server.uploads.login(peer, data.get("code"))
+        except UploadRefused as refusal:
+            log.warning("Envoi de jeux refusé pour %s : %s", peer, refusal.code)
+            return _error(refusal.status, refusal.code, refusal.message)
+        return JSONResponse({"ok": True, "token": token}, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/retro/upload")
+    async def retro_upload(request: Request) -> JSONResponse:
+        peer = request.client.host if request.client else "?"
+        name = request.query_params.get("name")
+        declared = request.headers.get("content-length")
+        size = int(declared) if declared and declared.isdigit() else None
+        try:
+            server.uploads.authorize(peer, request.headers.get("x-upload-token"))
+            if uploading.locked():
+                raise UploadRefused(
+                    "busy", "Un autre envoi est en cours : patiente un instant.", status=429
+                )
+            async with uploading:
+                server.uploads.reserve(size or 0)
+                saved = await save_rom(request.stream(), name, size, server.config.roms_path)
+        except UploadRefused as refusal:
+            media_log.warning("Envoi de jeu refusé (%s) : %s", peer, refusal.code)
+            await _discard(
+                request
+            )  # un petit corps est lu : fermer sur des octets non lus ferait perdre la réponse au navigateur
+            reply = _error(refusal.status, refusal.code, refusal.message)
+            reply.headers["Connection"] = "close"  # le reste d'un gros fichier n'est pas lu
+            return reply
+        server.uploads.done(saved.size)
+        server.retro.refresh()
+        media_log.info("Jeu reçu : %s (%d octets) depuis %s", saved.name, saved.size, peer)
+        return JSONResponse(
+            {"ok": True, "name": saved.name, "size": saved.size},
+            headers={"Cache-Control": "no-store"},
+        )
 
     return app
 
