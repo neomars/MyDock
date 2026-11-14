@@ -1,6 +1,6 @@
 # Étape l — Retrogame : les jeux d'arcade de MAME, à la manette Bluetooth
 
-Livrée le 13 novembre 2026, branche `claude/jolly-dirac-5np79y`, **version 1.7.0** (puis **1.7.1** : voir l'[addendum 1](#addendum-1--version-171--envoyer-un-jeu-depuis-la-page-du-pc-pas-depuis-le-pi-et-la-manette-filaire-usb)) (agent, dock, protocole, et les deux paquets `.deb`).
+Livrée le 13 novembre 2026, branche `claude/jolly-dirac-5np79y`, **version 1.7.0** (puis **1.7.1** : voir l'[addendum 1](#addendum-1--version-171--envoyer-un-jeu-depuis-la-page-du-pc-pas-depuis-le-pi-et-la-manette-filaire-usb)) (puis **1.7.2** : voir l'[addendum 2](#addendum-2--version-172--les-gros-jeux-et-lécran-gris-au-démarrage)) (agent, dock, protocole, et les deux paquets `.deb`).
 Les captures de ce dossier sont en **mode démo** (`mydock-dock run --demo-retro` : douze faux jeux avec de vraies images, trois fausses manettes ; l'assistant de l'écran en démonstration) en 1024×600 tactile, texte doublé. Rien n'y touche MAME ni le Bluetooth : ce qu'un conteneur ne peut pas produire est dit plus bas.
 
 > **À lire d'abord — ce que je n'ai pas pu vérifier.**
@@ -182,3 +182,47 @@ Tests ajoutés : `test_wired_pads.py` (14 : reconnaissance sur un `/proc` réali
 
 - **Le PC associé est bien reconnu** : ouvre `http://IP_DU_PI/jeux` depuis lui ; la page doit dire « Ce PC est celui qui est associé au dock : aucun code à saisir ». Si elle demande le code, l'adresse du PC vue par le Pi n'est pas celle enregistrée (PC à deux adresses, Wi-Fi et Ethernet, ou adresse qui a changé) : `mydock-dock doctor` l'indique.
 - **Une vraie manette USB** : elle doit apparaître en 2 secondes à chaque branchement, et MAME la lire. Je n'ai pu essayer que sur des listes de périphériques écrites à la main, modelées sur de vrais `/proc/bus/input/devices`.
+
+## Addendum 2 — version 1.7.2 : les gros jeux et l'écran gris au démarrage
+
+Deux problèmes vus sur ton Pi après la 1.7.1.
+
+### Les gros jeux ne s'envoyaient pas
+
+> « La restriction d'upload limite la taille des fichiers. » — `tetriskr.zip` (23 Ko), `tetrisse.zip` (21 Ko), `tetriskr_cga.zip` (157 Ko) : « envoyé ✔ » ; `tetris.zip` (3,1 Mo), `tetrisp.zip` (5,7 Mo), `tetrisp2.zip` (13,9 Mo) : « envoi interrompu : le dock n'a pas répondu (fichier refusé ?) ».
+
+**Ce que j'ai établi.** Ce n'est pas une limite de taille : le plafond par fichier est de 400 Mo, et je n'ai pas pu reproduire l'échec avec un vrai Chromium qui envoie 0,2 / 3 / 14 Mo à un dock sain (les trois arrivent). **Ce que j'ai reproduit**, en revanche, c'est le **mécanisme qui cachait la vraie raison** : quand le dock refuse un fichier avant de le lire (nom, taille, place restante), la réponse de refus part alors que le navigateur envoie encore des Mo ; le dock ne vide que 256 Ko avant de fermer, et la connexion est coupée (RST) : le navigateur ne reçoit jamais le message et affiche le texte générique. Avec un petit fichier (moins de 256 Ko), tout le corps est lu, la réponse arrive, le message s'affiche. C'est exactement la frontière que tu as observée (157 Ko passe, 3,1 Mo non). Le dock refuse un fichier de cette façon quand il ne reste pas assez de place : **il garde 500 Mo libres sur la carte**, donc un jeu n'est reçu que s'il reste 500 Mo après lui.
+
+**Ce que je ne peux pas affirmer.** La raison du refus sur ton Pi (le plus probable : la place libre de la carte, à vérifier avec `df -h /var/lib/mydock` ou la ligne « Place libre pour les jeux » de `mydock-dock doctor`, et `Envoi de jeu refusé … : <code>` dans `/var/log/mydock/dock.log`). Je ne l'ai pas vue.
+
+**Ce qui change.**
+
+- **La page demande avant d'envoyer.** Nouvelle adresse du portail, `POST /api/retro/check` (nom, taille, place ; même jeton que l'envoi ; elle n'écrit rien et ne compte pas comme un envoi). Un refus est donc une réponse normale, avec son message, y compris pour 14 Mo. La page ne l'envoie pas si le dock dit non. Le portail passe de huit à **neuf** adresses (README et docstring à jour).
+- **Si la connexion lâche quand même en cours d'envoi**, la page redemande au dock pourquoi avant de parler de réseau (« envoi interrompu avant la fin (réseau ou Wi-Fi ?) : renvoie le fichier »).
+- **Le refus de place donne les chiffres** : « Pas assez de place sur la carte du Pi : 480,0 Mo libres, il en faut 514,0 Mo (14,0 Mo pour ce jeu et 500,0 Mo que le dock garde libres). » ([17](17-page-pc-refus-place.png), réponse du dock simulée dans le navigateur pour la capture).
+- `mydock-dock doctor` dit, si la carte a moins de 1 Go de libre, **le plus gros jeu qu'on peut envoyer** ; la même ligne existait sans cette indication.
+- J'ai **gardé les 500 Mo** de réserve : c'est une protection du système (journaux, mises à jour) et je n'ai pas la preuve que c'est elle qui te bloque. Si la carte est petite et que tu veux la réduire, c'est la constante `FREE_RESERVE` de `retro_upload.py`.
+
+Tests ajoutés : 6 sur `check_upload`, 15 sur la route réelle du portail (accord, refus de place d'un fichier de 14 Mo, nom, taille, jeton, session pleine, JSON), 6 du diagnostic (place libre, écran du dock), et 3 e2e dans un vrai navigateur (un jeu de 6 Mo arrive entier ; un refus annoncé n'envoie rien ; une connexion coupée redemande la raison).
+
+### L'écran gris au démarrage
+
+> « L'écran reste gris avec le pointeur de la souris visible. » (Chromium en vie, dock sain ; après l'avoir tué et relancé, tout marche.)
+
+**Ce que je sais.** Un Chromium en vie qui n'a pas de fenêtre à l'écran : le lanceur du kiosque le démarrait une fois et ne vérifiait plus rien. **Ce que je ne sais pas** : pourquoi il reste gris au démarrage (je n'ai pas de Pi ; les pistes : fenêtre ouverte avant que le compositeur ait un écran, première initialisation graphique qui échoue). Plutôt que parier sur une cause, j'ai fait en sorte que **l'état gris se répare tout seul**, et j'ai fermé les pistes plausibles.
+
+- **Il vérifie que la page est affichée** : la fenêtre de Chromium existe (`wlrctl toplevel list`) **et** le dock voit le navigateur connecté (`/api/health` indique maintenant `browsers`, le nombre de navigateurs connectés). Sinon, **au bout d'une minute**, Chromium est arrêté et relancé ; après **trois échecs** de suite, il repart avec `--disable-gpu`. Un dock qui ne répond pas, ou un compositeur sans `wlrctl`, ne déclenchent rien (on ne tue jamais un Chromium sur un doute).
+- **Il attend que le compositeur ait un écran** (30 s au plus) avant d'ouvrir la fenêtre.
+- **Il n'y en a qu'un** : un verrou (`flock`) empêche un second lanceur. C'est ce qui s'est passé hier : lancer `kiosk-browser.sh` à la main pendant que celui du système tournait a ouvert une deuxième fenêtre sur le même profil (l'écran qui s'allume et s'éteint). Maintenant le second s'arrête de lui-même, en le disant.
+- **Avant chaque lancement**, il arrête un Chromium resté sur ce profil et efface le verrou de profil laissé par une coupure de courant (qui peut désigner un numéro de processus réutilisé depuis).
+- `mydock-dock doctor` dit « Aucun navigateur n'est connecté au dock : l'écran est gris ou vide » tant que c'est le cas.
+
+Un détail attrapé en testant : un processus fini mais pas encore « lu » par `wait` répond encore à `kill -0` ; le premier jet du lanceur aurait attendu la minute entière avant de voir un Chromium qui plante au lancement. Il lit maintenant l'état du processus.
+
+Tests ajoutés (`test_deploy.py`, avec un faux Chromium, un faux dock, un faux `wlrctl`) : 14 sur le lanceur (relance d'un Chromium gris, cinq combinaisons fenêtre/dock, aucun geste si le dock ne dit rien, un second lanceur qui n'ouvre rien, verrou de profil périmé, Chromium orphelin arrêté, attente de l'écran, repli sans accélération), un sur `/api/health`.
+
+### Ce qu'il reste à vérifier sur ton Pi
+
+- **Redémarre le Pi une fois après la mise à jour** (`sudo reboot`) : le nouveau lanceur ne remplace celui qui tourne qu'à la prochaine ouverture de session. Si l'écran est gris au démarrage, attends une minute : il doit se réparer seul ; `sudo journalctl -u mydock-kiosk -e` (Pi sans bureau) dit « Chromium n'a rien affiché… ». **Si cela se répète à chaque démarrage, envoie-moi ces lignes** : elles diront si c'est l'écran, le processeur graphique ou autre chose.
+- **Envoie un gros jeu** : s'il est refusé, la page doit maintenant en dire la raison avec les Mo libres.
+- Je n'ai pas pu essayer le lanceur sur un vrai labwc avec le vrai Chromium ; les essais s'appuient sur de faux outils. Le nom de fenêtre cherché (`chrom…`) est celui que le lecteur utilise déjà pour mettre le dock devant.

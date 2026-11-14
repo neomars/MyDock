@@ -1305,8 +1305,15 @@ def create_app(server: DockServer) -> FastAPI:
 
     @app.get("/api/health")
     async def health() -> JSONResponse:
+        # « browsers » : combien de navigateurs sont connectés à l'interface (l'écran du dock en a un). C'est ainsi que le
+        # lanceur du kiosque sait si Chromium a vraiment affiché la page, ou s'il est resté gris (voir kiosk-browser.sh).
         return JSONResponse(
-            {"ok": True, "version": __version__, "link": str(server.link.status.state)},
+            {
+                "ok": True,
+                "version": __version__,
+                "link": str(server.link.status.state),
+                "browsers": len(server.browsers),
+            },
             headers={"Cache-Control": "no-store"},
         )
 

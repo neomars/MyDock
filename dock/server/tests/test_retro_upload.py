@@ -13,7 +13,9 @@ from mydock_dock.retro_upload import (
     UPLOAD_CSP,
     UploadRefused,
     UploadSessions,
+    check_upload,
     clean_filename,
+    megabytes,
     render_page,
     save_rom,
 )
@@ -424,6 +426,39 @@ async def test_not_enough_free_space_is_refused(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+async def test_the_space_refusal_says_how_much_is_free_and_how_much_is_needed(tmp_path):
+    """« Pas assez de place » seul ne dit pas si c'est le fichier ou la carte : le message donne les chiffres."""
+    with pytest.raises(UploadRefused) as refused:
+        await check_upload("pacman.zip", 3 * 1024 * 1024, tmp_path, reserve=10**15)
+    message = refused.value.message
+    assert refused.value.code == "no_space"
+    assert "libres" in message
+    assert "3,0 Mo pour ce jeu" in message
+    assert "Mo que le dock garde libres" in message
+
+
+async def test_a_file_fits_when_the_free_space_covers_it_and_the_reserve(tmp_path):
+    assert await check_upload("Pacman.ZIP", 1024, tmp_path, reserve=0) == ("pacman", "zip")
+    assert tmp_path.is_dir()
+    assert list(tmp_path.iterdir()) == []  # vérifier n'écrit rien
+
+
+@pytest.mark.parametrize(
+    ("declared", "code", "status"),
+    [(None, "length_required", 411), (0, "length_required", 411), (2_000, "too_large", 413)],
+)
+async def test_the_check_refuses_from_the_request_alone(tmp_path, declared, code, status):
+    with pytest.raises(UploadRefused) as refused:
+        await check_upload("pacman.zip", declared, tmp_path, max_bytes=1_000, reserve=0)
+    assert (refused.value.code, refused.value.status) == (code, status)
+
+
+def test_sizes_are_written_the_french_way():
+    assert megabytes(3_250_000) == "3,1 Mo"
+    assert megabytes(500 * 1024 * 1024) == "500,0 Mo"
+    assert megabytes(-5) == "0,0 Mo"
+
+
 async def test_a_stalled_upload_is_abandoned(tmp_path, monkeypatch):
     monkeypatch.setattr(retro_upload, "CHUNK_TIMEOUT", 0.1)
 
@@ -676,7 +711,7 @@ async def test_a_refusal_closes_the_connection(dock):
 async def test_the_control_interface_has_no_upload_address(dock):
     """L'envoi n'existe que sur le portail : le port de l'interface du dock ne le propose pas."""
     async with httpx.AsyncClient(trust_env=False, base_url=dock.origin, timeout=10) as client:
-        for path in ("/jeux", "/api/retro/login", "/api/retro/upload"):
+        for path in ("/jeux", "/api/retro/login", "/api/retro/check", "/api/retro/upload"):
             for method in ("GET", "POST"):
                 reply = await client.request(method, path)
                 assert reply.status_code in (404, 405, 200), (method, path, reply.status_code)
@@ -715,6 +750,107 @@ async def test_a_big_file_streams_through_the_real_portal_in_pieces(dock):
     assert reply.json()["size"] == len(data)
     assert (dock.roms / "gros.zip").stat().st_size == len(data)
     assert [p.name for p in dock.roms.iterdir()] == ["gros.zip"]
+
+
+async def check(client, token, **body):
+    return await client.post(
+        "/api/retro/check", json=body, headers={"X-Upload-Token": token} if token else {}
+    )
+
+
+async def test_the_check_says_yes_without_any_byte_being_sent(dock):
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await check(client, token, name="Pong.zip", size=14 * 1024 * 1024)
+    assert reply.status_code == 200, reply.text
+    assert reply.json() == {"ok": True}
+    assert reply.headers["cache-control"] == "no-store"
+    assert list(dock.roms.iterdir()) == []
+    assert dock.server.uploads.info()["files"] == 0  # vérifier ne compte pas comme un envoi
+
+
+async def test_a_big_file_that_will_be_refused_is_told_why_as_a_normal_answer(dock, monkeypatch):
+    """Le cas d'origine : 14 Mo refusés faute de place. Envoyés, ils coupaient la connexion (le navigateur ne voyait
+    pas pourquoi) ; vérifiés d'abord, c'est une réponse comme une autre, avec le message."""
+    monkeypatch.setattr(retro_upload, "FREE_RESERVE", 10**15)
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await check(client, token, name="tetrisp2.zip", size=14 * 1024 * 1024)
+    assert reply.status_code == 507
+    body = reply.json()
+    assert body["error"] == "no_space"
+    assert "libres" in body["message"]
+    assert "14,0 Mo pour ce jeu" in body["message"]
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "error"),
+    [
+        ({"name": "pong.exe", "size": 100}, 400, "bad_name"),
+        ({"name": "../pong.zip", "size": 100}, 400, "bad_name"),
+        ({"name": "pong.zip"}, 411, "length_required"),
+        ({"name": "pong.zip", "size": 0}, 411, "length_required"),
+        ({"name": "pong.zip", "size": "100"}, 411, "length_required"),
+        ({"name": "pong.zip", "size": True}, 411, "length_required"),
+        ({"name": "pong.zip", "size": 500 * 1024 * 1024}, 413, "too_large"),
+        ({"name": "pong.zip", "size": 10**12}, 413, "session_full"),
+        ({"name": 5, "size": 100}, 400, "bad_name"),
+    ],
+)
+async def test_the_check_refuses_what_the_upload_would_refuse(dock, body, status, error):
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await check(client, token, **body)
+    assert (reply.status_code, reply.json()["error"]) == (status, error)
+    assert not dock.roms.exists() or list(dock.roms.iterdir()) == []
+
+
+async def test_the_check_needs_the_token_like_the_upload(dock):
+    async with web(dock) as client:
+        token = await login(client, dock)
+        assert (await check(client, None, name="pong.zip", size=100)).status_code == 401
+        assert (await check(client, "faux", name="pong.zip", size=100)).status_code == 401
+        assert (await check(client, token, name="pong.zip", size=100)).status_code == 200
+        dock.server.uploads.stop()
+        assert (await check(client, token, name="pong.zip", size=100)).status_code == 409
+
+
+async def test_the_check_knows_a_session_is_full(dock, monkeypatch):
+    monkeypatch.setattr(retro_upload, "MAX_SESSION_BYTES", 1_000)
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await check(client, token, name="pong.zip", size=2_000)
+    assert (reply.status_code, reply.json()["error"]) == (413, "session_full")
+
+
+async def test_the_check_answers_only_json_within_the_size_limit(dock):
+    async with web(dock) as client:
+        token = await login(client, dock)
+        headers = {"X-Upload-Token": token}
+        wrong_type = await client.post(
+            "/api/retro/check", content=b"{}", headers={**headers, "Content-Type": "text/plain"}
+        )
+        too_big = await client.post(
+            "/api/retro/check",
+            content=b"[" + b"1," * 5_000 + b"1]",
+            headers={**headers, "Content-Type": "application/json"},
+        )
+        garbage = await client.post(
+            "/api/retro/check",
+            content=b"pas du json",
+            headers={**headers, "Content-Type": "application/json"},
+        )
+    assert wrong_type.status_code == 415
+    assert too_big.status_code == 413
+    assert garbage.status_code == 400
+
+
+async def test_the_page_checks_before_sending_and_explains_a_cut_connection():
+    """Le script de la page : vérification d'abord, et si l'envoi lâche, on redemande pourquoi avant de parler de réseau."""
+    assert "/api/retro/check" in retro_upload.SCRIPT
+    assert retro_upload.SCRIPT.index("ask(job)") < retro_upload.SCRIPT.index("send(job)")
+    assert "xhr.onerror" in retro_upload.SCRIPT
+    assert "réseau ou Wi-Fi" in retro_upload.SCRIPT
 
 
 # --- le PC associé, serveur réel -----------------------------------------------------------------------------------------

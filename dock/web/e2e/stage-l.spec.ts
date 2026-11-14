@@ -6,6 +6,7 @@
 import type { BrowserContext, Page } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
+import zlib from 'node:zlib'
 import { expect, goHome, openPage, shot, test, typeOnKeyboard } from './fixtures'
 
 const noScroll = (page: Page) =>
@@ -26,6 +27,36 @@ async function helperReady(page: Page): Promise<void> {
 }
 
 const MINIMAL_ZIP = Buffer.from('504b0506' + '00'.repeat(18), 'hex') // une archive ZIP vide mais valide
+
+/** Une vraie archive ZIP (un seul fichier, sans compression) de la taille voulue : pour envoyer un jeu de plusieurs Mo. */
+function storedZip(entry: string, data: Buffer): Buffer {
+  const name = Buffer.from(entry)
+  const crc = zlib.crc32(data)
+  const local = Buffer.alloc(30)
+  local.writeUInt32LE(0x04034b50, 0)
+  local.writeUInt16LE(20, 4)
+  local.writeUInt32LE(crc, 14)
+  local.writeUInt32LE(data.length, 18)
+  local.writeUInt32LE(data.length, 22)
+  local.writeUInt16LE(name.length, 26)
+  const body = Buffer.concat([local, name, data])
+  const central = Buffer.alloc(46)
+  central.writeUInt32LE(0x02014b50, 0)
+  central.writeUInt16LE(20, 4)
+  central.writeUInt16LE(20, 6)
+  central.writeUInt32LE(crc, 16)
+  central.writeUInt32LE(data.length, 20)
+  central.writeUInt32LE(data.length, 24)
+  central.writeUInt16LE(name.length, 28)
+  const directory = Buffer.concat([central, name])
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(1, 8)
+  end.writeUInt16LE(1, 10)
+  end.writeUInt32LE(directory.length, 12)
+  end.writeUInt32LE(body.length, 16)
+  return Buffer.concat([body, directory, end])
+}
 
 test('Divertissement : le menu propose Freetv, Kiosque et Retrogame, sans rien qui déborde', async ({ dock }) => {
   await openPage(dock, 'media')
@@ -269,7 +300,7 @@ async function pcPage(context: BrowserContext, portal: string, path = '/jeux') {
   const page = await context.newPage()
   const problems: string[] = []
   // Chromium écrit en console chaque réponse 4xx d'une requête : les refus que ces tests provoquent exprès n'en sont pas.
-  const expected = /Failed to load resource: the server responded with a status of (400|403|415)/
+  const expected = /Failed to load resource: (the server responded with a status of (400|403|415|507)|net::ERR_(FAILED|CONNECTION_RESET))/
   page.on('console', (message) => ['error', 'warning'].includes(message.type()) && !expected.test(message.text()) && problems.push(message.text()))
   page.on('pageerror', (error) => problems.push(error.message))
   await page.goto(`${portal}${path}`)
@@ -304,6 +335,59 @@ test('Envoyer des jeux depuis le PC associé : la page du portail reçoit un jeu
   // Le jeu arrive dans la liste de l'écran, sans que personne n'ait touché au Pi.
   await openGames(dock)
   await expect(dock.getByTestId('game-pacman')).toBeVisible()
+})
+
+test('Envoyer des jeux : un gros jeu de plusieurs Mo arrive entier par la page du PC', async ({ stack, context }) => {
+  const game = storedZip('rom.bin', Buffer.alloc(6 * 1024 * 1024, 7)) // plus de 6 Mo : bien au-delà des 256 Ko qu'une réponse de refus saurait vider
+  const { page, problems } = await pcPage(context, stack.portal)
+  await expect(page.locator('#send-card')).toBeVisible()
+  await page.locator('#pick').setInputFiles({ name: 'tetrisp.zip', mimeType: 'application/zip', buffer: game })
+  await expect(page.locator('#list li')).toContainText('envoyé ✔', { timeout: 30_000 })
+  expect(fs.statSync(path.join(stack.stateDir, 'roms', 'tetrisp.zip')).size).toBe(game.length)
+  expect(problems, 'aucune erreur dans la console de la page').toEqual([])
+  await page.close()
+})
+
+test('Envoyer des jeux : un refus est annoncé avant l’envoi, avec son vrai message, et rien n’est envoyé', async ({ stack, context }) => {
+  const { page } = await pcPage(context, stack.portal)
+  await expect(page.locator('#send-card')).toBeVisible()
+  const refusal = 'Pas assez de place sur la carte du Pi : 480,0 Mo libres, il en faut 514,0 Mo (14,0 Mo pour ce jeu et 500,0 Mo que le dock garde libres).'
+  await page.route('**/api/retro/check', (route) =>
+    route.fulfill({ status: 507, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'no_space', message: refusal }) }),
+  )
+  let sent = 0
+  await page.route('**/api/retro/upload*', (route) => {
+    sent += 1
+    return route.abort()
+  })
+  await page.locator('#pick').setInputFiles({ name: 'tetrisp2.zip', mimeType: 'application/zip', buffer: storedZip('rom.bin', Buffer.alloc(2 * 1024 * 1024, 1)) })
+  await expect(page.locator('#list li')).toContainText('480,0 Mo libres')
+  await expect(page.locator('#list li span').nth(1)).toHaveClass('ko')
+  await shot(page, '17-page-pc-refus-place', 'l')
+  expect(sent, 'le fichier refusé n’est pas envoyé').toBe(0)
+  expect(fs.existsSync(path.join(stack.stateDir, 'roms', 'tetrisp2.zip'))).toBe(false)
+  await page.close()
+})
+
+test('Envoyer des jeux : si la connexion lâche en route, la page redemande au dock pourquoi avant d’accuser le réseau', async ({ stack, context }) => {
+  const { page } = await pcPage(context, stack.portal)
+  await expect(page.locator('#send-card')).toBeVisible()
+  const refusal = 'Pas assez de place sur la carte du Pi : 3,0 Mo libres, il en faut 503,0 Mo.'
+  let checks = 0
+  await page.route('**/api/retro/check', (route) => {
+    checks += 1
+    if (checks === 1) return route.continue() // avant l'envoi : tout va bien
+    return route.fulfill({ status: 507, contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'no_space', message: refusal }) })
+  })
+  await page.route('**/api/retro/upload*', (route) => route.abort('connectionreset')) // le dock coupe la connexion
+  await page.locator('#pick').setInputFiles({ name: 'tetris.zip', mimeType: 'application/zip', buffer: storedZip('rom.bin', Buffer.alloc(1024 * 1024, 1)) })
+  await expect(page.locator('#list li')).toContainText('3,0 Mo libres')
+  expect(checks).toBe(2)
+  // Et quand le dock ne voit rien d'anormal, c'est bien le réseau qu'on soupçonne.
+  await page.unroute('**/api/retro/check')
+  await page.locator('#pick').setInputFiles({ name: 'tetris2.zip', mimeType: 'application/zip', buffer: storedZip('rom.bin', Buffer.alloc(1024 * 1024, 1)) })
+  await expect(page.locator('#list li').nth(1)).toContainText('réseau ou Wi-Fi')
+  await page.close()
 })
 
 test('Envoyer des jeux : sur l’écran, le PC associé est dit n’avoir pas besoin du code', async ({ dock }) => {

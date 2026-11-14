@@ -1,3 +1,24 @@
+mydock (1.7.2) unstable; urgency=medium
+
+  * Envoi de jeux : les gros fichiers (plusieurs Mo) n'échouent plus sans explication. Quand le dock refusait un fichier
+    avant de le lire (le plus souvent faute de place), le navigateur ne voyait qu'une connexion coupée : « envoi interrompu :
+    le dock n'a pas répondu ». La page /jeux demande désormais au dock, avant chaque envoi (nouvelle adresse
+    POST /api/retro/check : nom, taille, place), si le fichier sera reçu, et affiche sa vraie réponse. Si la connexion lâche
+    quand même en cours d'envoi, elle redemande pourquoi avant d'accuser le réseau.
+  * Le refus « pas assez de place » donne les chiffres : Mo libres sur la carte, Mo nécessaires (le jeu et les 500 Mo que le
+    dock garde libres pour le système). mydock-dock doctor dit la place libre et le plus gros jeu qu'on peut envoyer.
+  * Écran gris au démarrage : le lanceur du kiosque ne laisse plus Chromium vivant sans rien afficher. Il attend que le
+    compositeur ait un écran, n'existe qu'une fois (un second lanceur lancé à la main s'arrête de lui-même), arrête un
+    Chromium resté sur le profil et efface un verrou de profil périmé (coupure de courant), puis vérifie que la page est à
+    l'écran : la fenêtre existe (wlrctl) et le dock voit le navigateur connecté. Sinon, au bout d'une minute, Chromium est
+    arrêté et relancé ; après trois échecs de suite, il repart sans accélération graphique. Après la mise à jour,
+    redémarrer le Pi une fois (sudo reboot) : le nouveau lanceur ne remplace celui qui tourne déjà qu'à la prochaine
+    ouverture de session.
+  * /api/health du dock indique le nombre de navigateurs connectés (« browsers »). mydock-dock doctor signale un écran
+    sans navigateur.
+
+ -- neomars <neomars@users.noreply.github.com>  Sat, 14 Nov 2026 12:00:00 +0000
+
 mydock (1.7.1) unstable; urgency=medium
 
   * Retrogame : envoyer un jeu depuis la page web du PC, sans toucher au Pi. Le PC associé au dock (reconnu à l'adresse IP
