@@ -21,6 +21,9 @@ Ce que la page peut écrire est très borné :
   * écrit d'abord dans un fichier provisoire du même dossier, puis renommé d'un coup : jamais un jeu à moitié écrit.
 
 Rien n'est extrait, rien n'est exécuté : MAME lit l'archive en place, et vérifie lui-même qu'elle est complète.
+
+La page envoie un jeu **par morceaux de 128 Ko** (voir `PartialUploads`), chacun repris s'il échoue : une seule requête de
+plusieurs Mo était coupée en route par le réseau de certains Pi. L'envoi d'un seul tenant (`save_rom`) reste pour les outils.
 """
 
 from __future__ import annotations
@@ -60,6 +63,9 @@ MAX_FILES = 300
 FREE_RESERVE = 500 * 1024 * 1024
 CHUNK_TIMEOUT = 30.0  # un envoi qui ne donne rien pendant ce temps est abandonné
 MAX_CONCURRENT = 2
+MAX_CHUNK_BYTES = 1024 * 1024  # un morceau d'un envoi par morceaux (la page en envoie de 128 Ko)
+PARTIAL_TTL = 600.0  # un envoi par morceaux qui ne donne plus rien pendant ce temps est abandonné (fichier effacé)
+MAX_PARTIALS = 4  # envois par morceaux en cours, tous appareils confondus
 NAME_RE = re.compile(r"^([a-z0-9_]{1,24})\.(zip|7z)$")
 ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06")
 SEVENZIP_MAGIC = b"7z\xbc\xaf\x27\x1c"
@@ -69,9 +75,14 @@ MAX_ZIP_ENTRIES = 20000
 class UploadRefused(Exception):
     """Un envoi ou une connexion refusés, avec un message affichable sur le PC."""
 
-    def __init__(self, code: str, message: str, *, status: int = 400) -> None:
+    def __init__(
+        self, code: str, message: str, *, status: int = 400, extra: dict[str, Any] | None = None
+    ) -> None:
         super().__init__(message)
         self.code, self.message, self.status = code, message, status
+        self.extra = (
+            extra or {}
+        )  # ajouté à la réponse JSON (par exemple le point où reprendre un envoi)
 
 
 @dataclass
@@ -431,6 +442,212 @@ async def save_rom(
     return Saved(name=name, size=written)
 
 
+# --- l'envoi par morceaux ------------------------------------------------------------------------------------------------
+
+
+@dataclass
+class _Partial:
+    session: _Session
+    name: str
+    extension: str
+    declared: int
+    path: Path
+    received: int = 0
+    touched: float = 0.0
+
+
+def _append(path: Path, data: bytes) -> None:
+    with path.open("ab") as handle:
+        handle.write(data)
+
+
+class PartialUploads:
+    """Les envois par morceaux en cours : un fichier provisoire par jeu, que la page remplit morceau après morceau.
+
+    Une seule requête de plusieurs Mo, sur le réseau d'un Pi, peut être coupée en route sans que personne sache pourquoi ; une
+    suite de petites requêtes (128 Ko) qui se reprennent chacune au point où l'envoi en est reste, elle, finit toujours par
+    aboutir. Chaque morceau dit où il en est (`offset`) : si la réponse d'un morceau s'est perdue, le morceau suivant reçoit
+    « ici », avec le point où reprendre, et la page repart de là. Mêmes contrôles et mêmes plafonds que l'envoi d'un seul tenant ;
+    le fichier n'existe sous son vrai nom qu'une fois entier et vérifié, et un envoi abandonné est effacé.
+    """
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        ttl: float = PARTIAL_TTL,
+        max_partials: int = MAX_PARTIALS,
+    ) -> None:
+        self._clock, self._ttl, self._max = clock, ttl, max_partials
+        self._partials: dict[tuple[int, str], _Partial] = {}
+
+    def __len__(self) -> int:
+        return len(self._partials)
+
+    def _drop(self, partial: _Partial) -> None:
+        self._partials.pop((id(partial.session), partial.name), None)
+        with contextlib.suppress(OSError):
+            partial.path.unlink()
+
+    def sweep(self) -> None:
+        """Abandonne les envois qui ne donnent plus rien (le fichier provisoire est effacé)."""
+        now = self._clock()
+        for partial in [p for p in self._partials.values() if now - p.touched > self._ttl]:
+            log.info("Envoi par morceaux abandonné : %s", partial.name)
+            self._drop(partial)
+
+    def _purge_orphans(self, roms_dir: Path) -> None:
+        """Efface les fichiers provisoires qu'aucun envoi ne remplit plus (dock redémarré en plein envoi)."""
+        active = {p.path for p in self._partials.values()}
+        horizon = time.time() - self._ttl
+        for stray in roms_dir.glob(".envoi-*.part"):
+            with contextlib.suppress(OSError):
+                if stray not in active and stray.stat().st_mtime < horizon:
+                    stray.unlink()
+
+    @staticmethod
+    async def _read(chunks: AsyncIterator[bytes], limit: int) -> bytes:
+        body = bytearray()
+        iterator = chunks.__aiter__()
+        while True:
+            try:
+                piece = await asyncio.wait_for(iterator.__anext__(), CHUNK_TIMEOUT)
+            except StopAsyncIteration:
+                return bytes(body)
+            except TimeoutError:
+                raise UploadRefused("stalled", "L'envoi s'est interrompu.", status=408) from None
+            body += piece
+            if len(body) > limit:
+                raise UploadRefused(
+                    "too_large", f"Morceau trop gros ({limit // 1024} Ko au plus).", status=413
+                )
+
+    async def write(
+        self,
+        session: _Session,
+        filename: object,
+        declared: int | None,
+        offset: int,
+        chunks: AsyncIterator[bytes],
+        roms_dir: Path,
+        *,
+        max_bytes: int | None = None,
+        reserve: int | None = None,
+        max_chunk: int | None = None,
+    ) -> tuple[Saved | None, int]:
+        """Ajoute un morceau au jeu `filename` (de `declared` octets en tout) à partir de `offset`.
+
+        Renvoie `(jeu, octets reçus)` ; le jeu n'est donné (`Saved`) qu'avec le dernier morceau. Lève `UploadRefused`, avec
+        `extra["received"]` quand le morceau ne tombe pas où l'envoi en est.
+        """
+        reserve = FREE_RESERVE if reserve is None else reserve
+        max_chunk = MAX_CHUNK_BYTES if max_chunk is None else max_chunk
+        self.sweep()
+        name, extension = clean_filename(filename)
+        key = (id(session), name)
+        partial = self._partials.get(key)
+        if offset == 0:
+            # Le début : tous les refus qui se décident d'après la demande seule, puis un fichier provisoire tout neuf.
+            await check_upload(filename, declared, roms_dir, max_bytes=max_bytes, reserve=reserve)
+            assert declared is not None
+            if partial is not None:
+                self._drop(partial)  # on recommence ce jeu
+            elif len(self._partials) >= self._max:
+                raise UploadRefused(
+                    "busy", "Trop d'envois en cours : patiente un instant.", status=429
+                )
+            await asyncio.to_thread(self._purge_orphans, roms_dir)
+            path = (
+                roms_dir / f".envoi-{secrets.token_hex(6)}.part"
+            )  # sans suffixe de ROM : MAME l'ignore
+            try:
+                await asyncio.to_thread(path.touch, 0o600, False)
+            except OSError:
+                raise UploadRefused(
+                    "not_writable",
+                    "Le dossier des ROMs n'est pas modifiable par le dock.",
+                    status=507,
+                ) from None
+            partial = self._partials[key] = _Partial(
+                session, name, extension, declared, path, 0, self._clock()
+            )
+        else:
+            if partial is None:
+                raise UploadRefused(
+                    "no_upload",
+                    "Cet envoi n'est plus en cours : renvoie le fichier depuis le début.",
+                    status=409,
+                )
+            if declared != partial.declared:
+                self._drop(partial)
+                raise UploadRefused(
+                    "bad_length", "La taille annoncée a changé : renvoie le fichier.", status=400
+                )
+            if offset != partial.received:
+                raise UploadRefused(
+                    "offset",
+                    "Ce morceau n'arrive pas où l'envoi en est : reprise.",
+                    status=409,
+                    extra={"received": partial.received},
+                )
+        partial.touched = self._clock()
+        data = await self._read(
+            chunks, max_chunk
+        )  # le morceau en entier, ou rien : jamais un demi-morceau écrit
+        if not data:
+            self._drop(partial)
+            raise UploadRefused("incomplete", "Morceau vide : renvoie le fichier.")
+        if partial.received + len(data) > partial.declared:
+            self._drop(partial)
+            raise UploadRefused("bad_length", "Le fichier est plus gros que annoncé.")
+        try:
+            free = (await asyncio.to_thread(shutil.disk_usage, roms_dir)).free
+        except OSError:
+            self._drop(partial)
+            raise UploadRefused(
+                "not_writable", "Le dossier des ROMs n'est pas modifiable par le dock.", status=507
+            ) from None
+        if (
+            free - len(data) < reserve
+        ):  # d'autres envois ont pu remplir la carte depuis le début de celui-ci
+            self._drop(partial)
+            raise UploadRefused(
+                "no_space",
+                f"Pas assez de place sur la carte du Pi : {megabytes(free)} libres, "
+                f"{megabytes(reserve)} sont gardés libres pour le système.",
+                status=507,
+            )
+        try:
+            await asyncio.to_thread(_append, partial.path, data)
+        except OSError:
+            self._drop(partial)
+            raise UploadRefused(
+                "not_writable", "Le dock n'a pas pu écrire le fichier.", status=507
+            ) from None
+        partial.received += len(data)
+        partial.touched = self._clock()
+        if partial.received < partial.declared:
+            return None, partial.received
+        # Le dernier morceau : l'archive est vérifiée, puis le fichier prend son vrai nom d'un coup.
+        try:
+            await asyncio.to_thread(_check_archive, partial.path, extension)
+            await asyncio.to_thread(os.chmod, partial.path, 0o644)
+            other = roms_dir / f"{name}.{'7z' if extension == 'zip' else 'zip'}"
+            await asyncio.to_thread(os.replace, partial.path, roms_dir / f"{name}.{extension}")
+            with contextlib.suppress(OSError):
+                await asyncio.to_thread(other.unlink)
+        except UploadRefused:
+            self._drop(partial)
+            raise
+        except OSError:
+            self._drop(partial)
+            raise UploadRefused(
+                "not_writable", "Le dock n'a pas pu écrire le fichier.", status=507
+            ) from None
+        self._partials.pop(key, None)
+        return Saved(name=name, size=partial.declared), partial.received
+
+
 # --- la page ---------------------------------------------------------------------------------------------------------------
 
 STYLE = """
@@ -504,25 +721,48 @@ SCRIPT = """
       else{refused(job,res.status,res.d);done()}
     }).catch(function(){ko(job,'le dock ne répond pas');done()})
   }
+  /* Le fichier part par morceaux de 128 Ko, chacun repris s'il échoue : une seule requête de plusieurs Mo était coupée en route
+     par le réseau de certains Pi (les petits fichiers passaient, les gros jamais). Le dock dit à chaque réponse où l'envoi en est
+     (received) : si la réponse d'un morceau s'est perdue, le morceau suivant reçoit « ici » (409) et on repart de là. */
+  var CHUNK=131072,TRIES=6;
   function send(job){
-    var xhr=new XMLHttpRequest();
-    xhr.open('POST','/api/retro/upload?name='+encodeURIComponent(job.file.name));
-    xhr.setRequestHeader('X-Upload-Token',token);
-    xhr.upload.onprogress=function(e){if(e.lengthComputable)job.out.textContent=Math.round(100*e.loaded/e.total)+' %'};
-    xhr.onload=function(){
-      var d={};try{d=JSON.parse(xhr.responseText)}catch(e){}
-      if(xhr.status===200&&d.ok){job.out.textContent='envoyé ✔';job.out.className='ok'}
-      else refused(job,xhr.status,d);
-      done()
-    };
-    xhr.onerror=function(){
-      /* La connexion a lâché : on redemande au dock pourquoi (place, session) avant de parler de réseau. */
+    var file=job.file,total=file.size,offset=0,fails=0,resumes=0,restarts=0,last=null;
+    function pct(){return Math.round(100*offset/total)+' %'}
+    function gaveUp(){
+      if(last){refused(job,last.status,last.d);done();return}
       ask(job).then(function(res){
-        if(res.status===200&&res.d.ok)ko(job,'envoi interrompu avant la fin (réseau ou Wi-Fi ?) : renvoie le fichier');
+        if(res.status===200&&res.d.ok)ko(job,'envoi interrompu à '+pct()+' (réseau ou Wi-Fi ?) : renvoie le fichier');
         else refused(job,res.status,res.d)
-      }).catch(function(){ko(job,'envoi interrompu : le dock ne répond plus')}).then(done)
-    };
-    xhr.send(job.file)
+      }).catch(function(){ko(job,'envoi interrompu à '+pct()+' : le dock ne répond plus')}).then(done)
+    }
+    function retry(){
+      if(++fails>TRIES){gaveUp();return}
+      job.out.textContent=pct()+' · nouvel essai…';
+      setTimeout(step,Math.min(500*fails,3000))
+    }
+    function step(){
+      var xhr=new XMLHttpRequest(),end=Math.min(offset+CHUNK,total);
+      xhr.open('POST','/api/retro/upload?name='+encodeURIComponent(file.name)+'&total='+total+'&offset='+offset);
+      xhr.setRequestHeader('X-Upload-Token',token);
+      xhr.timeout=60000;
+      xhr.onload=function(){
+        var d={};try{d=JSON.parse(xhr.responseText)}catch(e){}
+        if(xhr.status===200&&d.ok){
+          fails=0;last=null;offset=d.received;
+          if(d.done){job.out.textContent='envoyé ✔';job.out.className='ok';done()}
+          else{job.out.textContent=pct();step()}
+        }else if(xhr.status===409&&d.error==='offset'&&typeof d.received==='number'&&++resumes<=20){
+          offset=d.received;step()
+        }else if(xhr.status===409&&d.error==='no_upload'&&++restarts<=2){
+          offset=0;step()
+        }else if(xhr.status===429||(xhr.status>=500&&xhr.status!==507)){
+          last={status:xhr.status,d:d};retry()
+        }else{refused(job,xhr.status,d);done()}
+      };
+      xhr.onerror=xhr.ontimeout=function(){last=null;retry()};
+      xhr.send(file.slice(offset,end))
+    }
+    step()
   }
   function refuse(out,text){out.textContent=text;out.className='ko'}
   function add(files){

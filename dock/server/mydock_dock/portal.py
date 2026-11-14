@@ -18,7 +18,8 @@ l'interface, jamais le WebSocket, jamais la configuration, et n'a rien d'autre �
     POST /api/retro/me           le PC associé (reconnu à son adresse) reçoit un jeton d'envoi, sans code ; les autres : « il faut le code »
     POST /api/retro/login        le code de l'écran du dock, contre un jeton d'envoi (voir retro_upload.py)
     POST /api/retro/check        « ce fichier sera-t-il reçu ? » (nom, taille, place), avant d'en envoyer un octet
-    POST /api/retro/upload       un jeu (.zip ou .7z) : écrit dans le dossier des ROMs, après le contrôle du nom et de l'archive
+    POST /api/retro/upload       un jeu (.zip ou .7z), par morceaux de 128 Ko repris en cas de coupure (ou d'un seul tenant) : écrit dans
+                                 le dossier des ROMs, après le contrôle du nom et de l'archive
 
 Tout le reste répond 404. Aucune page n'affiche un en-tête de la requête (le nom du Pi et ses
 adresses viennent du Pi lui-même), la politique de sécurité du contenu n'autorise que le script et
@@ -36,12 +37,14 @@ import html
 import json
 import logging
 import socket
+import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mydock_common.auth import is_valid_token_format
@@ -53,6 +56,7 @@ from mydock_dock.pairing import PairingRefused
 from mydock_dock.retro_upload import (
     MAX_CONCURRENT,
     UPLOAD_CSP,
+    PartialUploads,
     UploadRefused,
     check_upload,
     save_rom,
@@ -418,6 +422,7 @@ def create_portal_app(server: DockServer) -> FastAPI:
     # --- Retrogame : envoyer des jeux depuis le navigateur du PC -------------------------------------
 
     uploading = asyncio.Semaphore(MAX_CONCURRENT)
+    partials = PartialUploads()
 
     @app.api_route("/jeux", methods=["GET", "HEAD"])
     async def retro_page() -> Response:
@@ -509,10 +514,14 @@ def create_portal_app(server: DockServer) -> FastAPI:
 
     @app.post("/api/retro/upload")
     async def retro_upload(request: Request) -> JSONResponse:
+        """Un jeu : par morceaux (la page : `offset` et `total` dans l'adresse) ou d'un seul tenant (un outil comme curl)."""
         peer = request.client.host if request.client else "?"
         name = request.query_params.get("name")
         declared = request.headers.get("content-length")
         size = int(declared) if declared and declared.isdigit() else None
+        offset_text = request.query_params.get("offset")
+        began = time.monotonic()
+        where = "d'un seul tenant" if offset_text is None else f"morceau à l'octet {offset_text}"
         try:
             session = await authorized_session(request, peer)
             if uploading.locked():
@@ -520,23 +529,60 @@ def create_portal_app(server: DockServer) -> FastAPI:
                     "busy", "Un autre envoi est en cours : patiente un instant.", status=429
                 )
             async with uploading:
-                server.uploads.reserve(session, size or 0)
-                saved = await save_rom(request.stream(), name, size, server.config.roms_path)
+                if offset_text is None:
+                    server.uploads.reserve(session, size or 0)
+                    saved = await save_rom(request.stream(), name, size, server.config.roms_path)
+                    received = saved.size
+                else:
+                    total_text = request.query_params.get("total", "")
+                    if not (offset_text.isdigit() and total_text.isdigit()):
+                        raise UploadRefused("bad_request", "Demande illisible.")
+                    offset, total = int(offset_text), int(total_text)
+                    if offset == 0:  # le début d'un jeu : il compte dans les plafonds de la session
+                        server.uploads.reserve(session, total)
+                    saved, received = await partials.write(
+                        session, name, total, offset, request.stream(), server.config.roms_path
+                    )
         except UploadRefused as refusal:
-            media_log.warning("Envoi de jeu refusé (%s) : %s", peer, refusal.code)
+            level = logging.INFO if refusal.code == "offset" else logging.WARNING
+            media_log.log(
+                level, "Envoi de jeu refusé (%s, %s, %s) : %s", peer, name, where, refusal.code
+            )
             await _discard(
                 request
             )  # un petit corps est lu : fermer sur des octets non lus ferait perdre la réponse au navigateur
-            reply = _error(refusal.status, refusal.code, refusal.message)
+            reply = _error(refusal.status, refusal.code, refusal.message, **refusal.extra)
             reply.headers["Connection"] = "close"  # le reste d'un gros fichier n'est pas lu
             return reply
+        except ClientDisconnect:
+            # Le navigateur (ou le réseau) a coupé en plein envoi : on le note, avec de quoi savoir où et quand.
+            media_log.warning(
+                "Envoi de jeu coupé par le navigateur ou le réseau (%s, %s, %s, annoncé %s) après %.1f s",
+                peer, name, where, declared or "?", time.monotonic() - began,
+            )  # fmt: skip
+            return _error(499, "client_gone", "Connexion coupée.")
+        except Exception:
+            media_log.exception("Envoi de jeu : erreur du dock (%s, %s, %s)", peer, name, where)
+            await _discard(request)
+            reply = _error(
+                500, "server_error", "Le dock a rencontré une erreur (voir son journal)."
+            )
+            reply.headers["Connection"] = "close"
+            return reply
+        if saved is None:
+            return JSONResponse(
+                {"ok": True, "received": received, "done": False},
+                headers={"Cache-Control": "no-store"},
+            )
         server.uploads.done(session, saved.size)
         server.retro.refresh()
         media_log.info("Jeu reçu : %s (%d octets) depuis %s", saved.name, saved.size, peer)
-        return JSONResponse(
-            {"ok": True, "name": saved.name, "size": saved.size},
-            headers={"Cache-Control": "no-store"},
-        )
+        answer: dict[str, Any] = {"ok": True, "name": saved.name, "size": saved.size}
+        if (
+            offset_text is not None
+        ):  # par morceaux : la page lit où l'envoi en est, et que c'est fini
+            answer.update(received=received, done=True)
+        return JSONResponse(answer, headers={"Cache-Control": "no-store"})
 
     return app
 
