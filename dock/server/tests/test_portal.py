@@ -284,6 +284,7 @@ async def test_other_methods_are_refused(dock, method):
             "/jeux",
             "/api/retro/me",
             "/api/retro/login",
+            "/api/retro/check",
             "/api/retro/upload",
         ):
             assert (await client.request(method, path)).status_code == 405, (method, path)

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os
+import threading
+from collections import namedtuple
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from mydock_common.report import Report
 from mydock_dock.config import DockConfig
-from mydock_dock.doctor import check_retrogame, group_members, mame_version
+from mydock_dock.doctor import check_retrogame, check_running, group_members, mame_version
 
 TOUCH_AND_PAD = """\
 I: Bus=0003 Vendor=222a Product=0001 Version=0110
@@ -296,3 +303,86 @@ def test_mame_version_reads_the_first_line(tmp_path):
     script.chmod(0o755)
     assert mame_version(str(script)) == "0.264 (unknown)"
     assert os.access(script, os.X_OK)
+
+
+# --- la place libre pour les envois, et l'écran du dock ---------------------------------------------------------------
+
+
+Usage = namedtuple("Usage", "total used free")
+
+
+def test_a_card_with_little_room_says_the_biggest_game_it_accepts(tmp_path, monkeypatch):
+    config = config_for(tmp_path)
+    make_roms(config, "pacman.zip")
+    monkeypatch.setattr("mydock_dock.doctor.shutil.disk_usage", lambda _p: Usage(0, 0, 700 << 20))
+    out = render(config)
+    assert "Place libre pour les jeux : 0.7 Go" in out
+    assert "le dock en garde 500 Mo libres" in out
+    assert "un jeu de 200 Mo au plus" in out
+
+
+def test_a_card_with_less_than_the_reserve_accepts_no_game(tmp_path, monkeypatch):
+    config = config_for(tmp_path)
+    make_roms(config, "pacman.zip")
+    monkeypatch.setattr("mydock_dock.doctor.shutil.disk_usage", lambda _p: Usage(0, 0, 300 << 20))
+    assert "un jeu de 0 Mo au plus" in render(config)
+
+
+def test_a_card_with_plenty_of_room_stays_quiet_about_the_reserve(tmp_path, monkeypatch):
+    config = config_for(tmp_path)
+    make_roms(config, "pacman.zip")
+    monkeypatch.setattr("mydock_dock.doctor.shutil.disk_usage", lambda _p: Usage(0, 0, 5 << 30))
+    out = render(config)
+    assert "✔ Place libre pour les jeux : 5.0 Go" in out
+    assert "en garde" not in out
+
+
+@pytest.fixture
+def health_server():
+    """Un faux dock qui répond à /api/health ce qu'on lui dit."""
+    answer = {"body": {}}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            payload = json.dumps(answer["body"]).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield SimpleNamespace(port=server.server_address[1], answer=answer)
+    server.shutdown()
+    thread.join()
+
+
+def running_report(health_server, **body) -> str:
+    health_server.answer["body"] = {"ok": True, "link": "connected", **body}
+    report = Report()
+    check_running(report, SimpleNamespace(port=health_server.port))  # type: ignore[arg-type]
+    return report.render()
+
+
+def test_a_dock_without_a_browser_is_called_a_grey_screen(health_server):
+    out = running_report(health_server, browsers=0)
+    assert "⚠ Aucun navigateur n'est connecté au dock : l'écran est gris ou vide" in out
+    assert "sudo pkill -x chromium" in out
+
+
+def test_a_dock_with_its_browser_is_green(health_server):
+    assert "✔ L'écran du dock est connecté (1 navigateur(s))" in running_report(
+        health_server, browsers=1
+    )
+
+
+def test_an_older_dock_that_does_not_count_browsers_is_not_blamed(health_server):
+    out = running_report(health_server)
+    assert "Le serveur dock répond" in out
+    assert "navigateur" not in out.split("Le serveur dock répond")[1].split("\n")[0]
+    assert "Aucun navigateur" not in out

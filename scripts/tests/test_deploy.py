@@ -154,7 +154,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 1.7.1")
+    assert version.stdout.startswith("mydock-agent 1.7.2")
 
 
 @pytest.mark.slow
@@ -606,46 +606,108 @@ def make_fake_bin(directory: Path, name: str, body: str) -> None:
     path.chmod(0o755)
 
 
-def test_kiosk_browser_launcher_builds_the_right_command_line(tmp_path):
-    fake = tmp_path / "bin"
-    fake.mkdir()
-    calls = tmp_path / "calls.log"
-    make_fake_bin(fake, "curl", "exit 0\n")  # le serveur du dock « répond » tout de suite
-    make_fake_bin(fake, "chromium", f'echo "$@" >> "{calls}"\nexit 0\n')
-    make_fake_bin(
-        fake,
-        "wlr-randr",
-        f'if [ "$#" -eq 0 ]; then echo "HDMI-A-1 \\"écran\\""; echo "  1024x600"; else echo "wlr-randr $@" >> "{calls}"; fi\n',
+def run_launcher(env: dict[str, str], seconds: float, script: Path | None = None):
+    """Lance le lanceur du kiosque, le laisse tourner `seconds` secondes, puis arrête tout son groupe de processus.
+
+    Le lanceur boucle sans fin et tient un verrou par un processus fils : on arrête le groupe entier, sinon des lanceurs
+    resteraient en vie après le test.
+    """
+    process = subprocess.Popen(
+        ["sh", str(script or PI / "kiosk-browser.sh")],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
     )
-    conf = tmp_path / "conf"
-    conf.mkdir()
-    (conf / "display.conf").write_text('MYDOCK_OUTPUT_MODE="1024x600@60"\n')
-    (conf / "chromium.flags").write_text(
+    try:
+        out, err = process.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        out, err = process.communicate()
+    return process.returncode, out, err
+
+
+class Kiosk:
+    """Un faux Pi autour du lanceur : un faux Chromium (qui note ses lancements), un faux dock (/api/health), de faux outils."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.tmp = tmp_path
+        self.bin = tmp_path / "bin"
+        self.bin.mkdir()
+        self.calls = tmp_path / "calls.log"
+        self.profile = tmp_path / "profil"
+        self.conf = tmp_path / "conf"
+        self.conf.mkdir()
+        self.windows = tmp_path / "windows.txt"
+        self.health(browsers=1)
+        self.chromium(stays=True)
+
+    def health(self, *, browsers: int | None) -> None:
+        """Ce que répond le dock : `browsers` navigateurs connectés (None : un dock qui ne le dit pas)."""
+        body = '{"ok":true,"version":"1","link":"connected"' + (
+            "" if browsers is None else f',"browsers":{browsers}'
+        )
+        make_fake_bin(self.bin, "curl", f"echo '{body}}}'\n")
+
+    def chromium(self, *, stays: bool) -> None:
+        """`stays` : Chromium reste en vie (comme un vrai) ; sinon il se ferme tout de suite."""
+        tail = "exec sleep 60\n" if stays else "exit 0\n"
+        make_fake_bin(self.bin, "chromium", f'echo "$(date +%s) $@" >> "{self.calls}"\n{tail}')
+
+    def wlrctl(self, listing: str) -> None:
+        """Les fenêtres que le compositeur annonce (une par ligne : « identifiant: titre »)."""
+        self.windows.write_text(listing)
+        make_fake_bin(self.bin, "wlrctl", f'[ "$2" = list ] && cat "{self.windows}"\nexit 0\n')
+
+    def outputs(self, text: str) -> None:
+        """Ce que dit wlr-randr : rien tant que le compositeur n'a pas d'écran."""
+        make_fake_bin(self.bin, "wlr-randr", f'echo "{text}"\n' if text else "exit 0\n")
+
+    def env(self, **extra: str) -> dict[str, str]:
+        env = {
+            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "HOME": str(self.tmp),
+            "MYDOCK_CONF_DIR": str(self.conf),
+            "MYDOCK_PROFILE": str(self.profile),
+            "MYDOCK_PORT": "8081",
+            "MYDOCK_LOCK": str(self.tmp / "kiosk.lock"),
+            "MYDOCK_OUTPUT_WAIT": "0",
+            "MYDOCK_SHOW_TIMEOUT": "2",
+            "MYDOCK_WATCH_STEP": "1",
+            "MYDOCK_RETRY_PAUSE": "1",
+        }
+        env.update(extra)
+        return env
+
+    def launches(self) -> list[str]:
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+
+@pytest.fixture
+def kiosk(tmp_path):
+    return Kiosk(tmp_path)
+
+
+def test_kiosk_browser_launcher_builds_the_right_command_line(kiosk):
+    kiosk.chromium(stays=False)  # se ferme tout de suite : le lanceur doit le relancer
+    kiosk.outputs('HDMI-A-1 \\"écran\\"')
+    make_fake_bin(
+        kiosk.bin,
+        "wlr-randr",
+        f'if [ "$#" -eq 0 ]; then echo "HDMI-A-1 \\"écran\\""; echo "  1024x600"; else echo "wlr-randr $@" >> "{kiosk.calls}"; fi\n',
+    )
+    (kiosk.conf / "display.conf").write_text('MYDOCK_OUTPUT_MODE="1024x600@60"\n')
+    (kiosk.conf / "chromium.flags").write_text(
         "# commentaire ignoré\n--use-gl=angle\n--mon-option-test\n"
     )
-    env = {
-        "PATH": f"{fake}:/usr/bin:/bin",
-        "HOME": str(tmp_path),
-        "MYDOCK_CONF_DIR": str(conf),
-        "MYDOCK_PROFILE": str(tmp_path / "profil"),
-        "MYDOCK_PORT": "8081",
-    }
-    try:
-        subprocess.run(
-            ["sh", str(PI / "kiosk-browser.sh")],
-            env=env,
-            timeout=4,
-            capture_output=True,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        pass  # normal : le lanceur boucle pour relancer Chromium
-    lines = calls.read_text().splitlines()
+    run_launcher(kiosk.env(MYDOCK_RETRY_PAUSE="2"), 5)
+    lines = kiosk.launches()
     assert lines[0] == "wlr-randr --output HDMI-A-1 --mode 1024x600@60"
     browser = lines[1]
     for expected in (
         "--kiosk http://127.0.0.1:8081/",
-        f"--user-data-dir={tmp_path / 'profil'}",
+        f"--user-data-dir={kiosk.profile}",
         "--ozone-platform=wayland",
         "--disable-pinch",
         "--overscroll-history-navigation=0",
@@ -657,7 +719,129 @@ def test_kiosk_browser_launcher_builds_the_right_command_line(tmp_path):
     assert "commentaire" not in browser
     assert len(lines) >= 3, (
         "Chromium doit être relancé quand il se ferme"
-    )  # 2 s de pause entre deux lancements
+    )  # 2 s entre deux lancements
+
+
+def test_kiosk_launcher_relaunches_a_chromium_that_stays_grey(kiosk):
+    """Le cas du Pi : Chromium vit, rien ne s'affiche (le dock ne voit aucun navigateur) : il est arrêté puis relancé."""
+    kiosk.health(browsers=0)
+    _, _, err = run_launcher(kiosk.env(), 9)
+    assert len(kiosk.launches()) >= 2
+    assert "écran gris" in err
+
+
+@pytest.mark.parametrize(
+    ("windows", "browsers", "restarted"),
+    [
+        ("chromium: MyDock", 0, True),  # la fenêtre est là mais la page n'a pas rejoint le dock
+        ("", 1, True),  # la page a rejoint le dock mais aucune fenêtre n'est affichée
+        ("chromium-browser: MyDock", 1, False),  # les deux : tout va bien
+        ("foot: terminal\nchromium: MyDock", 1, False),
+        ("foot: terminal", 1, True),  # une fenêtre, mais pas celle de Chromium
+    ],
+)
+def test_kiosk_launcher_needs_both_the_window_and_the_dock_to_see_the_page(
+    kiosk, windows, browsers, restarted
+):
+    kiosk.wlrctl(windows)
+    kiosk.health(browsers=browsers)
+    run_launcher(kiosk.env(), 7)
+    assert (len(kiosk.launches()) >= 2) is restarted
+
+
+def test_kiosk_launcher_leaves_a_chromium_whose_page_is_shown_alone(kiosk):
+    kiosk.health(browsers=1)
+    _, _, err = run_launcher(kiosk.env(), 6)
+    assert len(kiosk.launches()) == 1
+    assert "écran gris" not in err
+
+
+def test_kiosk_launcher_does_not_act_when_the_dock_cannot_say(kiosk):
+    """Un dock qui ne répond pas (ou ne dit rien du navigateur) n'est pas une raison de tuer Chromium."""
+    kiosk.health(browsers=None)
+    run_launcher(kiosk.env(), 6)
+    assert len(kiosk.launches()) == 1
+    # Le dock répond au démarrage du lanceur, puis plus du tout : le navigateur reste en place.
+    make_fake_bin(
+        kiosk.bin,
+        "curl",
+        f'n=$(cat "{kiosk.tmp}/curl-count" 2>/dev/null || echo 0)\necho $((n + 1)) > "{kiosk.tmp}/curl-count"\n[ "$n" -eq 0 ] && exit 0\nexit 22\n',
+    )
+    kiosk.calls.unlink()
+    run_launcher(kiosk.env(MYDOCK_LOCK=str(kiosk.tmp / "autre.lock")), 6)
+    assert len(kiosk.launches()) == 1
+
+
+def test_a_second_launcher_does_not_open_a_second_window(kiosk):
+    """Lancer le lanceur à la main pendant que celui du système tourne ne doit rien faire (deux Chromium sur un profil)."""
+    first = subprocess.Popen(
+        ["sh", str(PI / "kiosk-browser.sh")],
+        env=kiosk.env(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not kiosk.launches() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert len(kiosk.launches()) == 1
+        code, _, err = run_launcher(kiosk.env(), 5)
+        assert code == 0
+        assert "tourne déjà" in err
+        assert len(kiosk.launches()) == 1
+    finally:
+        os.killpg(first.pid, signal.SIGKILL)
+        first.wait()
+
+
+def test_kiosk_launcher_clears_a_stale_profile_lock(kiosk):
+    """Après une coupure de courant, le verrou du profil désigne un processus qui n'existe plus (ou un numéro réutilisé)."""
+    kiosk.profile.mkdir()
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        os.symlink("raspberrypi-4242", kiosk.profile / name)
+    (kiosk.profile / "Default").mkdir()
+    run_launcher(kiosk.env(), 3)
+    assert kiosk.launches()
+    assert not any(
+        os.path.lexists(kiosk.profile / n)
+        for n in ("SingletonLock", "SingletonSocket", "SingletonCookie")
+    )
+    assert (kiosk.profile / "Default").is_dir()  # le reste du profil n'est pas touché
+
+
+def test_kiosk_launcher_stops_a_chromium_left_on_its_profile(kiosk):
+    kiosk.profile.mkdir()
+    orphan = subprocess.Popen(
+        ["sh", "-c", "sleep 60; :", f"--user-data-dir={kiosk.profile}"], start_new_session=True
+    )
+    try:
+        run_launcher(kiosk.env(), 5)
+        assert orphan.wait(timeout=5) is not None  # arrêté par le lanceur
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(orphan.pid, signal.SIGKILL)
+    assert len(kiosk.launches()) == 1
+
+
+def test_kiosk_launcher_waits_for_an_output_but_not_forever(kiosk):
+    kiosk.outputs("")  # le compositeur n'a pas (encore) d'écran
+    begun = int(time.time())
+    run_launcher(kiosk.env(MYDOCK_OUTPUT_WAIT="2"), 8)
+    first = int(kiosk.launches()[0].split()[0])
+    assert first - begun >= 2, "Chromium ne doit pas s'ouvrir avant que l'écran existe"
+    assert kiosk.launches(), "...mais il s'ouvre quand même si aucun écran n'apparaît"
+
+
+def test_kiosk_launcher_falls_back_to_software_rendering_after_three_grey_starts(kiosk):
+    kiosk.chromium(stays=False)  # trois lancements de suite sans page
+    kiosk.health(browsers=0)
+    _, _, err = run_launcher(kiosk.env(MYDOCK_RETRY_PAUSE="0"), 8)
+    lines = kiosk.launches()
+    assert len(lines) >= 4
+    assert not any("--disable-gpu" in line for line in lines[:3])
+    assert "--disable-gpu" in lines[3]
+    assert "sans accélération graphique" in err
 
 
 def test_kiosk_browser_launcher_explains_a_missing_chromium(tmp_path):

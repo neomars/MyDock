@@ -323,16 +323,24 @@ def _check_archive(path: Path, extension: str) -> None:
             ) from None
 
 
-async def save_rom(
-    chunks: AsyncIterator[bytes],
+def megabytes(size: int) -> str:
+    """Une taille en Mo, à la française (« 3,1 Mo »), pour les messages."""
+    return f"{max(size, 0) / (1024 * 1024):.1f}".replace(".", ",") + " Mo"
+
+
+async def check_upload(
     filename: object,
     declared: int | None,
     roms_dir: Path,
     *,
     max_bytes: int | None = None,
     reserve: int | None = None,
-) -> Saved:
-    """Écrit un jeu envoyé dans le dossier des ROMs, ou lève `UploadRefused` sans rien laisser derrière."""
+) -> tuple[str, str]:
+    """`(nom du jeu, extension)` si ce fichier peut être reçu ; sinon `UploadRefused`, **sans avoir lu un seul octet du fichier**.
+
+    Ce sont tous les refus qui se décident d'après la demande seule (nom, taille, place). La page les demande avant d'envoyer
+    (`/api/retro/check`) : refuser en plein envoi coupe la connexion du navigateur, qui ne voit alors pas le message.
+    """
     max_bytes = MAX_FILE_BYTES if max_bytes is None else max_bytes
     reserve = FREE_RESERVE if reserve is None else reserve
     name, extension = clean_filename(filename)
@@ -350,7 +358,30 @@ async def save_rom(
             "not_writable", "Le dossier des ROMs n'est pas modifiable par le dock.", status=507
         ) from None
     if free - declared < reserve:
-        raise UploadRefused("no_space", "Pas assez de place sur la carte du Pi.", status=507)
+        raise UploadRefused(
+            "no_space",
+            f"Pas assez de place sur la carte du Pi : {megabytes(free)} libres, il en faut "
+            f"{megabytes(declared + reserve)} ({megabytes(declared)} pour ce jeu et {megabytes(reserve)} "
+            "que le dock garde libres).",
+            status=507,
+        )
+    return name, extension
+
+
+async def save_rom(
+    chunks: AsyncIterator[bytes],
+    filename: object,
+    declared: int | None,
+    roms_dir: Path,
+    *,
+    max_bytes: int | None = None,
+    reserve: int | None = None,
+) -> Saved:
+    """Écrit un jeu envoyé dans le dossier des ROMs, ou lève `UploadRefused` sans rien laisser derrière."""
+    name, extension = await check_upload(
+        filename, declared, roms_dir, max_bytes=max_bytes, reserve=reserve
+    )
+    assert declared is not None  # check_upload l'a exigé
     partial = (
         roms_dir / f".envoi-{secrets.token_hex(6)}.part"
     )  # sans suffixe de ROM : MAME et la liste l'ignorent
@@ -452,20 +483,45 @@ SCRIPT = """
     a.textContent=file.name+' · '+fmt(file.size);b.textContent='en attente';
     li.appendChild(a);li.appendChild(b);list.appendChild(li);return b
   }
+  function ko(job,text){job.out.textContent=text;job.out.className='ko'}
+  function refused(job,status,d){
+    ko(job,(d&&d.message)||('refusé ('+status+')'));
+    if(status===401||status===409){token=null;say((d&&d.message)||'','ko');probe()}
+  }
+  /* Le dock dit, avant l'envoi, si le fichier sera reçu : un refus en plein envoi coupe la connexion et le navigateur
+     n'en voit pas la raison (c'est ce qui arrivait aux gros fichiers). */
+  function ask(job){
+    return fetch('/api/retro/check',{method:'POST',headers:{'Content-Type':'application/json','X-Upload-Token':token||''},
+      body:JSON.stringify({name:job.file.name,size:job.file.size})})
+      .then(function(r){return r.json().then(function(d){return {status:r.status,d:d}})})
+  }
+  function done(){busy=false;next()}
   function next(){
     if(busy||!queue.length)return;
-    busy=true;var job=queue.shift(),xhr=new XMLHttpRequest();
+    busy=true;var job=queue.shift();job.out.textContent='vérification…';
+    ask(job).then(function(res){
+      if(res.status===200&&res.d.ok)send(job);
+      else{refused(job,res.status,res.d);done()}
+    }).catch(function(){ko(job,'le dock ne répond pas');done()})
+  }
+  function send(job){
+    var xhr=new XMLHttpRequest();
     xhr.open('POST','/api/retro/upload?name='+encodeURIComponent(job.file.name));
     xhr.setRequestHeader('X-Upload-Token',token);
     xhr.upload.onprogress=function(e){if(e.lengthComputable)job.out.textContent=Math.round(100*e.loaded/e.total)+' %'};
     xhr.onload=function(){
       var d={};try{d=JSON.parse(xhr.responseText)}catch(e){}
       if(xhr.status===200&&d.ok){job.out.textContent='envoyé ✔';job.out.className='ok'}
-      else{job.out.textContent=d.message||('refusé ('+xhr.status+')');job.out.className='ko'}
-      if(xhr.status===401||xhr.status===409){token=null;say(d.message||'','ko');probe()}
-      busy=false;next()
+      else refused(job,xhr.status,d);
+      done()
     };
-    xhr.onerror=function(){job.out.textContent='envoi interrompu : le dock n’a pas répondu (fichier refusé ?)';job.out.className='ko';busy=false;next()};
+    xhr.onerror=function(){
+      /* La connexion a lâché : on redemande au dock pourquoi (place, session) avant de parler de réseau. */
+      ask(job).then(function(res){
+        if(res.status===200&&res.d.ok)ko(job,'envoi interrompu avant la fin (réseau ou Wi-Fi ?) : renvoie le fichier');
+        else refused(job,res.status,res.d)
+      }).catch(function(){ko(job,'envoi interrompu : le dock ne répond plus')}).then(done)
+    };
     xhr.send(job.file)
   }
   function refuse(out,text){out.textContent=text;out.className='ko'}

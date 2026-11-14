@@ -30,6 +30,7 @@ from mydock_dock import (
     mame_playback,
     player_session,
     playerlog,
+    retro_upload,
     retrogame,
     screensaver,
 )
@@ -910,8 +911,19 @@ def check_retrogame(
             )
         try:
             free = shutil.disk_usage(folder).free
+            reserve = retro_upload.FREE_RESERVE
+            room = max(0, min(retro_upload.MAX_FILE_BYTES, free - reserve))
             level = OK if free > 1 << 30 else WARN
-            report.add(level, f"Place libre pour les jeux : {free / (1 << 30):.1f} Go")
+            text = f"Place libre pour les jeux : {free / (1 << 30):.1f} Go"
+            if free > 1 << 30:
+                report.add(level, text)
+            else:
+                # Le dock garde de la place libre pour le système : le plus gros jeu qu'on peut lui envoyer en dépend.
+                report.add(
+                    level,
+                    f"{text} ; le dock en garde {reserve // (1 << 20)} Mo libres : on peut lui envoyer un jeu de "
+                    f"{room // (1 << 20)} Mo au plus (la page /jeux refuse les autres, en disant pourquoi)",
+                )
         except OSError:
             pass
         snaps = library.snap_dir
@@ -1096,6 +1108,15 @@ def check_running(report: Report, config: DockConfig) -> None:
         with opener.open(url, timeout=2) as response:
             health = json.load(response)
         report.add(OK, f"Le serveur dock répond (état de la liaison : {health.get('link')})")
+        browsers = health.get("browsers")
+        if browsers == 0:
+            report.add(
+                WARN,
+                "Aucun navigateur n'est connecté au dock : l'écran est gris ou vide (le lanceur du kiosque relance "
+                "Chromium tout seul au bout d'une minute ; sinon : sudo pkill -x chromium)",
+            )
+        elif isinstance(browsers, int):
+            report.add(OK, f"L'écran du dock est connecté ({browsers} navigateur(s))")
     except (OSError, urllib.error.URLError, ValueError):
         report.add(WARN, "Le serveur dock ne répond pas (sudo systemctl status mydock-dock).")
     if shutil.which("systemctl"):

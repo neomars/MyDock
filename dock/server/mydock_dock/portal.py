@@ -17,6 +17,7 @@ l'interface, jamais le WebSocket, jamais la configuration, et n'a rien d'autre �
     GET  /jeux                   la page d'envoi de jeux d'arcade (Retrogame)
     POST /api/retro/me           le PC associé (reconnu à son adresse) reçoit un jeton d'envoi, sans code ; les autres : « il faut le code »
     POST /api/retro/login        le code de l'écran du dock, contre un jeton d'envoi (voir retro_upload.py)
+    POST /api/retro/check        « ce fichier sera-t-il reçu ? » (nom, taille, place), avant d'en envoyer un octet
     POST /api/retro/upload       un jeu (.zip ou .7z) : écrit dans le dossier des ROMs, après le contrôle du nom et de l'archive
 
 Tout le reste répond 404. Aucune page n'affiche un en-tête de la requête (le nom du Pi et ses
@@ -53,6 +54,7 @@ from mydock_dock.retro_upload import (
     MAX_CONCURRENT,
     UPLOAD_CSP,
     UploadRefused,
+    check_upload,
     save_rom,
 )
 from mydock_dock.retro_upload import (
@@ -463,6 +465,48 @@ def create_portal_app(server: DockServer) -> FastAPI:
             return _error(refusal.status, refusal.code, refusal.message)
         return JSONResponse({"ok": True, "token": token}, headers={"Cache-Control": "no-store"})
 
+    async def authorized_session(request: Request, peer: str) -> Any:
+        """La session d'envoi de ce PC, ou `UploadRefused`. Le droit du PC associé se revérifie à chaque demande."""
+        session = server.uploads.authorize(peer, request.headers.get("x-upload-token"))
+        if session.code is None and not await is_associated_pc(server, peer):
+            # Réglage coupé ou autre PC associé depuis : plus rien ne passe.
+            raise UploadRefused(
+                "unauthorized",
+                "Ce PC n'est plus celui qui est associé au dock : recopie le code de l'écran.",
+                status=401,
+            )
+        return session
+
+    @app.post("/api/retro/check")
+    async def retro_check(request: Request) -> JSONResponse:
+        """La page demande, avant d'envoyer un fichier, s'il sera reçu (nom, taille, place) : sans en envoyer un octet.
+
+        Refuser en plein envoi coupe la connexion et le navigateur ne voit pas pourquoi ; refuser ici, c'est une réponse normale.
+        """
+        peer = request.client.host if request.client else "?"
+        if not request.headers.get("content-type", "").lower().startswith("application/json"):
+            return _error(415, "bad_request", "La demande doit être du JSON.")
+        raw = await _read_limited(request)
+        if raw is None:
+            return _error(413, "too_large", "Demande trop volumineuse.")
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            return _error(400, "bad_request", "Demande illisible.")
+        size = data.get("size")
+        if isinstance(size, bool) or not isinstance(size, int):
+            size = None
+        try:
+            session = await authorized_session(request, peer)
+            server.uploads.reserve(session, size or 0)
+            await check_upload(data.get("name"), size, server.config.roms_path)
+        except UploadRefused as refusal:
+            media_log.warning("Envoi de jeu refusé avant l'envoi (%s) : %s", peer, refusal.code)
+            return _error(refusal.status, refusal.code, refusal.message)
+        return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+
     @app.post("/api/retro/upload")
     async def retro_upload(request: Request) -> JSONResponse:
         peer = request.client.host if request.client else "?"
@@ -470,14 +514,7 @@ def create_portal_app(server: DockServer) -> FastAPI:
         declared = request.headers.get("content-length")
         size = int(declared) if declared and declared.isdigit() else None
         try:
-            session = server.uploads.authorize(peer, request.headers.get("x-upload-token"))
-            if session.code is None and not await is_associated_pc(server, peer):
-                # Le droit du PC associé se revérifie à chaque envoi : réglage coupé ou autre PC associé depuis, plus rien ne passe.
-                raise UploadRefused(
-                    "unauthorized",
-                    "Ce PC n'est plus celui qui est associé au dock : recopie le code de l'écran.",
-                    status=401,
-                )
+            session = await authorized_session(request, peer)
             if uploading.locked():
                 raise UploadRefused(
                     "busy", "Un autre envoi est en cours : patiente un instant.", status=429

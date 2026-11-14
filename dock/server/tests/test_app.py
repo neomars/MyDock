@@ -513,6 +513,22 @@ async def test_dns_rebinding_is_refused(stack):
         assert rebound.status_code == 421
 
 
+async def test_health_says_how_many_browsers_are_connected(stack):
+    """Le lanceur du kiosque s'en sert pour savoir si Chromium a vraiment affiché la page (écran gris sinon)."""
+    async with httpx.AsyncClient(trust_env=False, base_url=stack.dock.origin) as client:
+        assert (await client.get("/api/health")).json()["browsers"] == 0
+        async with stack.dock.connect() as ws:
+            assert (await recv_json(ws))["t"] == "hello"
+            assert (await client.get("/api/health")).json()["browsers"] == 1
+            async with stack.dock.connect() as other:
+                assert (await recv_json(other))["t"] == "hello"
+                assert (await client.get("/api/health")).json()["browsers"] == 2
+        await eventually(
+            lambda: stack.dock.server.browsers == set()
+        )  # le dock voit les navigateurs partir
+        assert (await client.get("/api/health")).json()["browsers"] == 0
+
+
 def test_host_and_origin_rules():
     local = DockConfig.from_dict({}, path=None)  # type: ignore[arg-type]
     assert host_allowed("127.0.0.1:8080", local)
