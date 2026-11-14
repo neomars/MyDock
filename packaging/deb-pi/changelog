@@ -1,3 +1,19 @@
+mydock (1.7.3) unstable; urgency=medium
+
+  * Envoi de jeux : les jeux de plusieurs Mo s'envoient enfin depuis la page /jeux. Sur certains réseaux, une seule requête
+    de plusieurs Mo était coupée en route (les petits fichiers passaient, les gros jamais : « envoi interrompu avant la
+    fin »). La page envoie maintenant le jeu par morceaux de 128 Ko, chacun repris automatiquement (six essais, pause qui
+    s'allonge) : à chaque réponse, le dock dit où l'envoi en est, donc un morceau écrit dont la réponse s'est perdue n'est
+    ni perdu ni écrit deux fois. Le jeu n'existe sous son vrai nom qu'une fois entier et vérifié (fichier provisoire
+    .envoi-*.part, invisible pour MAME). Mêmes contrôles et mêmes plafonds qu'avant (400 Mo par jeu, 3 Go et 300 fichiers par
+    session, 500 Mo gardés libres, revérifiés à chaque morceau), plus : quatre envois en cours au plus, un envoi sans nouvelle
+    pendant dix minutes est abandonné et son fichier effacé. L'envoi d'un seul tenant (curl) reste possible.
+  * Journal : une coupure en plein envoi est notée dans /var/log/mydock/dock.log (« Envoi de jeu coupé par le navigateur ou
+    le réseau », avec le jeu, l'octet et la durée), de même qu'une erreur du dock ; le dock répond alors par un message
+    plutôt que de couper la connexion. À l'écran du PC, un envoi abandonné dit à quel pourcentage il s'est arrêté.
+
+ -- neomars <neomars@users.noreply.github.com>  Sat, 14 Nov 2026 18:00:00 +0000
+
 mydock (1.7.2) unstable; urgency=medium
 
   * Envoi de jeux : les gros fichiers (plusieurs Mo) n'échouent plus sans explication. Quand le dock refusait un fichier

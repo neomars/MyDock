@@ -1,6 +1,9 @@
 """L'envoi des jeux depuis le PC : la session à code, l'écriture d'un fichier, et la page du portail."""
 
+import asyncio
 import io
+import logging
+import os
 import zipfile
 
 import httpx
@@ -11,6 +14,7 @@ from mydock_dock import retro_upload
 from mydock_dock.retro_upload import (
     MAX_WRONG,
     UPLOAD_CSP,
+    PartialUploads,
     UploadRefused,
     UploadSessions,
     check_upload,
@@ -853,6 +857,188 @@ async def test_the_page_checks_before_sending_and_explains_a_cut_connection():
     assert "réseau ou Wi-Fi" in retro_upload.SCRIPT
 
 
+# --- l'envoi par morceaux, serveur réel ----------------------------------------------------------------------------------
+
+
+CHUNK = 131072  # la page envoie des morceaux de 128 Ko
+
+
+def chunk_url(name: str, total: int, offset: int) -> str:
+    return f"/api/retro/upload?name={name}&total={total}&offset={offset}"
+
+
+async def put_chunk(client, token, name, data, offset, *, size=CHUNK):
+    return await client.post(
+        chunk_url(name, len(data), offset),
+        content=data[offset : offset + size],
+        headers={"X-Upload-Token": token},
+    )
+
+
+async def test_a_3_mb_game_goes_through_the_real_portal_in_chunks_of_128_kb(dock):
+    """Le cas du Pi de l'utilisateur : un jeu de 3 Mo, qui ne passait pas d'un seul tenant."""
+    data = big_zip(3 * 1024)
+    assert len(data) > 3 * 1024 * 1024
+    async with web(dock) as client:
+        token = await login(client, dock)
+        offset, answers = 0, []
+        while True:
+            reply = await put_chunk(client, token, "tetris.zip", data, offset)
+            assert reply.status_code == 200, reply.text
+            answers.append(reply.json())
+            offset = reply.json()["received"]
+            if reply.json()["done"]:
+                break
+    assert len(answers) > 20
+    assert all(a == {"ok": True, "received": a["received"], "done": False} for a in answers[:-1])
+    assert answers[-1] == {
+        "ok": True,
+        "name": "tetris",
+        "size": len(data),
+        "received": len(data),
+        "done": True,
+    }
+    assert (dock.roms / "tetris.zip").read_bytes() == data
+    assert [p.name for p in dock.roms.iterdir()] == ["tetris.zip"]
+    assert dock.server.uploads.info()["files"] == 1  # un jeu, pas vingt-cinq morceaux
+
+
+async def test_a_lost_answer_is_resumed_through_the_real_portal(dock):
+    data = big_zip(1024)
+    async with web(dock) as client:
+        token = await login(client, dock)
+        first = await put_chunk(client, token, "pong.zip", data, 0)
+        second = await put_chunk(
+            client, token, "pong.zip", data, CHUNK
+        )  # écrit, mais la page n'en a pas la réponse
+        assert second.json()["received"] == 2 * CHUNK
+        again = await put_chunk(client, token, "pong.zip", data, CHUNK)
+        assert again.status_code == 409
+        assert again.json()["error"] == "offset"
+        assert again.json()["received"] == 2 * CHUNK
+        assert first.json()["received"] == CHUNK
+        offset = again.json()["received"]
+        while True:
+            reply = await put_chunk(client, token, "pong.zip", data, offset)
+            offset = reply.json()["received"]
+            if reply.json()["done"]:
+                break
+    assert (dock.roms / "pong.zip").read_bytes() == data
+
+
+async def test_a_refused_chunk_is_answered_in_full_even_with_a_128_kb_body(dock):
+    """Le but : un refus qui arrive (nom, session…) arrive au navigateur, parce que le corps du morceau est lu en entier."""
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await client.post(
+            chunk_url("pong.exe", 10_000_000, 0),
+            content=b"x" * CHUNK,
+            headers={"X-Upload-Token": token},
+        )
+    assert reply.status_code == 400
+    assert reply.json()["error"] == "bad_name"
+
+
+@pytest.mark.parametrize(
+    ("query", "status", "error"),
+    [
+        ("name=pong.zip&total=1000&offset=abc", 400, "bad_request"),
+        ("name=pong.zip&total=abc&offset=0", 400, "bad_request"),
+        ("name=pong.zip&offset=0", 400, "bad_request"),
+        ("name=pong.zip&total=1000&offset=-5", 400, "bad_request"),
+        ("name=pong.zip&total=1000&offset=500", 409, "no_upload"),
+    ],
+)
+async def test_chunk_parameters_are_checked(dock, query, status, error):
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await client.post(
+            f"/api/retro/upload?{query}", content=b"x" * 10, headers={"X-Upload-Token": token}
+        )
+    assert (reply.status_code, reply.json()["error"]) == (status, error)
+    assert not dock.roms.exists() or not any(dock.roms.iterdir())
+
+
+async def test_a_chunk_needs_the_token_too(dock):
+    async with web(dock) as client:
+        await login(client, dock)
+        reply = await client.post(chunk_url("pong.zip", 1000, 0), content=b"x" * 10)
+        wrong = await client.post(
+            chunk_url("pong.zip", 1000, 0), content=b"x", headers={"X-Upload-Token": "faux"}
+        )
+    assert reply.status_code == 401
+    assert wrong.status_code == 401
+
+
+async def test_a_session_limit_stops_a_game_at_its_first_chunk(dock, monkeypatch):
+    monkeypatch.setattr(retro_upload, "MAX_SESSION_BYTES", 1_000)
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await client.post(
+            chunk_url("pong.zip", 2_000, 0), content=b"x" * 100, headers={"X-Upload-Token": token}
+        )
+    assert (reply.status_code, reply.json()["error"]) == (413, "session_full")
+
+
+async def test_a_lack_of_space_is_told_at_the_first_chunk(dock, monkeypatch):
+    monkeypatch.setattr(retro_upload, "FREE_RESERVE", 10**15)
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await put_chunk(client, token, "tetris.zip", big_zip(), 0)
+    assert reply.status_code == 507
+    assert "libres" in reply.json()["message"]
+
+
+async def test_a_connection_cut_in_the_middle_is_logged_and_the_chunk_can_be_sent_again(
+    dock, caplog
+):
+    caplog.set_level(logging.WARNING, logger="mydock_dock.media")
+    data = big_zip()
+    host, port = dock.portal_origin.removeprefix("http://").split(":")
+    async with web(dock) as client:
+        token = await login(client, dock)
+        _reader, writer = await asyncio.open_connection(host, int(port))
+        writer.write(
+            (
+                f"POST {chunk_url('pong.zip', len(data), 0)} HTTP/1.1\r\nHost: x\r\n"
+                f"X-Upload-Token: {token}\r\nContent-Length: {CHUNK}\r\n\r\n"
+            ).encode()
+            + data[:1000]
+        )
+        await writer.drain()
+        writer.close()  # le navigateur est parti en plein morceau
+        await eventually(
+            lambda: any("coupé par le navigateur" in r.getMessage() for r in caplog.records)
+        )
+        message = next(
+            r.getMessage() for r in caplog.records if "coupé par le navigateur" in r.getMessage()
+        )
+        assert "pong.zip" in message
+        assert "morceau à l'octet 0" in message
+        offset = 0  # ... et le même morceau, renvoyé, repart de zéro
+        while True:
+            reply = await put_chunk(client, token, "pong.zip", data, offset)
+            assert reply.status_code == 200, reply.text
+            offset = reply.json()["received"]
+            if reply.json()["done"]:
+                break
+    assert (dock.roms / "pong.zip").read_bytes() == data
+
+
+async def test_an_unexpected_error_is_logged_and_answered_with_a_message(dock, monkeypatch, caplog):
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError("disque en panne")
+
+    monkeypatch.setattr(PartialUploads, "write", broken)
+    caplog.set_level(logging.ERROR, logger="mydock_dock.media")
+    async with web(dock) as client:
+        token = await login(client, dock)
+        reply = await put_chunk(client, token, "pong.zip", big_zip(), 0)
+    assert reply.status_code == 500
+    assert reply.json()["error"] == "server_error"
+    assert any("disque en panne" in (r.exc_text or "") for r in caplog.records)
+
+
 # --- le PC associé, serveur réel -----------------------------------------------------------------------------------------
 
 
@@ -983,3 +1169,309 @@ async def test_the_portal_home_links_to_the_upload_page(dock):
         jeux = await client.get("/jeux")
     assert 'href="/jeux"' in page
     assert jeux.status_code == 200
+
+
+# --- l'envoi par morceaux ------------------------------------------------------------------------------------------------
+
+
+def big_zip(kilobytes: int = 300) -> bytes:
+    """Une vraie archive ZIP d'au moins `kilobytes` Ko (un fichier sans compression)."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("rom.bin", bytes(range(256)) * (kilobytes * 4))
+    return buffer.getvalue()
+
+
+def pieces(data: bytes, size: int):
+    return [data[start : start + size] for start in range(0, len(data), size)]
+
+
+def trusted_session(clock=None):
+    sessions = UploadSessions(clock=clock or Clock())
+    token, _ = sessions.trusted_session(PEER)
+    return sessions.authorize(PEER, token)
+
+
+async def send_all(partials, session, name, data, roms, *, size=65536, **options):
+    """Envoie `data` par morceaux de `size` octets, comme la page ; renvoie le dernier résultat."""
+    offset, result = 0, (None, 0)
+    for piece in pieces(data, size):
+        result = await partials.write(
+            session, name, len(data), offset, stream(piece), roms, **options
+        )
+        offset = result[1]
+    return result
+
+
+def temp_files(folder):
+    return sorted(p.name for p in folder.iterdir() if p.name.startswith(".envoi-"))
+
+
+async def test_a_game_arrives_in_chunks_and_takes_its_name_only_at_the_end(tmp_path):
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    first = await partials.write(
+        session, "Pacman.zip", len(data), 0, stream(data[:65536]), tmp_path, reserve=0
+    )
+    assert first == (None, 65536)
+    assert len(temp_files(tmp_path)) == 1  # un fichier provisoire, jamais un jeu à moitié écrit
+    assert not (tmp_path / "pacman.zip").exists()
+    saved, received = await send_all(partials, session, "pacman.zip", data, tmp_path, reserve=0)
+    assert (saved.name, saved.size, received) == ("pacman", len(data), len(data))
+    assert (tmp_path / "pacman.zip").read_bytes() == data
+    assert temp_files(tmp_path) == []
+    assert len(partials) == 0
+    assert (tmp_path / "pacman.zip").stat().st_mode & 0o777 == 0o644
+
+
+async def test_a_lost_answer_is_resumed_where_the_dock_really_is(tmp_path):
+    """Le morceau est écrit, mais sa réponse s'est perdue : la page le renvoie, et le dock lui dit où reprendre."""
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    parts = pieces(data, 65536)
+    await partials.write(session, "pong.zip", len(data), 0, stream(parts[0]), tmp_path, reserve=0)
+    await partials.write(
+        session, "pong.zip", len(data), 65536, stream(parts[1]), tmp_path, reserve=0
+    )
+    with pytest.raises(
+        UploadRefused
+    ) as refused:  # la page renvoie le morceau 1, dont elle n'a pas eu la réponse
+        await partials.write(
+            session, "pong.zip", len(data), 65536, stream(parts[1]), tmp_path, reserve=0
+        )
+    assert (refused.value.code, refused.value.status) == ("offset", 409)
+    assert refused.value.extra == {"received": 131072}
+    offset = refused.value.extra["received"]
+    for piece in pieces(data[offset:], 65536):
+        saved, offset = await partials.write(
+            session, "pong.zip", len(data), offset, stream(piece), tmp_path, reserve=0
+        )
+    assert saved is not None
+    assert (tmp_path / "pong.zip").read_bytes() == data  # ni trou ni doublon
+
+
+async def test_a_chunk_cut_in_the_middle_leaves_the_file_where_it_was(tmp_path):
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    parts = pieces(data, 65536)
+    await partials.write(session, "pong.zip", len(data), 0, stream(parts[0]), tmp_path, reserve=0)
+
+    async def cut():
+        yield parts[1][:1000]
+        raise ConnectionResetError  # le navigateur est parti
+
+    with pytest.raises(ConnectionResetError):
+        await partials.write(session, "pong.zip", len(data), 65536, cut(), tmp_path, reserve=0)
+    (partial,) = partials._partials.values()
+    assert partial.received == 65536
+    assert partial.path.stat().st_size == 65536  # pas un octet du morceau coupé
+    offset = 65536  # le morceau coupé est renvoyé au même endroit
+    for piece in parts[1:]:
+        saved, offset = await partials.write(
+            session, "pong.zip", len(data), offset, stream(piece), tmp_path, reserve=0
+        )
+    assert saved is not None
+    assert (tmp_path / "pong.zip").read_bytes() == data
+
+
+async def test_starting_again_replaces_the_unfinished_file(tmp_path):
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    await partials.write(
+        session, "pong.zip", len(data), 0, stream(data[:65536]), tmp_path, reserve=0
+    )
+    (old,) = temp_files(tmp_path)
+    await partials.write(
+        session, "pong.zip", len(data), 0, stream(data[:65536]), tmp_path, reserve=0
+    )
+    (new,) = temp_files(tmp_path)  # un seul fichier provisoire : l'ancien est effacé
+    assert new != old
+    assert len(partials) == 1
+
+
+@pytest.mark.parametrize("offset", [65536, 1])
+async def test_a_chunk_without_a_beginning_is_refused(tmp_path, offset):
+    partials, session = PartialUploads(), trusted_session()
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(
+            session, "pong.zip", 100_000, offset, stream(b"x" * 10), tmp_path, reserve=0
+        )
+    assert (refused.value.code, refused.value.status) == ("no_upload", 409)
+    assert list(tmp_path.iterdir()) == []
+
+
+async def test_a_changed_size_is_refused_and_the_file_is_dropped(tmp_path):
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    await partials.write(
+        session, "pong.zip", len(data), 0, stream(data[:65536]), tmp_path, reserve=0
+    )
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(
+            session, "pong.zip", len(data) + 1, 65536, stream(b"x"), tmp_path, reserve=0
+        )
+    assert refused.value.code == "bad_length"
+    assert temp_files(tmp_path) == []
+    assert len(partials) == 0
+
+
+async def test_a_chunk_over_the_limit_is_refused(tmp_path):
+    partials, session = PartialUploads(), trusted_session()
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(
+            session,
+            "pong.zip",
+            1_000_000,
+            0,
+            stream(b"x" * 5_000),
+            tmp_path,
+            reserve=0,
+            max_chunk=1_000,
+        )
+    assert (refused.value.code, refused.value.status) == ("too_large", 413)
+
+
+async def test_more_bytes_than_announced_are_refused_and_nothing_stays(tmp_path):
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(
+            session, "pong.zip", 1_000, 0, stream(data[:5_000]), tmp_path, reserve=0
+        )
+    assert refused.value.code == "bad_length"
+    assert temp_files(tmp_path) == []
+    assert len(partials) == 0
+
+
+async def test_an_empty_chunk_is_refused(tmp_path):
+    partials, session = PartialUploads(), trusted_session()
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(session, "pong.zip", 1_000, 0, stream(b""), tmp_path, reserve=0)
+    assert refused.value.code == "incomplete"
+    assert temp_files(tmp_path) == []
+
+
+async def test_a_finished_file_that_is_not_an_archive_is_refused_and_nothing_stays(tmp_path):
+    junk = b"MZ" + bytes(200_000)
+    partials, session = PartialUploads(), trusted_session()
+    with pytest.raises(UploadRefused) as refused:
+        await send_all(partials, session, "pong.zip", junk, tmp_path, reserve=0)
+    assert (refused.value.code, refused.value.status) == ("not_archive", 415)
+    assert list(tmp_path.iterdir()) == []
+    assert len(partials) == 0
+
+
+async def test_the_other_format_is_replaced_when_the_game_is_complete(tmp_path):
+    (tmp_path / "pong.7z").write_bytes(b"ancien")
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    await send_all(partials, session, "pong.zip", data, tmp_path, reserve=0)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pong.zip"]
+
+
+async def test_the_free_space_is_checked_again_at_every_chunk(tmp_path, monkeypatch):
+    """D'autres envois ont pu remplir la carte depuis le début de celui-ci."""
+    free = iter(
+        [1_000_000, 1_000_000, 900_000, 500]
+    )  # le début, deux morceaux, puis la carte se remplit
+    Usage = type("Usage", (), {})
+
+    def disk_usage(_path):
+        usage = Usage()
+        usage.free = next(free)
+        return usage
+
+    monkeypatch.setattr(retro_upload.shutil, "disk_usage", disk_usage)
+    data, partials, session = big_zip(), PartialUploads(), trusted_session()
+    parts = pieces(data, 65536)
+    await partials.write(
+        session, "pong.zip", len(data), 0, stream(parts[0]), tmp_path, reserve=1_000
+    )
+    await partials.write(
+        session, "pong.zip", len(data), 65536, stream(parts[1]), tmp_path, reserve=1_000
+    )
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(
+            session, "pong.zip", len(data), 131072, stream(parts[2]), tmp_path, reserve=1_000
+        )
+    assert (refused.value.code, refused.value.status) == ("no_space", 507)
+    assert temp_files(tmp_path) == []  # l'envoi est abandonné, la place est rendue
+
+
+async def test_an_abandoned_upload_is_swept_and_its_file_deleted(tmp_path):
+    clock = Clock()
+    data, partials, session = (
+        big_zip(),
+        PartialUploads(clock=clock, ttl=600),
+        trusted_session(clock),
+    )
+    await partials.write(
+        session, "pong.zip", len(data), 0, stream(data[:65536]), tmp_path, reserve=0
+    )
+    clock.now += 599
+    partials.sweep()
+    assert len(partials) == 1  # pas encore
+    clock.now += 2
+    partials.sweep()
+    assert len(partials) == 0
+    assert temp_files(tmp_path) == []
+    with pytest.raises(UploadRefused) as refused:  # la page est invitée à reprendre depuis le début
+        await partials.write(
+            session, "pong.zip", len(data), 65536, stream(data[65536:131072]), tmp_path, reserve=0
+        )
+    assert refused.value.code == "no_upload"
+
+
+async def test_each_chunk_keeps_the_upload_alive(tmp_path):
+    clock = Clock()
+    data, partials, session = (
+        big_zip(),
+        PartialUploads(clock=clock, ttl=600),
+        trusted_session(clock),
+    )
+    offset = 0
+    for piece in pieces(data, 65536)[:4]:
+        clock.now += 500  # plus de dix minutes en tout, mais jamais dix minutes sans morceau
+        _, offset = await partials.write(
+            session, "pong.zip", len(data), offset, stream(piece), tmp_path, reserve=0
+        )
+    assert len(partials) == 1
+
+
+async def test_only_a_few_uploads_may_run_at_once(tmp_path):
+    partials, session = PartialUploads(max_partials=2), trusted_session()
+    for name in ("un.zip", "deux.zip"):
+        await partials.write(session, name, 100_000, 0, stream(b"x" * 10), tmp_path, reserve=0)
+    with pytest.raises(UploadRefused) as refused:
+        await partials.write(
+            session, "trois.zip", 100_000, 0, stream(b"x" * 10), tmp_path, reserve=0
+        )
+    assert (refused.value.code, refused.value.status) == ("busy", 429)
+    # recommencer un jeu déjà en cours n'est pas un envoi de plus
+    await partials.write(session, "un.zip", 100_000, 0, stream(b"x" * 10), tmp_path, reserve=0)
+
+
+async def test_two_devices_sending_the_same_name_do_not_mix(tmp_path):
+    sessions = UploadSessions(clock=Clock())
+    a = sessions.authorize("192.168.1.20", sessions.trusted_session("192.168.1.20")[0])
+    b = sessions.authorize("192.168.1.21", sessions.trusted_session("192.168.1.21")[0])
+    data, partials = big_zip(), PartialUploads()
+    await partials.write(a, "pong.zip", len(data), 0, stream(data[:65536]), tmp_path, reserve=0)
+    with pytest.raises(
+        UploadRefused
+    ) as refused:  # b n'a rien commencé : il ne peut pas reprendre celui de a
+        await partials.write(
+            b, "pong.zip", len(data), 65536, stream(data[65536:131072]), tmp_path, reserve=0
+        )
+    assert refused.value.code == "no_upload"
+    assert len(partials) == 1
+
+
+async def test_a_provisional_file_nobody_fills_is_cleaned_at_the_next_start(tmp_path):
+    old, recent = tmp_path / ".envoi-abandonne.part", tmp_path / ".envoi-recent.part"
+    old.write_bytes(b"x" * 100)
+    recent.write_bytes(b"x" * 100)
+    os.utime(old, (1, 1))  # dock arrêté en plein envoi, il y a longtemps
+    partials, session = PartialUploads(), trusted_session()
+    await partials.write(session, "pong.zip", 100_000, 0, stream(b"x" * 10), tmp_path, reserve=0)
+    assert not old.exists()
+    assert recent.exists()  # peut-être un envoi d'un seul tenant en cours : on n'y touche pas
+
+
+async def test_the_one_shot_upload_still_works_beside_the_chunked_one(tmp_path):
+    data = make_zip()
+    saved = await save_rom(stream(data), "pong.zip", len(data), tmp_path, reserve=0)
+    assert saved.name == "pong"

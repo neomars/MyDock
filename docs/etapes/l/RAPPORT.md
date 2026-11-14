@@ -1,6 +1,6 @@
 # Étape l — Retrogame : les jeux d'arcade de MAME, à la manette Bluetooth
 
-Livrée le 13 novembre 2026, branche `claude/jolly-dirac-5np79y`, **version 1.7.0** (puis **1.7.1** : voir l'[addendum 1](#addendum-1--version-171--envoyer-un-jeu-depuis-la-page-du-pc-pas-depuis-le-pi-et-la-manette-filaire-usb)) (puis **1.7.2** : voir l'[addendum 2](#addendum-2--version-172--les-gros-jeux-et-lécran-gris-au-démarrage)) (agent, dock, protocole, et les deux paquets `.deb`).
+Livrée le 13 novembre 2026, branche `claude/jolly-dirac-5np79y`, **version 1.7.0** (puis **1.7.1** : voir l'[addendum 1](#addendum-1--version-171--envoyer-un-jeu-depuis-la-page-du-pc-pas-depuis-le-pi-et-la-manette-filaire-usb)) (puis **1.7.2** : voir l'[addendum 2](#addendum-2--version-172--les-gros-jeux-et-lécran-gris-au-démarrage)) (puis **1.7.3** : voir l'[addendum 3](#addendum-3--version-173--les-gros-jeux-par-morceaux)) (agent, dock, protocole, et les deux paquets `.deb`).
 Les captures de ce dossier sont en **mode démo** (`mydock-dock run --demo-retro` : douze faux jeux avec de vraies images, trois fausses manettes ; l'assistant de l'écran en démonstration) en 1024×600 tactile, texte doublé. Rien n'y touche MAME ni le Bluetooth : ce qu'un conteneur ne peut pas produire est dit plus bas.
 
 > **À lire d'abord — ce que je n'ai pas pu vérifier.**
@@ -226,3 +226,32 @@ Tests ajoutés (`test_deploy.py`, avec un faux Chromium, un faux dock, un faux `
 - **Redémarre le Pi une fois après la mise à jour** (`sudo reboot`) : le nouveau lanceur ne remplace celui qui tourne qu'à la prochaine ouverture de session. Si l'écran est gris au démarrage, attends une minute : il doit se réparer seul ; `sudo journalctl -u mydock-kiosk -e` (Pi sans bureau) dit « Chromium n'a rien affiché… ». **Si cela se répète à chaque démarrage, envoie-moi ces lignes** : elles diront si c'est l'écran, le processeur graphique ou autre chose.
 - **Envoie un gros jeu** : s'il est refusé, la page doit maintenant en dire la raison avec les Mo libres.
 - Je n'ai pas pu essayer le lanceur sur un vrai labwc avec le vrai Chromium ; les essais s'appuient sur de faux outils. Le nom de fenêtre cherché (`chrom…`) est celui que le lecteur utilise déjà pour mettre le dock devant.
+
+## Addendum 3 — version 1.7.3 : les gros jeux, par morceaux
+
+> « L'écran est stabilisé. L'upload ne fonctionne toujours pas : tetris.zip · 3,1 Mo — *envoi interrompu avant la fin (réseau ou Wi-Fi ?) : renvoie le fichier* ; tetrisp.zip · 5,7 Mo — *idem* »
+
+**Ce que ce retour établit.** Avec la 1.7.2, la page demande d'abord au dock si le fichier sera reçu, puis envoie ; quand l'envoi échoue, elle redemande. Ton message veut donc dire : le dock a dit « oui » avant, la connexion a lâché pendant l'envoi, et il dit encore « oui » après. **Ce n'est donc pas un refus** (ni la place, ni le nom, ni les plafonds : mon hypothèse de la 1.7.2 était fausse pour ton cas) : la connexion est coupée en route, pour les requêtes de plusieurs Mo, et jamais pour celles de moins de 157 Ko.
+
+**Ce que j'ai essayé, sans réussir à le reproduire** (vrai portail, vrai envoi, 3 / 6 / 14 Mo, tout arrive) :
+
+- la pile HTTP de uvicorn : `h11` (celle de mes essais) et `httptools` (celle que `apt` installe avec `python3-uvicorn`, qui la recommande) ;
+- les versions de FastAPI, Starlette et uvicorn de l'époque de Debian Trixie, à la place de celles, bien plus récentes, de mon environnement ;
+- une liaison lente : 3 Mo étalés sur 10 s, puis sur 50 s.
+
+**Ce que je n'ai donc pas trouvé** : *pourquoi* ton réseau coupe ces requêtes. Il est propre à ton installation (Wi-Fi du Pi, carte réseau, box, pare-feu, extension du navigateur du PC : je ne peux pas le voir d'ici). Plutôt que de deviner, j'ai changé la manière d'envoyer, d'après la seule chose établie (les petites requêtes passent) :
+
+- **La page envoie le jeu par morceaux de 128 Ko**, un par requête (`POST /api/retro/upload?name=…&total=…&offset=…`), **chacun repris automatiquement** s'il échoue (six essais, pause qui s'allonge). À chaque réponse, le dock dit **où l'envoi en est** (`received`). Si la réponse d'un morceau s'est perdue alors qu'il était écrit, le morceau renvoyé reçoit « 409 : ici » avec le bon point de reprise, et la page repart de là : **ni trou, ni doublon**. Si le dock a oublié l'envoi (redémarré, abandonné), la page recommence le jeu une fois ou deux depuis le début.
+- Le jeu est écrit dans un **fichier provisoire** (`.envoi-*.part`, invisible pour MAME) et **ne prend son vrai nom qu'une fois entier et vérifié** (signature, structure ZIP) : comme avant.
+- **Mêmes contrôles et mêmes plafonds** qu'avant (nom, 400 Mo par jeu, 3 Go et 300 fichiers par session, 500 Mo gardés libres), **plus** : la place libre est revérifiée **à chaque morceau** (d'autres envois ont pu remplir la carte), **quatre envois en cours au plus**, un morceau de 1 Mo au plus, un envoi sans nouvelle pendant dix minutes est abandonné et son fichier effacé (les fichiers provisoires orphelins, après un redémarrage du dock, aussi). La session compte un jeu, pas vingt-cinq morceaux.
+- **La surface du portail ne grandit pas** : c'est la même adresse `/api/retro/upload`, avec deux paramètres de plus. L'envoi d'un seul tenant (pour `curl`) existe toujours, inchangé.
+- **Un refus qui arrive** (nom, session…) **arrive vraiment au navigateur** : le corps d'un morceau (128 Ko) est lu en entier avant la réponse, ce qui n'était pas le cas d'un fichier de plusieurs Mo (c'était la cause du faux « le dock n'a pas répondu » de la 1.7.1).
+- **Le journal dit maintenant ce qui se passe** : `Envoi de jeu coupé par le navigateur ou le réseau (adresse, jeu, morceau à l'octet N, annoncé M) après T s` dans `/var/log/mydock/dock.log`, et une erreur interne du dock y est tracée au lieu de couper la connexion. Si un morceau échoue encore sur ton réseau, ces lignes diront **où** (à quel octet, au bout de combien de temps) : c'est ce qu'il faudra m'envoyer.
+- À l'écran, un envoi abandonné dit **à quel pourcentage** il s'est arrêté.
+
+Tests ajoutés : 19 sur le gestionnaire par morceaux (chaque cas limite : réponse perdue, morceau coupé en route sans demi-morceau écrit, taille changée, trop d'octets, archive abîmée à la fin, place qui disparaît en route, abandon et ménage, plafonds, deux appareils qui envoient le même nom), 13 sur le vrai portail (un jeu de 3 Mo en vingt-cinq morceaux, reprise d'une réponse perdue, paramètres, jeton, plafonds, coupure de la connexion en plein morceau avec la ligne du journal, erreur interne), et dans un vrai navigateur 2 e2e nouveaux (**un morceau coupé deux fois de suite puis repris ; une réponse perdue après l'écriture**, avec des octets aléatoires comparés à l'octet près) et 1 adapté (la connexion qui lâche pour de bon).
+
+### Ce qu'il reste à vérifier sur ton Pi
+
+- **Envoie `tetris.zip` (3,1 Mo)** : la page doit montrer le pourcentage qui avance par petits pas, puis « envoyé ✔ ». S'il y a des « nouvel essai… » en route mais que ça finit, c'est ton réseau qui perd des paquets : le Pi en filaire, ou plus près de la box, le confirmera.
+- **S'il échoue encore**, envoie-moi `sudo grep 'Envoi de jeu' /var/log/mydock/dock.log | tail -20` et le pourcentage affiché.

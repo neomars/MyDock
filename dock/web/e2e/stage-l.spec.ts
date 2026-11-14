@@ -4,6 +4,7 @@
 // d'exécution de l'assistant (`stack.runDir`). Rien ne sort de cette machine.
 
 import type { BrowserContext, Page } from '@playwright/test'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
@@ -369,7 +370,8 @@ test('Envoyer des jeux : un refus est annoncé avant l’envoi, avec son vrai me
   await page.close()
 })
 
-test('Envoyer des jeux : si la connexion lâche en route, la page redemande au dock pourquoi avant d’accuser le réseau', async ({ stack, context }) => {
+test('Envoyer des jeux : si la connexion lâche pour de bon, la page redemande au dock pourquoi avant d’accuser le réseau', async ({ stack, context }) => {
+  test.setTimeout(120_000) // la page réessaie six fois, avec une pause qui s'allonge, avant d'abandonner
   const { page } = await pcPage(context, stack.portal)
   await expect(page.locator('#send-card')).toBeVisible()
   const refusal = 'Pas assez de place sur la carte du Pi : 3,0 Mo libres, il en faut 503,0 Mo.'
@@ -381,12 +383,50 @@ test('Envoyer des jeux : si la connexion lâche en route, la page redemande au d
   })
   await page.route('**/api/retro/upload*', (route) => route.abort('connectionreset')) // le dock coupe la connexion
   await page.locator('#pick').setInputFiles({ name: 'tetris.zip', mimeType: 'application/zip', buffer: storedZip('rom.bin', Buffer.alloc(1024 * 1024, 1)) })
-  await expect(page.locator('#list li')).toContainText('3,0 Mo libres')
+  await expect(page.locator('#list li')).toContainText('3,0 Mo libres', { timeout: 40_000 })
   expect(checks).toBe(2)
   // Et quand le dock ne voit rien d'anormal, c'est bien le réseau qu'on soupçonne.
   await page.unroute('**/api/retro/check')
   await page.locator('#pick').setInputFiles({ name: 'tetris2.zip', mimeType: 'application/zip', buffer: storedZip('rom.bin', Buffer.alloc(1024 * 1024, 1)) })
-  await expect(page.locator('#list li').nth(1)).toContainText('réseau ou Wi-Fi')
+  await expect(page.locator('#list li').nth(1)).toContainText('réseau ou Wi-Fi', { timeout: 40_000 })
+  await expect(page.locator('#list li').nth(1)).toContainText('envoi interrompu à 0 %')
+  await page.close()
+})
+
+test('Envoyer des jeux : un morceau coupé en route est renvoyé, et le jeu arrive entier', async ({ stack, context }) => {
+  const game = storedZip('rom.bin', crypto.randomBytes(1024 * 1024)) // 1 Mo d'octets quelconques : tout trou ou doublon se verrait
+  const { page } = await pcPage(context, stack.portal)
+  await expect(page.locator('#send-card')).toBeVisible()
+  let uploads = 0
+  await page.route('**/api/retro/upload*', (route) => {
+    uploads += 1
+    if (uploads === 3 || uploads === 4) return route.abort('connectionreset') // deux coupures de suite au milieu du fichier
+    return route.continue()
+  })
+  await page.locator('#pick').setInputFiles({ name: 'tetris.zip', mimeType: 'application/zip', buffer: game })
+  await expect(page.locator('#list li')).toContainText('envoyé ✔', { timeout: 40_000 })
+  expect(uploads).toBeGreaterThan(Math.ceil(game.length / 131072) + 1) // au moins deux morceaux renvoyés
+  expect(fs.readFileSync(path.join(stack.stateDir, 'roms', 'tetris.zip')).equals(game)).toBe(true)
+  expect(fs.readdirSync(path.join(stack.stateDir, 'roms')).filter((n) => n.startsWith('.envoi-'))).toEqual([])
+  await page.close()
+})
+
+test('Envoyer des jeux : une réponse perdue après l’écriture du morceau ne fait ni trou ni doublon', async ({ stack, context }) => {
+  const game = storedZip('rom.bin', crypto.randomBytes(768 * 1024))
+  const { page } = await pcPage(context, stack.portal)
+  await expect(page.locator('#send-card')).toBeVisible()
+  let uploads = 0
+  await page.route('**/api/retro/upload*', async (route) => {
+    uploads += 1
+    if (uploads === 3) {
+      await route.fetch() // le dock reçoit et écrit le morceau...
+      return route.abort('connectionreset') // ... mais la page n'en reçoit jamais la réponse
+    }
+    return route.continue()
+  })
+  await page.locator('#pick').setInputFiles({ name: 'tetrisp.zip', mimeType: 'application/zip', buffer: game })
+  await expect(page.locator('#list li')).toContainText('envoyé ✔', { timeout: 40_000 })
+  expect(fs.readFileSync(path.join(stack.stateDir, 'roms', 'tetrisp.zip')).equals(game)).toBe(true)
   await page.close()
 })
 
