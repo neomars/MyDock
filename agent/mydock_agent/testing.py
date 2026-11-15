@@ -7,7 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import shutil
+import signal
 import struct
+import subprocess
+import tempfile
+import time
 import zlib
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -18,6 +24,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
 from mydock_agent.access import AccessGate
+from mydock_agent.audio_in import AudioIn
 from mydock_agent.builtin_actions import register_builtin
 from mydock_agent.hub import Hub, Provider, Publish
 from mydock_agent.server import create_app
@@ -62,9 +69,28 @@ class RunningAgent:
     gate: AccessGate
     token: str = TOKEN
 
+    audio_in: AudioIn | None = None
+
     @property
     def url(self) -> str:
         return f"ws://127.0.0.1:{self.port}/ws"
+
+    @property
+    def audio_url(self) -> str:
+        return f"ws://127.0.0.1:{self.port}/audio"
+
+    def connect_audio(self, token: str | None = None, *, headers: dict[str, str] | None = None):
+        """`async with agent.connect_audio() as ws` : le flux de son du dock ; `headers={}` pour ne présenter aucun jeton."""
+        if headers is None:
+            headers = bearer_headers(token or self.token)
+        return connect(
+            self.audio_url,
+            additional_headers=headers,
+            open_timeout=3,
+            ping_interval=None,
+            proxy=None,
+            max_size=None,
+        )
 
     def connect(self, token: str | None = None, *, headers: dict[str, str] | None = None):
         """`async with agent.connect() as ws` ; `headers={}` pour ne présenter aucun jeton."""
@@ -86,6 +112,7 @@ async def running_agent(
     port: int = 0,
     registry: ActionRegistry | None = None,
     token: str = TOKEN,
+    audio_in: AudioIn | None = None,
 ) -> AsyncIterator[RunningAgent]:
     hub = Hub(providers if providers is not None else [ScriptedProvider("host", lazy=False)])
     if registry is None:
@@ -95,7 +122,7 @@ async def running_agent(
     if clock is not None:
         gate_kwargs["clock"] = clock
     gate = AccessGate(token, (), lan_networks=list, **gate_kwargs)
-    app = create_app(hub=hub, registry=registry, gate=gate, demo=demo)
+    app = create_app(hub=hub, registry=registry, gate=gate, demo=demo, audio_in=audio_in)
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -114,7 +141,7 @@ async def running_agent(
             while not server.started:
                 await asyncio.sleep(0.01)
         actual_port = server.servers[0].sockets[0].getsockname()[1]
-        yield RunningAgent(actual_port, hub, registry, gate, token)
+        yield RunningAgent(actual_port, hub, registry, gate, token, audio_in)
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 5)
@@ -173,3 +200,86 @@ async def wait_closed(ws: ClientConnection, timeout: float = 3.0) -> ConnectionC
                 await ws.recv()
     except ConnectionClosed as closed:
         return closed
+
+
+# --- un vrai serveur de son, sans carte son --------------------------------------------------------------------------------
+
+
+@dataclass
+class AudioStack:
+    """Un PipeWire (avec sa couche PulseAudio) jetable : de vrais puits virtuels, sans matériel.
+
+    Sert à vérifier le son de bout en bout (VLC -> puits -> capture -> agent -> `pacat` -> puits) avec les vrais outils.
+    """
+
+    env: dict[str, str]
+
+    def pactl(self, *args: str) -> str:
+        result = subprocess.run(
+            ["pactl", *args], env=self.env, capture_output=True, text=True, timeout=10, check=True
+        )
+        return result.stdout
+
+    def new_sink(self, name: str) -> None:
+        """Un puits virtuel (`name`) et son moniteur (`name.monitor`), au format du dock."""
+        self.pactl(
+            "load-module", "module-null-sink", f"sink_name={name}",
+            "rate=48000", "channels=2", "format=s16le",
+        )  # fmt: skip
+
+    def capture(self, source: str, seconds: float) -> subprocess.Popen[bytes]:
+        """Enregistre `source` (brut, s16le, 48 kHz, stéréo) pendant `seconds` ; lire la sortie avec `.communicate()`."""
+        return subprocess.Popen(
+            ["timeout", str(seconds), "parec", f"--device={source}", "--format=s16le",
+             "--rate=48000", "--channels=2", "--raw"],
+            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )  # fmt: skip
+
+
+def have_audio_tools() -> bool:
+    return all(
+        shutil.which(tool)
+        for tool in ("pipewire", "wireplumber", "pipewire-pulse", "pactl", "parec", "pacat", "dbus-run-session", "timeout")
+    )  # fmt: skip
+
+
+@contextlib.contextmanager
+def audio_stack(*, user_env: dict[str, str] | None = None) -> Any:
+    """Démarre PipeWire + WirePlumber + pipewire-pulse dans un dossier d'exécution à soi ; les arrête à la sortie."""
+    runtime = tempfile.mkdtemp(
+        prefix="mdk-"
+    )  # court : le chemin d'une prise Unix est limité à 108 caractères
+    os.chmod(runtime, 0o700)
+    env = {
+        **os.environ,
+        **(user_env or {}),
+        "XDG_RUNTIME_DIR": runtime,
+        "HOME": runtime,
+        "LC_ALL": "C",
+    }
+    env.pop("PULSE_SINK", None)
+    env.pop("PULSE_SERVER", None)
+    script = "pipewire & sleep 1; wireplumber & sleep 1; pipewire-pulse & wait"
+    process = subprocess.Popen(
+        ["dbus-run-session", "--", "sh", "-c", script],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+    )  # fmt: skip
+    stack = AudioStack(env)
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            probe = subprocess.run(
+                ["pactl", "info"], env=env, capture_output=True, timeout=5, check=False
+            )
+            if probe.returncode == 0:
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError("le serveur de son de test ne démarre pas")
+            time.sleep(0.3)
+        time.sleep(0.5)  # WirePlumber a fini d'installer ses règles de liaison
+        yield stack
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        shutil.rmtree(runtime, ignore_errors=True)

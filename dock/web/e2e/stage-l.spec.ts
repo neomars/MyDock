@@ -132,6 +132,8 @@ test('Retrogame : toucher un jeu le lance ; l’écran dit « En jeu » et ne pr
   await expect(now).toHaveAttribute('data-state', 'playing', { timeout: 10_000 })
   await expect(dock.getByTestId('game-now-state')).toHaveText('En jeu')
   await expect(dock.getByTestId('game-now-hint')).toContainText('Touche l’écran pour quitter')
+  await expect(dock.getByTestId('game-now-audio')).toHaveText('Son : sur le PC', { timeout: 15_000 }) // les jeux sortent sur le PC comme les vidéos
+  await expect(dock.getByTestId('game-now-audio')).toHaveAttribute('data-level', 'good')
   // Aucun bouton « Quitter » ni « Revenir au jeu », pas de télécommande : la page n'a que sa grande zone tactile (le toucher quitte,
   // comme le bouton physique et Select + Start tenus). Le jeu masque la liste : rien d'autre à toucher que l'en-tête de l'application.
   await expect(dock.getByTestId('page-media').getByRole('button')).toHaveCount(1)

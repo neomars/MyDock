@@ -1,3 +1,16 @@
+mydock-agent (1.8.0) unstable; urgency=medium
+
+  * Le son du dock sort sur ce PC : le Raspberry Pi n'a pas d'enceintes, le son de ses vidéos, de la TV et de ses jeux arrive
+    ici. Nouvelle porte /audio, sur le même port que /ws, avec le même jeton et la même liste d'adresses autorisées (rien de
+    plus n'est ouvert sur le réseau). Un seul format (PCM 16 bits, 48 kHz, stéréo), joué par pacat sur la sortie par défaut
+    avec une ligne de commande figée (rien ne vient du dock) ; un flux à la fois ; le retard est borné (les trames en trop
+    sont jetées) ; un flux muet est fermé au bout de dix secondes. Il apparaît dans la page Son comme une application,
+    « MyDock », avec son volume.
+  * Le message d'accueil de l'agent dit qu'il sait recevoir le son (audio_in) : un dock à jour prévient, sur son écran, qu'un
+    agent plus ancien ne le peut pas. mydock-agent doctor vérifie pacat (paquet pulseaudio-utils).
+
+ -- neomars <neomars@users.noreply.github.com>  Sun, 15 Nov 2026 12:00:00 +0000
+
 mydock-agent (1.7.3) unstable; urgency=medium
 
   * Aucun changement du côté du PC : la version suit celle du dock (1.7.3), qui envoie les jeux par morceaux depuis la page

@@ -145,6 +145,13 @@ class MediaStore {
     return ack.ok
   }
 
+  /** Réglages → Divertissement → Son : sur le PC ou sur le Pi, et l'avance du son des vidéos (prise en compte à la lecture suivante). */
+  async saveSound(patch: { pc_audio?: boolean; audio_advance_ms?: number }): Promise<boolean> {
+    const ack = await sock.act('dock.sound.set', patch)
+    if (!ack.ok) notify(ack.e?.msg ?? 'Réglage du son non enregistré.', 'bad', 6_000)
+    return ack.ok
+  }
+
   /** Essaie la liste des chaînes, le serveur de fichiers et le lecteur ; dit lequel ne va pas. */
   async test(): Promise<{ tv: MediaTestPart; files: MediaTestPart; player: MediaTestPart } | null> {
     const ack = await sock.act('dock.media.test', {}, { timeoutMs: 50_000 })

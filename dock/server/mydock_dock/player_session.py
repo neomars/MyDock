@@ -49,6 +49,7 @@ from mydock_dock.mame_playback import (
     valid_rompath,
 )
 from mydock_dock.mame_playback import read_flags as read_mame_flags
+from mydock_dock.pc_audio import DemoSound, PcSound, usable_environment
 from mydock_dock.retrogame import find_mame
 
 log = logging.getLogger("mydock.player")
@@ -1269,6 +1270,7 @@ class Session:
         mame: str | None = None,
         gpio_backend: Callable[[], Any] | None = None,
         button_pin: int = DEFAULT_PIN,
+        sound: PcSound | None = None,
     ) -> None:
         self.url = url
         self.demo = demo
@@ -1307,7 +1309,16 @@ class Session:
         self._job = 0
         self._monitor: asyncio.Task[None] | None = None
         self._send: Callable[[dict[str, Any]], Any] | None = None
+        self._send_bytes: Callable[[bytes], Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        #: Le son de la lecture, capturé pour sortir sur le PC (le Pi n'a pas d'enceintes) : voir pc_audio.py.
+        sound_class = DemoSound if demo else PcSound
+        self.sound: PcSound = sound or sound_class(
+            usable_environment(self.env),
+            emit=self._emit,
+            send_frame=self._emit_sound,
+            event=playerlog.event,
+        )
 
     def hello(self) -> dict[str, Any]:
         return {
@@ -1377,16 +1388,24 @@ class Session:
                 f"lecture {self._job} : demandée par le dock ({'chaîne en direct' if live else 'fichier'}), "
                 f"adresse {url}, volume {volume} %, identifiant du partage : {'oui' if smb else 'non'}"
             )
+            routed = await self.sound.begin()  # avant VLC : le début du son n'est pas perdu
+            env = session_environment(self.env)
+            if routed:  # le son sort sur le PC : VLC joue dans le puits virtuel et avance son son
+                env.update(self.sound.route_env())
             playback = VlcPlayback(
                 url, live=live, volume=volume, vlc=self.vlc, ffmpeg=self.ffmpeg, live555=self.live555,
-                runtime_dir=self.runtime_dir, env=session_environment(self.env), extra=self.extra, smb=smb, job=self._job,
-                smbclient=self.smbclient, smb_source=smb_source_from(message),
+                runtime_dir=self.runtime_dir, env=env,
+                extra=[*self.sound.vlc_args(), *self.extra] if routed else self.extra,
+                smb=smb, job=self._job, smbclient=self.smbclient, smb_source=smb_source_from(message),
                 profile=self.live_profile if live else 0,
             )  # fmt: skip
+        if self.demo:
+            await self.sound.begin()
         try:
             await playback.start()
         except (OSError, RuntimeError) as exc:
             await playback.stop()
+            await self.sound.end()
             self._engine = None
             await self._ended(
                 self._job,
@@ -1462,6 +1481,7 @@ class Session:
         self._engine = None
         self.front = "dock"
         self.inputs.stop()
+        await self.sound.end()
         await self.touch.stop()
         await self.windows.focus("dock")
         await self._emit({"t": "ended", "job": job, "error": error})
@@ -1480,6 +1500,7 @@ class Session:
             self.inputs.stop()
             await self.touch.stop()
             await self.windows.focus("dock")
+        await self.sound.end()
 
     async def _set_front(self, to: str) -> None:
         if to not in ("video", "dock"):
@@ -1521,15 +1542,22 @@ class Session:
                 await self._ended(job, "MAME est absent du Pi : sudo apt install mame")
                 return
             playerlog.event(f"jeu {job} : demandé par le dock — « {game} », ROMs dans {rompath}")
+            routed = await self.sound.begin()  # avant MAME : le début du son n'est pas perdu
+            env = session_environment(self.env)
+            if routed:  # le son sort sur le PC : MAME joue dans le puits virtuel
+                env.update(self.sound.route_env())
             playback = MamePlayback(
                 game, rompath=rompath, mame=self.mame, windows=self.windows,
-                env=session_environment(self.env), runtime_dir=self.runtime_dir, job=job, title=title,
+                env=env, runtime_dir=self.runtime_dir, job=job, title=title,
             )  # fmt: skip
         self._engine = "mame"
+        if self.demo:
+            await self.sound.begin()
         try:
             await playback.start()
         except (OSError, RuntimeError) as exc:
             await playback.stop()
+            await self.sound.end()
             self._engine = None
             await self._ended(
                 job,
@@ -1608,7 +1636,12 @@ class Session:
             self._loop.create_task(self._emit(self.hello()))
 
     async def _configure(self, message: dict[str, Any]) -> None:
-        """La configuration que le dock transmet (la broche du bouton) ; l'assistant ne lit pas dock.toml."""
+        """La configuration que le dock transmet (la broche du bouton, le son) ; l'assistant ne lit pas dock.toml."""
+        enabled, advance = message.get("pc_audio"), message.get("audio_advance_ms")
+        if isinstance(enabled, bool):
+            self.sound.enabled = enabled
+        if isinstance(advance, int) and not isinstance(advance, bool) and 0 <= advance <= 1000:
+            self.sound.advance_ms = advance
         pin = message.get("button_gpio")
         if (
             isinstance(pin, int)
@@ -1640,6 +1673,11 @@ class Session:
                     with contextlib.suppress(OSError):
                         path.unlink()
                     await action()
+
+    async def _emit_sound(self, frame: bytes) -> None:
+        """Une trame du son capturé, pour le dock (qui la relaie au PC) : perdue si le dock n'est pas là."""
+        if self._send_bytes is not None:
+            await self._send_bytes(frame)
 
     async def _emit(self, message: dict[str, Any]) -> None:
         if self._send is not None:
@@ -1702,6 +1740,10 @@ class Session:
             + f", live555 {'oui' if self.live555 else 'NON (chaînes par le pont ffmpeg)'}"
         )
         playerlog.event(f"options de VLC en plus ({FLAGS_FILE}) : {self.extra or 'aucune'}")
+        playerlog.event(
+            f"son : serveur de son du Pi : {await self.sound.probe()} — réglage : "
+            f"{'sur le PC' if self.sound.enabled else 'sur le Pi'}"
+        )
 
     async def serve(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -1737,7 +1779,10 @@ class Session:
                     async def send(message: dict[str, Any], ws: Any = ws) -> None:
                         await ws.send(json.dumps(message, separators=(",", ":")))
 
-                    self._send = send
+                    async def send_bytes(frame: bytes, ws: Any = ws) -> None:
+                        await ws.send(frame)
+
+                    self._send, self._send_bytes = send, send_bytes
                     await send(self.hello())
                     async for raw in ws:
                         try:
@@ -1758,7 +1803,7 @@ class Session:
                     playerlog.event(
                         f"liaison avec le dock perdue ({exc}) : nouvel essai dans un instant"
                     )
-            self._send = None
+            self._send = self._send_bytes = None
             await self._stop_playback()
             await asyncio.sleep(delay)
             delay = min(delay * 2, 10.0)

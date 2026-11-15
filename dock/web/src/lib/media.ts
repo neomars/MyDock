@@ -1,7 +1,7 @@
 // Divertissement : Freetv (les chaînes de la Freebox) et Kiosque (ses partages Samba), lus par VLC sur l'écran du dock.
 // Fonctions pures, testées dans media.test.ts. L'état et les actions sont dans media.svelte.ts.
 
-import type { MediaEntry, PlayerSnapshot, TvChannel } from './protocol'
+import type { MediaEntry, PlayerAudio, PlayerSnapshot, TvChannel } from './protocol'
 
 export type MediaView = 'menu' | 'tv' | 'files'
 
@@ -132,4 +132,38 @@ export const SEEK_SECONDS = 30
 export function splitFailure(text: string): { main: string; detail: string | null } {
   const match = /^(.*?)\s*Détail : «\s*(.*?)\s*»\.?\s*$/s.exec(text)
   return match ? { main: match[1], detail: match[2] || null } : { main: text, detail: null }
+}
+
+/** L'avance du son des vidéos se règle de 50 ms en 50 ms, de 0 à 1 000 ms. */
+export const ADVANCE_STEP_MS = 50
+export const ADVANCE_MAX_MS = 1_000
+
+/** Le prochain réglage de l'avance du son, borné (`direction` : +1 ou −1). */
+export const stepAdvance = (current: number, direction: 1 | -1): number =>
+  Math.min(ADVANCE_MAX_MS, Math.max(0, Math.round(current / ADVANCE_STEP_MS) * ADVANCE_STEP_MS + direction * ADVANCE_STEP_MS))
+
+/** « 150 ms », « 1,0 s » : l'avance du son, lisible. */
+export const advanceText = (ms: number): string => (ms >= 1_000 ? `${(ms / 1_000).toFixed(1).replace('.', ',')} s` : `${ms} ms`)
+
+export type AudioLevel = 'good' | 'warn' | 'dim'
+
+/** Une phrase sur où sort le son pendant une lecture : `null` quand il n'y a rien à dire (un dock plus ancien, ou rien ne joue). */
+export function audioLine(audio: PlayerAudio | null | undefined): { text: string; level: AudioLevel } | null {
+  if (!audio) return null
+  if (audio.mode === 'local') return { text: 'Son : sur le Pi', level: 'dim' }
+  switch (audio.state) {
+    case 'streaming':
+      return { text: 'Son : sur le PC', level: 'good' }
+    case 'connecting':
+    case 'idle':
+      return { text: 'Son : connexion au PC…', level: 'dim' }
+    case 'offline':
+      return { text: 'PC hors ligne : pas de son', level: 'warn' }
+    case 'old':
+      return { text: 'Agent du PC trop ancien : pas de son', level: 'warn' }
+    case 'error':
+      return { text: audio.detail ? `Pas de son : ${audio.detail}` : 'Pas de son', level: 'warn' }
+    default:
+      return null
+  }
 }

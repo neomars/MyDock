@@ -202,8 +202,13 @@ if [ "$KIOSK" = systemd ] && [ "$STAGING" != 1 ]; then
   if ! getent passwd mydock-kiosk >/dev/null; then
     run useradd --system --user-group --create-home --home-dir /var/lib/mydock-kiosk --shell /usr/sbin/nologin mydock-kiosk
   fi
-  # « audio » : le son des vidéos du Divertissement (VLC) sort par la carte son du Pi (HDMI ou prise).
+  # « audio » : le son du Divertissement sort par la carte son du Pi (HDMI ou prise) quand « Son sur le PC » est coupé.
   run usermod -aG video,render,input,audio mydock-kiosk
+  # Le son du Divertissement sort sur le PC : PipeWire (qui porte le puits virtuel où VLC et MAME jouent) tourne dans le
+  # gestionnaire de session de cet utilisateur ; « linger » le garde en vie d'un redémarrage du kiosque à l'autre.
+  if have loginctl; then
+    run loginctl enable-linger mydock-kiosk || warn "loginctl enable-linger a échoué : le son du Divertissement sur le PC démarrera avec l'écran."
+  fi
   # « input » : MAME lit les manettes et l'assistant lit l'écran tactile ; « gpio » : le bouton physique de Retrogame.
   if getent group gpio >/dev/null 2>&1; then
     run usermod -aG gpio mydock-kiosk

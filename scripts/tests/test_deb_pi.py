@@ -151,6 +151,17 @@ def test_optional_features_are_recommended_not_required(pi_deb):
     assert "wlopm" not in field(pi_deb, "Depends")
 
 
+def test_the_sound_for_the_pc_is_recommended(pi_deb):
+    """Le Pi n'a pas d'enceintes : le son du Divertissement est capturé (PipeWire, pactl, parec) pour sortir sur le PC."""
+    recommends = field(pi_deb, "Recommends").split(", ")
+    depends = field(pi_deb, "Depends").split(", ")
+    for wanted in ("pipewire-pulse", "wireplumber", "pulseaudio-utils"):
+        assert wanted in [r.strip() for r in recommends], wanted
+        assert (
+            wanted not in depends
+        )  # sans eux le dock marche, et l'écran dit pourquoi on n'entend rien
+
+
 def test_the_entertainment_programs_are_recommended(pi_deb):
     """Divertissement : sans eux le reste du dock marche, et l'écran dit ce qui manque."""
     recommends = field(pi_deb, "Recommends").split(", ")

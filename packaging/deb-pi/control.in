@@ -5,7 +5,8 @@ Maintainer: neomars <neomars@users.noreply.github.com>
 Installed-Size: @INSTALLED_SIZE@
 Depends: @DEPENDS@
 Recommends: wlopm, fonts-dejavu-core, vlc-bin, vlc-plugin-base, vlc-plugin-video-output, vlc-plugin-samba,
- smbclient, xwayland, wlrctl | xdotool, mame, python3-libgpiod, python3-dbus-fast, bluez
+ smbclient, xwayland, wlrctl | xdotool, mame, python3-libgpiod, python3-dbus-fast, bluez,
+ pipewire-pulse, wireplumber, pulseaudio-utils
 Section: utils
 Priority: optional
 Homepage: https://github.com/neomars/MyDock

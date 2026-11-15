@@ -542,6 +542,7 @@ def make_session(rig, **kw):
         **kw,
     )
     s.windows, s.touch = rig.windows, FakeTouch()
+    s.sound.enabled = False  # le serveur de son de cette machine ne regarde pas ces essais (voir test_pc_audio.py)
     s.inputs = FakeInputs()
     s.wake_screen = lambda: asyncio.sleep(0, result=True)
     s._loop = asyncio.get_running_loop()

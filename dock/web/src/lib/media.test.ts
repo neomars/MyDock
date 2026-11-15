@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ADVANCE_MAX_MS,
+  advanceText,
+  audioLine,
   channelCount,
   fileSize,
   filterChannels,
@@ -14,9 +17,10 @@ import {
   progressRatio,
   splitFailure,
   stateText,
+  stepAdvance,
   whereText,
 } from './media'
-import type { PlayerSnapshot, TvChannel } from './protocol'
+import type { PlayerAudio, PlayerSnapshot, TvChannel } from './protocol'
 
 const channel = (id: string, number: number | null, name: string): TvChannel => ({ id, number, name, qualities: ['sd'] })
 const CHANNELS = [channel('a', 1, 'TF1'), channel('b', 2, 'France 2'), channel('c', 6, 'M6'), channel('d', 61, 'Télé Paris'), channel('e', null, 'Radio Classique'), channel('f', 16, 'Équidia')]
@@ -163,5 +167,46 @@ describe('l’échec d’une lecture', () => {
   })
   it('ne coupe pas un message où « Détail » apparaît ailleurs', () => {
     expect(splitFailure('Le détail est dans Détail : le journal').detail).toBeNull()
+  })
+})
+
+describe('le son sur le PC', () => {
+  const audio = (state: PlayerAudio['state'], detail = '', mode: PlayerAudio['mode'] = 'pc'): PlayerAudio => ({ mode, state, detail })
+
+  it('dit où sort le son quand il joue', () => {
+    expect(audioLine(audio('streaming'))).toEqual({ text: 'Son : sur le PC', level: 'good' })
+    expect(audioLine(audio('local', '', 'local'))).toEqual({ text: 'Son : sur le Pi', level: 'dim' })
+  })
+
+  it('dit pourquoi on n’entend rien', () => {
+    expect(audioLine(audio('offline'))).toEqual({ text: 'PC hors ligne : pas de son', level: 'warn' })
+    expect(audioLine(audio('old'))?.level).toBe('warn')
+    expect(audioLine(audio('old'))?.text).toContain('trop ancien')
+    expect(audioLine(audio('error', 'pacat est introuvable sur le PC.'))).toEqual({ text: 'Pas de son : pacat est introuvable sur le PC.', level: 'warn' })
+    expect(audioLine(audio('error'))?.text).toBe('Pas de son')
+  })
+
+  it('attend sans alarmer pendant la connexion', () => {
+    expect(audioLine(audio('connecting'))?.level).toBe('dim')
+    expect(audioLine(audio('idle'))?.level).toBe('dim')
+  })
+
+  it('ne dit rien d’un dock plus ancien', () => {
+    expect(audioLine(undefined)).toBeNull()
+    expect(audioLine(null)).toBeNull()
+  })
+
+  it('règle l’avance du son de 50 ms en 50 ms, de 0 à 1 s', () => {
+    expect(stepAdvance(150, 1)).toBe(200)
+    expect(stepAdvance(150, -1)).toBe(100)
+    expect(stepAdvance(0, -1)).toBe(0)
+    expect(stepAdvance(ADVANCE_MAX_MS, 1)).toBe(ADVANCE_MAX_MS)
+    expect(stepAdvance(130, 1)).toBe(200) // une valeur hors pas est ramenée au pas le plus proche, puis avancée
+  })
+
+  it('écrit l’avance lisiblement', () => {
+    expect(advanceText(150)).toBe('150 ms')
+    expect(advanceText(0)).toBe('0 ms')
+    expect(advanceText(1000)).toBe('1,0 s')
   })
 })
