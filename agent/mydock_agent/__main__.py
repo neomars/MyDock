@@ -23,6 +23,7 @@ import uvicorn
 
 from mydock_agent import __version__
 from mydock_agent.access import AccessGate
+from mydock_agent.audio_in import AudioIn, DemoSink
 from mydock_agent.config import (
     DEFAULT_PORT,
     AgentConfig,
@@ -227,7 +228,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     providers, registry = build_runtime(demo=args.demo)
     hub = Hub(providers)
     gate = AccessGate(config.token, config.allowed_clients)
-    app = create_app(hub=hub, registry=registry, gate=gate, demo=args.demo)
+    audio_in = AudioIn(
+        DemoSink if args.demo else AudioIn.default_sink
+    )  # le son du dock (le Pi n'a pas d'enceintes)
+    app = create_app(hub=hub, registry=registry, gate=gate, demo=args.demo, audio_in=audio_in)
 
     session = detect_session()
     allowed = ", ".join(str(n) for n in config.allowed_clients) or "réseaux locaux de ce PC"

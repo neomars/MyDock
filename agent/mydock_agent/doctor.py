@@ -773,6 +773,11 @@ def check_tools(report: Report) -> None:
         ("systemd-run", "lancer des applications hors de l'agent", True),
         ("gtk-launch", "lancer par identifiant .desktop", False),
         ("pactl", "son (paquet pulseaudio-utils)", False),
+        (
+            "pacat",
+            "jouer ici le son du dock : le Pi n'a pas d'enceintes (paquet pulseaudio-utils)",
+            False,
+        ),
         ("nmcli", "réglage Wake-on-LAN", False),
         ("ethtool", "lecture Wake-on-LAN", False),
     ):

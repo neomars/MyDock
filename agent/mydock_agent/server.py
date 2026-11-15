@@ -19,6 +19,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mydock_agent import __version__
 from mydock_agent.access import AccessGate
+from mydock_agent.audio_in import AudioIn
 from mydock_agent.hub import ClientConnection, Hub
 from mydock_common import protocol as proto
 from mydock_common.actions import ActionContext, ActionRegistry
@@ -69,7 +70,12 @@ class GateMiddleware:
 
 
 def create_app(
-    *, hub: Hub, registry: ActionRegistry, gate: AccessGate, demo: bool = False
+    *,
+    hub: Hub,
+    registry: ActionRegistry,
+    gate: AccessGate,
+    demo: bool = False,
+    audio_in: AudioIn | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -95,13 +101,33 @@ def create_app(
             await ws.close(code=1008)
             return
         await ws.accept()
-        await _serve_client(ws, peer, hub=hub, registry=registry, demo=demo)
+        await _serve_client(
+            ws, peer, hub=hub, registry=registry, demo=demo, audio=audio_in is not None
+        )
+
+    @app.websocket("/audio")
+    async def audio_endpoint(ws: WebSocket) -> None:
+        """Le son du dock (le Pi n'a pas d'enceintes) : même barrière que `/ws`, puis un flux de son brut (voir audio_in.py)."""
+        peer = ws.client.host if ws.client else "?"
+        if audio_in is None or not gate.authenticate(
+            peer, parse_bearer(ws.headers.get("authorization"))
+        ):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+        await audio_in.serve(ws, peer)
 
     return app
 
 
 async def _serve_client(
-    ws: WebSocket, peer: str, *, hub: Hub, registry: ActionRegistry, demo: bool
+    ws: WebSocket,
+    peer: str,
+    *,
+    hub: Hub,
+    registry: ActionRegistry,
+    demo: bool,
+    audio: bool = False,
 ) -> None:
     conn = ClientConnection(peer)
     ctx = ActionContext(conn.id, peer)
@@ -116,6 +142,7 @@ async def _serve_client(
                     "demo": demo,
                     "topics": hub.topics,
                     "actions": registry.names,
+                    "audio_in": audio,  # le PC sait jouer le son du dock (voir audio_in.py)
                 }
             )
         )

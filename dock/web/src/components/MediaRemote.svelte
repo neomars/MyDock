@@ -6,7 +6,7 @@
   import Play from '@lucide/svelte/icons/play'
   import Rewind from '@lucide/svelte/icons/rewind'
   import Square from '@lucide/svelte/icons/square'
-  import { formatPlayTime, progressRatio, SEEK_SECONDS, stateText } from '../lib/media'
+  import { audioLine, formatPlayTime, progressRatio, SEEK_SECONDS, stateText } from '../lib/media'
   import { media } from '../lib/media.svelte'
   import type { PlayerSnapshot } from '../lib/protocol'
   import Slider from './Slider.svelte'
@@ -18,6 +18,8 @@
   const paused = $derived(player.state === 'paused')
   // Pas d'avance rapide dans un direct, ni quand le fichier arrive par un tube (smbclient : VLC ne peut pas y revenir en arrière).
   const seekable = $derived(!player.live && player.state !== 'starting' && player.seekable !== false)
+  // Où sort le son : le Pi n'a pas d'enceintes, il sort sur le PC ; si le PC ne le joue pas, on le dit (sinon : un film muet inexpliqué).
+  const audio = $derived(audioLine(player.audio))
 </script>
 
 <section class="remote card" data-testid="remote" data-state={player.state} data-front={player.front}>
@@ -58,6 +60,9 @@
     </button>
   </div>
 
+  {#if audio}
+    <p class="audio" class:good={audio.level === 'good'} class:warn={audio.level === 'warn'} class:dim={audio.level === 'dim'} data-testid="remote-audio" data-level={audio.level}>{audio.text}</p>
+  {/if}
   <div class="volume">
     <span class="dim">Volume</span>
     <Slider value={player.volume} label="Volume de la vidéo" valueText="{player.volume} %" testid="remote-volume" onCommit={(v) => media.volume(v)} />
@@ -150,5 +155,16 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
+  }
+  .audio {
+    margin: 0;
+    font-size: var(--fs-small);
+    font-weight: 600;
+  }
+  .audio.good {
+    color: var(--good);
+  }
+  .audio.warn {
+    color: var(--warn);
   }
 </style>

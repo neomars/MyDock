@@ -366,11 +366,23 @@ async def command_of(ws, timeout=3.0):
 async def test_the_helper_is_told_the_button_pin_when_it_connects_and_when_it_changes(dock):
     async with helper(dock) as ws:
         first = json.loads(await asyncio.wait_for(ws.recv(), 3))
-        assert first == {"t": "cmd", "name": "configure", "button_gpio": 17}
+        assert first == {
+            "t": "cmd",
+            "name": "configure",
+            "button_gpio": 17,
+            "pc_audio": True,
+            "audio_advance_ms": 150,
+        }
         async with dock.connect() as browser:
             await call(browser, "a1", "dock.retro.set", {"button_gpio": 22})
         again = json.loads(await asyncio.wait_for(ws.recv(), 3))
-        assert again == {"t": "cmd", "name": "configure", "button_gpio": 22}
+        assert again == {
+            "t": "cmd",
+            "name": "configure",
+            "button_gpio": 22,
+            "pc_audio": True,
+            "audio_advance_ms": 150,
+        }
 
 
 @pytest.fixture
@@ -634,6 +646,8 @@ async def test_the_password_is_kept_in_the_private_file_and_never_shown(dock):
             "smb_user": "moi",
             "smb_password_set": True,
             "smbclient": shutil.which("smbclient") is not None,
+            "pc_audio": True,
+            "audio_advance_ms": 150,
         }
         topic = (await snapshot_of(browser, "dock"))["data"]["media"]
         assert "très secret" not in json.dumps(topic)

@@ -18,7 +18,10 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from mydock_dock.audio_relay import AudioRelay
 
 log = logging.getLogger(__name__)
 media_log = logging.getLogger(
@@ -82,6 +85,9 @@ class PlayerHub:
         self.button = 0
         #: Ce que l'assistant doit savoir de la configuration du dock (la broche du bouton) : envoyé à sa connexion.
         self.settings: dict[str, Any] = {}
+        #: Le son va au PC (le Pi n'a pas d'enceintes) : le relais vers l'agent, et pourquoi l'assistant n'a pas pu capturer le son.
+        self.audio: AudioRelay | None = None
+        self.audio_problem: str | None = None
         self._started_at = 0.0
         self._watchdog: asyncio.Task[None] | None = None
 
@@ -114,6 +120,7 @@ class PlayerHub:
             "front": self.front,
             "seekable": self.seekable,
             "error": self.error,
+            "audio": self.audio_snapshot(),
             "helper": {
                 k: helper.get(k)
                 for k in ("vlc", "live555", "ffmpeg", "touch", "demo", "mame", "gpio")
@@ -121,6 +128,40 @@ class PlayerHub:
             if helper
             else None,
         }
+
+    def audio_snapshot(self) -> dict[str, Any]:
+        """Où sort le son : sur le PC (et son état : il joue, le PC est hors ligne…) ou sur le Pi."""
+        if not self.settings.get("pc_audio", True):
+            return {"mode": "local", "state": "local", "detail": ""}
+        if self.audio_problem:
+            return {"mode": "pc", "state": "error", "detail": self.audio_problem}
+        if self.audio is None or not self.active:
+            return {"mode": "pc", "state": "idle", "detail": ""}
+        return {"mode": "pc", **self.audio.snapshot()}
+
+    def _audio_end(self) -> None:
+        if self.audio is not None:
+            self.audio.end()
+
+    def _audio_message(self, message: dict[str, Any]) -> None:
+        """L'assistant dit où il en est du son : il capture, il a fini, ou il ne peut pas (pas de serveur de son)."""
+        state = message.get("state")
+        if state == "capturing" and self.audio is not None:
+            self.audio_problem = None
+            self.audio.begin()
+        elif state == "stopped":
+            self._audio_end()
+        elif state == "unavailable":
+            reason = message.get("reason")
+            self.audio_problem = (
+                reason[:300]
+                if isinstance(reason, str) and reason
+                else "Le son du Pi n'est pas disponible."
+            )
+            media_log.warning(
+                "Son : l'assistant ne peut pas capturer le son : %s", self.audio_problem
+            )
+        self._changed()
 
     def _changed(self) -> None:
         self._on_change()
@@ -146,6 +187,7 @@ class PlayerHub:
         if self.helper is not conn:
             return
         self.helper = None
+        self._audio_end()
         if self.active:
             self._fail("L'assistant de lecture s'est arrêté : la lecture est interrompue.")
         self._changed()
@@ -166,6 +208,8 @@ class PlayerHub:
                 "gpio": str(message.get("gpio") or "")[:120] or None,
             }
             self._changed()
+        elif kind == "audio":
+            self._audio_message(message)
         elif kind == "button":
             self.button += 1
             self._changed()
@@ -200,6 +244,7 @@ class PlayerHub:
     def _ended(self, message: dict[str, Any]) -> None:
         reason = message.get("error")
         self._cancel_watchdog()
+        self._audio_end()
         self.front = "dock"
         if isinstance(reason, str) and reason:
             self.state, self.error = "error", reason[:420]
@@ -296,6 +341,7 @@ class PlayerHub:
                 self.front = "dock"
         elif name == "stop":
             self._cancel_watchdog()
+            self._audio_end()
             if self.state in ("starting", "playing", "paused"):
                 self.state, self.error, self.media = "idle", None, None
                 self.position = self.length = None

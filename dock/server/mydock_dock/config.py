@@ -28,6 +28,8 @@
     smb_host = "mafreebox.freebox.fr"
     smb_user = ""               # vide = accès sans identifiant
     smb_password = ""
+    pc_audio = true             # le son des vidéos, de la TV et des jeux sort sur le PC (le Pi n'a pas d'enceintes)
+    audio_advance_ms = 150      # de combien le son des vidéos est avancé, pour rattraper le temps du trajet jusqu'au PC
 
     [retrogame]                 # Retrogame : des jeux d'arcade MAME sur l'écran du dock
     roms_dir = "/var/lib/mydock/roms"   # vide = le dossier « roms » de l'état du dock
@@ -61,6 +63,8 @@ DEFAULT_STATE_DIR = Path("/var/lib/mydock")
 DEFAULT_CLIENTS_DIR = Path("/usr/share/mydock/clients")
 DEFAULT_SMB_HOST = "mafreebox.freebox.fr"
 DEFAULT_BUTTON_GPIO = 17  # broche physique 11 (la masse est sur la broche 9)
+DEFAULT_AUDIO_ADVANCE_MS = 150  # le trajet du son du Pi jusqu'au PC (capture, réseau, lecteur du PC) : un peu plus d'un dixième de seconde
+MAX_AUDIO_ADVANCE_MS = 1000
 GPIO_PINS = range(2, 28)  # les GPIO 2 à 27 de l'en-tête de 40 broches
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 API_KEY_RE = re.compile(r"^[A-Za-z0-9_.~-]{8,128}$")
@@ -103,6 +107,10 @@ class DockConfig:
     button_gpio: int = DEFAULT_BUTTON_GPIO
     #: Le PC associé (reconnu à son adresse IP) envoie des jeux sans le code de l'écran ; un autre appareil le recopie.
     upload_without_code: bool = True
+    #: Le son du lecteur (VLC, MAME) sort sur le PC : le Pi n'a pas d'enceintes. Faux : il reste sur le Pi (HDMI, prise jack).
+    pc_audio: bool = True
+    #: Les vidéos avancent leur son de ce temps (ms) : le trajet jusqu'au PC le retarde, l'image ne doit pas arriver avant lui.
+    audio_advance_ms: int = DEFAULT_AUDIO_ADVANCE_MS
     demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
     demo_retro: bool = False  # idem : de faux jeux, de fausses manettes (essais et captures)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -167,6 +175,10 @@ class DockConfig:
             smb_host = validate_host(raw_smb_host) if raw_smb_host else ""
             smb_user = clean_smb_user(media.get("smb_user", ""))
             smb_password = clean_smb_password(media.get("smb_password", ""))
+            pc_audio = clean_flag(media.get("pc_audio", True), "pc_audio")
+            audio_advance_ms = clean_audio_advance(
+                media.get("audio_advance_ms", DEFAULT_AUDIO_ADVANCE_MS)
+            )
         except (ValueError, ValidationFailure) as exc:
             raise ConfigError(f"[media] : {exc}") from None
         try:
@@ -201,6 +213,8 @@ class DockConfig:
             roms_dir=roms_dir,
             button_gpio=button_gpio,
             upload_without_code=bool(retro.get("upload_without_code", True)),
+            pc_audio=pc_audio,
+            audio_advance_ms=audio_advance_ms,
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:
@@ -242,6 +256,8 @@ class DockConfig:
         media["smb_host"] = self.smb_host
         media["smb_user"] = self.smb_user
         media["smb_password"] = self.smb_password
+        media["pc_audio"] = self.pc_audio
+        media["audio_advance_ms"] = self.audio_advance_ms
         retro["roms_dir"] = self.roms_dir
         retro["button_gpio"] = self.button_gpio
         retro["upload_without_code"] = self.upload_without_code
@@ -316,6 +332,21 @@ class DockConfig:
         )
         self.save()
 
+    def set_sound(self, *, pc_audio: object = None, audio_advance_ms: object = None) -> None:
+        """Le son du lecteur : sur le PC ou sur le Pi, et l'avance du son des vidéos (validés avant d'être gardés ; None ne change rien)."""
+        flag = (
+            clean_flag(pc_audio, "Le choix « son sur le PC »")
+            if pc_audio is not None
+            else self.pc_audio
+        )
+        advance = (
+            clean_audio_advance(audio_advance_ms)
+            if audio_advance_ms is not None
+            else self.audio_advance_ms
+        )
+        self.pc_audio, self.audio_advance_ms = flag, advance
+        self.save()
+
     def set_retrogame(
         self,
         *,
@@ -332,6 +363,25 @@ class DockConfig:
         if upload_without_code is not None:
             self.upload_without_code = upload_without_code
         self.save()
+
+
+def clean_flag(value: object, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValidationFailure(f"{name} doit être vrai ou faux.")
+    return value
+
+
+def clean_audio_advance(value: object) -> int:
+    """L'avance du son des vidéos, en millisecondes : un entier de 0 à 1000."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 0 <= value <= MAX_AUDIO_ADVANCE_MS
+    ):
+        raise ValidationFailure(
+            f"L'avance du son doit être un nombre entier de millisecondes, de 0 à {MAX_AUDIO_ADVANCE_MS}."
+        )
+    return value
 
 
 def clean_roms_dir(value: object) -> str:

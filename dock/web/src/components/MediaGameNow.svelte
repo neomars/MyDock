@@ -1,6 +1,7 @@
 <script lang="ts">
   import Gamepad2 from '@lucide/svelte/icons/gamepad-2'
   import { onMount } from 'svelte'
+  import { audioLine } from '../lib/media'
   import { gameStateText } from '../lib/retro'
   import { retro } from '../lib/retro.svelte'
   import type { PlayerSnapshot } from '../lib/protocol'
@@ -8,6 +9,7 @@
   // Un jeu occupe l'écran : MAME est devant, cette page n'est vue qu'un instant (le temps qu'il s'ouvre) ou si MAME est derrière.
   // Aucun bouton : toucher l'écran quitte le jeu, comme le bouton physique ou Select + Start tenus deux secondes.
   let { player }: { player: PlayerSnapshot } = $props()
+  const audio = $derived(audioLine(player.audio))
 
   // Le toucher qui vient de lancer le jeu n'est pas une demande de le quitter : on laisse passer un instant.
   let armed = $state(false)
@@ -22,6 +24,7 @@
   <strong class="title" data-testid="game-now-title">{player.title}</strong>
   {#if player.subtitle}<span class="dim sub">{player.subtitle}</span>{/if}
   <span class="state" class:wait={player.state === 'starting'} data-testid="game-now-state">{gameStateText(player)}</span>
+  {#if audio}<span class="audio" class:good={audio.level === 'good'} class:warn={audio.level === 'warn'} data-testid="game-now-audio" data-level={audio.level}>{audio.text}</span>{/if}
   <span class="dim hint" data-testid="game-now-hint">Touche l’écran pour quitter le jeu.</span>
 </button>
 
@@ -58,6 +61,17 @@
   }
   .hint {
     font-size: var(--fs-cap);
+  }
+  .audio {
+    font-size: var(--fs-cap);
+    font-weight: 600;
+    color: var(--text-3);
+  }
+  .audio.good {
+    color: var(--good);
+  }
+  .audio.warn {
+    color: var(--warn);
   }
   @keyframes pulse {
     50% {

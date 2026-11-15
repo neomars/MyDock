@@ -1,3 +1,27 @@
+mydock (1.8.0) unstable; urgency=medium
+
+  * Le son des vidéos, de la TV et des jeux sort sur le PC : le Raspberry Pi n'a pas d'enceintes. VLC (Freetv, Kiosque) et
+    MAME (Retrogame) jouent dans un puits virtuel PipeWire (mydock_pc) ; l'assistant de l'écran en capture le son (parec) et
+    le passe au dock en local, qui le relaie à l'agent du PC (nouvelle porte /audio, sur le port de l'agent, avec le même
+    jeton et la même liste d'adresses que /ws). Le PC le joue sur sa sortie par défaut avec pacat et le montre comme une
+    application (« MyDock »), avec son propre volume. Le jeton de l'agent reste dans le dock : l'assistant
+    de l'écran ne le connaît toujours pas.
+  * Ce que le PC accepte par là est minuscule : un seul format (PCM 16 bits, 48 kHz, stéréo), vérifié à l'octet près ; pacat
+    lancé avec une ligne de commande figée dont rien ne vient du dock ; un flux à la fois ; si le PC ne suit pas, les trames
+    en trop sont jetées plutôt qu'accumulées (le son ne prend pas de retard) ; un flux muet est fermé au bout de dix secondes.
+  * Les vidéos avancent leur son (--audio-desync négatif, 150 ms par défaut) pour rattraper le trajet jusqu'au PC.
+    Réglages -> Divertissement -> Son : « Sur le PC » ou « Sur le Pi » (HDMI, prise jack), et l'avance du son des vidéos
+    (de 0 à 1 000 ms, de 50 en 50 ; appliquée à la lecture suivante). Clés pc_audio et audio_advance_ms de [media].
+  * La télécommande et l'écran de jeu disent où sort le son (« Son : sur le PC ») et, sinon, pourquoi on n'entend rien :
+    « PC hors ligne : pas de son », agent du PC trop ancien (il faut mettre mydock-agent à jour), pas de serveur de son sur le
+    Pi ou sur le PC, avec la commande qui répare. Le son reprend tout seul quand le PC revient.
+  * Le paquet recommande pipewire-pulse, wireplumber et pulseaudio-utils ; l'installateur garde ouvert le gestionnaire de
+    session de l'utilisateur du kiosque (loginctl enable-linger), où tourne PipeWire. Redémarrer le Pi après la mise à jour.
+  * mydock-dock doctor : nouvelle section « Son du Divertissement » (outils, serveur de son, dernier mot de l'assistant) ;
+    le diagnostic du PC (mydock-agent doctor) vérifie pacat.
+
+ -- neomars <neomars@users.noreply.github.com>  Sun, 15 Nov 2026 12:00:00 +0000
+
 mydock (1.7.3) unstable; urgency=medium
 
   * Envoi de jeux : les jeux de plusieurs Mo s'envoient enfin depuis la page /jeux. Sur certains réseaux, une seule requête

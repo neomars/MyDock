@@ -1,3 +1,3 @@
 """Serveur local du dock (Raspberry Pi) : sert l'interface, relaie l'agent du PC, Wake-on-LAN."""
 
-__version__ = "1.7.3"
+__version__ = "1.8.0"

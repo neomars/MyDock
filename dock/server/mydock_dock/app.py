@@ -44,6 +44,7 @@ from mydock_dock.agent_link import (
     backoff_delay,
     probe,
 )
+from mydock_dock.audio_relay import AudioRelay
 from mydock_dock.bluetooth import PadsError, PadsManager
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig
@@ -174,6 +175,11 @@ class MediaSetParams(_Strict):
     smb_password: str | None = Field(default=None, max_length=128)
 
 
+class SoundSetParams(_Strict):
+    pc_audio: StrictBool | None = None
+    audio_advance_ms: StrictInt | None = Field(default=None, ge=0, le=1000)
+
+
 class PadParams(_Strict):
     id: str = Field(max_length=17)  # l'adresse de la manette, « AA:BB:CC:DD:EE:FF »
 
@@ -284,7 +290,7 @@ class DockServer:
             lambda: self.config.smb_password,
         )
         self.player = PlayerHub(on_change=lambda: self.push_local("player"))
-        self.player.settings = {"button_gpio": config.button_gpio}
+        self.player.settings = self.player_settings()
         self.retro: GameLibrary
         self.pads: PadsManager
         self.wired: WiredPads
@@ -318,6 +324,9 @@ class DockServer:
             on_snapshot=self._on_agent_snapshot,
             backoff=link_backoff,
         )
+        # Le son du lecteur sort sur le PC (le Pi n'a pas d'enceintes) : le dock le relaie à l'agent, avec le jeton qu'il est seul à avoir.
+        self.audio = AudioRelay(self.link, on_change=lambda: self.push_local("player"))
+        self.player.audio = self.audio
         self.actions = ActionRegistry()
         self.pairing = Pairing(on_change=lambda: self.push_local("dock"))
         self.clients = ClientRegistry(config.clients_dir)
@@ -393,6 +402,7 @@ class DockServer:
         await self.wired.stop()
         await self.pads.stop()
         self.player.shutdown()
+        await self.audio.aclose()
         self.markets.save()
         await self.link.close()
         for conn in tuple(self.browsers):
@@ -469,6 +479,14 @@ class DockServer:
             "demo": self.config.demo_markets,
         }
 
+    def player_settings(self) -> dict[str, Any]:
+        """Ce que l'assistant de l'écran ne peut pas lire lui-même (il ne lit pas dock.toml) : la broche du bouton et le son."""
+        return {
+            "button_gpio": self.config.button_gpio,
+            "pc_audio": self.config.pc_audio,
+            "audio_advance_ms": self.config.audio_advance_ms,
+        }
+
     def media_info(self) -> dict[str, Any]:
         """Divertissement, pour les Réglages : jamais le mot de passe, seulement s'il y en a un."""
         cfg = self.config
@@ -478,6 +496,8 @@ class DockServer:
             "smb_user": cfg.smb_user,
             "smb_password_set": bool(cfg.smb_password),
             "smbclient": self.samba.available(),
+            "pc_audio": cfg.pc_audio,
+            "audio_advance_ms": cfg.audio_advance_ms,
         }
 
     def retro_info(self) -> dict[str, Any]:
@@ -707,6 +727,7 @@ class DockServer:
         reg.register("dock.retro.list", self._act_retro_list)
         reg.register("dock.retro.refresh", self._act_retro_refresh)
         reg.register("dock.retro.set", self._act_retro_set, params=RetroSetParams)
+        reg.register("dock.sound.set", self._act_sound_set, params=SoundSetParams)
         reg.register("dock.retro.upload.open", self._act_retro_upload_open)
         reg.register("dock.retro.upload.close", self._act_retro_upload_close)
         reg.register("dock.pads.scan", self._act_pads_scan, timeout=30.0)
@@ -879,6 +900,21 @@ class DockServer:
         self.push_local("dock")
         return self.media_info()
 
+    async def _act_sound_set(self, _ctx: ActionContext, params: SoundSetParams) -> dict[str, Any]:
+        """Le son du lecteur : sur le PC ou sur le Pi, et l'avance du son des vidéos (prise en compte à la lecture suivante)."""
+        patch = params.model_dump(exclude_none=True)
+        self._persist(lambda: self.config.set_sound(**patch))
+        self.player.settings = self.player_settings()
+        self.player.send_settings()
+        media_log.info(
+            "Son du Divertissement : %s, avance du son des vidéos %d ms",
+            "sur le PC" if self.config.pc_audio else "sur le Pi",
+            self.config.audio_advance_ms,
+        )
+        self.push_local("dock")
+        self.push_local("player")
+        return self.media_info()
+
     async def _act_media_test(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         """Essaie chaque maillon (liste des chaînes, partages, lecteur) et dit en clair lequel ne va pas."""
         result: dict[str, Any] = {}
@@ -955,7 +991,7 @@ class DockServer:
     async def _act_retro_set(self, _ctx: ActionContext, params: RetroSetParams) -> dict[str, Any]:
         patch = params.model_dump(exclude_none=True)
         self._persist(lambda: self.config.set_retrogame(**patch))
-        self.player.settings = {"button_gpio": self.config.button_gpio}
+        self.player.settings = self.player_settings()
         self.player.send_settings()
         media_log.info(
             "Réglages de Retrogame changés : dossier %s, bouton GPIO%d, envoi sans code du PC associé : %s",
@@ -1389,6 +1425,7 @@ def create_app(server: DockServer) -> FastAPI:
 
 
 MAX_PLAYER_MESSAGE = 16 * 1024
+MAX_AUDIO_FRAME = 64 * 1024
 
 
 async def _serve_player(server: DockServer, ws: WebSocket) -> None:
@@ -1404,6 +1441,11 @@ async def _serve_player(server: DockServer, ws: WebSocket) -> None:
             incoming = await ws.receive()
             if incoming["type"] == "websocket.disconnect":
                 return
+            frame = incoming.get("bytes")
+            if frame is not None:  # du son capturé (jamais autre chose en binaire) : relayé au PC
+                if len(frame) <= MAX_AUDIO_FRAME:
+                    server.audio.feed(frame)
+                continue
             raw = incoming.get("text")
             if not isinstance(raw, str) or len(raw) > MAX_PLAYER_MESSAGE:
                 continue

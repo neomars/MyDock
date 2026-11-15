@@ -792,6 +792,7 @@ def session(fakes, **kw):
         **kw,
     )
     s.windows, s.touch = FakeWindows(), FakeTouch()
+    s.sound.enabled = False  # le serveur de son de cette machine ne regarde pas ces essais (voir test_pc_audio.py)
     s._loop = asyncio.get_running_loop()
     return s
 
@@ -1492,6 +1493,7 @@ async def test_vlc_and_ffmpeg_speak_english_whatever_the_language_of_the_session
             "LANGUAGE": "fr",
         },
     )
+    s.sound.enabled = False
     s.windows, s.touch = FakeWindows(), FakeTouch()
     s._loop = asyncio.get_running_loop()
     box = Mailbox()

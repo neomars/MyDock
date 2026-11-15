@@ -1100,6 +1100,53 @@ async def check_media_network(report: Report, config: DockConfig, *, online: boo
             report.add(WARN, f"Partages Samba : {exc}")
 
 
+def check_sound(
+    report: Report,
+    config: DockConfig,
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    journal: Callable[[], Path | None] = playerlog.existing_path,
+) -> None:
+    """Le son du Divertissement : le Pi n'a pas d'enceintes, le son des vidéos, de la TV et des jeux sort sur le PC."""
+    report.section("Son du Divertissement (sur le PC)")
+    if not config.pc_audio:
+        report.add(
+            INFO,
+            "Le son reste sur le Pi (Réglages → Divertissement → Son) : sortie HDMI ou prise jack, pas le PC",
+        )
+        return
+    report.add(
+        OK,
+        f"Le son des vidéos, de la TV et des jeux sort sur le PC (le son des vidéos est avancé de {config.audio_advance_ms} ms)",
+    )
+    fix = "sudo apt install pipewire-pulse wireplumber pulseaudio-utils, puis redémarre le Pi"
+    for tool in ("pactl", "parec"):
+        if which(tool):
+            report.add(OK, f"{tool} présent (capture du son du lecteur)")
+        else:
+            report.add(WARN, f"{tool} absent : le son ne pourra pas sortir sur le PC ({fix})")
+    if which("pipewire") or which("pulseaudio"):
+        report.add(OK, "Un serveur de son est installé sur le Pi (PipeWire ou PulseAudio)")
+    else:
+        report.add(WARN, f"Aucun serveur de son (PipeWire) sur le Pi : {fix}")
+    log_path = journal()
+    last = None
+    if log_path is not None:
+        with contextlib.suppress(OSError):
+            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-4000:]:
+                if " son : " in line or line.startswith("son : "):
+                    last = line.split("son : ", 1)[1].strip()
+    if last is None:
+        report.add(
+            INFO,
+            "L'assistant de l'écran n'a encore rien dit du son (il le dit à la première lecture)",
+        )
+    elif "impossible" in last or "aucun serveur" in last or "s'est arrêtée toute seule" in last:
+        report.add(WARN, f"Son, d'après l'assistant de l'écran : {last}")
+    else:
+        report.add(OK, f"Son, d'après l'assistant de l'écran : {last}")
+
+
 def check_running(report: Report, config: DockConfig) -> None:
     report.section("Services")
     url = f"http://127.0.0.1:{config.port}/api/health"
@@ -1158,6 +1205,7 @@ def run_doctor(
         check_portal(report, config)
         check_media(report, config)
         check_retrogame(report, config)
+        check_sound(report, config)
         asyncio.run(check_media_network(report, config, online=not offline))
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)

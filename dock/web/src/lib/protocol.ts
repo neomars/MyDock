@@ -560,6 +560,18 @@ export interface MediaInfo {
   smb_password_set: boolean
   /** `smbclient` est-il installé sur le Pi ? */
   smbclient: boolean
+  /** Le son des vidéos, de la TV et des jeux sort sur le PC (le Pi n'a pas d'enceintes). Absent d'un dock plus ancien. */
+  pc_audio?: boolean
+  /** De combien le son des vidéos est avancé (ms), pour rattraper le trajet jusqu'au PC. Absent d'un dock plus ancien. */
+  audio_advance_ms?: number
+}
+
+/** Où sort le son du lecteur, et pourquoi on n'entend rien le cas échéant. */
+export interface PlayerAudio {
+  mode: 'pc' | 'local'
+  /** `local` : sur le Pi. Pour le PC : `idle` (rien ne joue), `connecting`, `streaming` (le PC joue), `offline`, `old` (agent trop ancien), `error`. */
+  state: 'local' | 'idle' | 'connecting' | 'streaming' | 'offline' | 'old' | 'error'
+  detail: string
 }
 
 export type PlayerStateName = 'idle' | 'starting' | 'playing' | 'paused' | 'error'
@@ -589,6 +601,8 @@ export interface PlayerSnapshot {
   game?: string | null
   /** Le nombre d'appuis sur le bouton physique depuis le démarrage du dock : un changement réveille l'écran. */
   button?: number
+  /** Où sort le son (le PC, le Pi n'a pas d'enceintes) et son état. Absent d'un dock plus ancien. */
+  audio?: PlayerAudio
   helper: {
     vlc: boolean
     live555: boolean

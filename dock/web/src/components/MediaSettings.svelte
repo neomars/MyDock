@@ -1,8 +1,11 @@
 <script lang="ts">
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import CircleCheck from '@lucide/svelte/icons/circle-check'
+  import Minus from '@lucide/svelte/icons/minus'
   import PlugZap from '@lucide/svelte/icons/plug-zap'
+  import Plus from '@lucide/svelte/icons/plus'
   import { editText } from '../lib/keyboard.svelte'
+  import { advanceText, stepAdvance } from '../lib/media'
   import { media } from '../lib/media.svelte'
   import type { MediaTestPart } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
@@ -35,6 +38,20 @@
 
   async function clearPassword(): Promise<void> {
     if (await media.saveSettings({ smb_password: '' })) notify('Mot de passe effacé.', 'good')
+  }
+
+  // Le son : le Pi n'a pas d'enceintes, il sort sur le PC. Les vidéos avancent leur son de ce que coûte le trajet jusqu'au PC.
+  const onPc = $derived(info?.pc_audio ?? true)
+  const advance = $derived(info?.audio_advance_ms ?? 150)
+
+  async function toggleSound(): Promise<void> {
+    const next = !onPc
+    if (await media.saveSound({ pc_audio: next })) notify(next ? 'Le son sort sur le PC.' : 'Le son reste sur le Pi.', 'good')
+  }
+
+  async function stepSound(direction: 1 | -1): Promise<void> {
+    const next = stepAdvance(advance, direction)
+    if (next !== advance && (await media.saveSound({ audio_advance_ms: next }))) notify(`Son avancé de ${advanceText(next)}.`, 'good')
   }
 
   async function test(): Promise<void> {
@@ -71,6 +88,22 @@
     {#if info?.smb_password_set}<button class="btn" data-testid="clear-media-password" onclick={clearPassword}>Effacer</button>{/if}
     <button class="btn" data-testid="edit-media-password" onclick={editPassword}>{info?.smb_password_set ? 'Remplacer' : 'Définir'}</button>
   </div>
+  <div class="setting">
+    <span class="label">Son</span>
+    <span class="value" data-testid="sound-mode">{onPc ? 'sur le PC' : 'sur le Pi'}</span>
+    <button class="btn toggle" class:on={onPc} aria-pressed={onPc} data-testid="sound-toggle" onclick={toggleSound}>{onPc ? 'Sur le PC' : 'Sur le Pi'}</button>
+  </div>
+  {#if onPc}
+    <div class="setting">
+      <span class="label">Avance</span>
+      <span class="value mono" data-testid="sound-advance">{advanceText(advance)}</span>
+      <button class="btn icon" aria-label="Moins d’avance" data-testid="sound-advance-down" onclick={() => stepSound(-1)}><Minus size={30} aria-hidden="true" /></button>
+      <button class="btn icon" aria-label="Plus d’avance" data-testid="sound-advance-up" onclick={() => stepSound(1)}><Plus size={30} aria-hidden="true" /></button>
+    </div>
+    <p class="dim small" data-testid="sound-help">
+      Le Pi n’a pas d’enceintes : le son des vidéos, de la TV et des jeux sort sur le PC. Si le son des vidéos est en retard sur l’image, augmente l’avance ; en avance, diminue-la (appliqué à la prochaine lecture).
+    </p>
+  {/if}
   {#if info && !info.smbclient}
     <p class="warn small" data-testid="media-no-smbclient">smbclient manque sur le Pi : le Kiosque ne pourra pas lister le partage (sudo apt install smbclient).</p>
   {/if}
@@ -138,6 +171,13 @@
   .small {
     font-size: var(--fs-cap);
     margin-top: 10px;
+  }
+  .btn.toggle {
+    min-width: 170px;
+  }
+  .btn.toggle.on {
+    background: var(--accent);
+    color: var(--accent-ink);
   }
   .warn {
     color: var(--warn);

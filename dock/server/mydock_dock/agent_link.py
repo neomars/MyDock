@@ -331,6 +331,11 @@ class AgentLink:
     def connected(self) -> bool:
         return self.status.state == LinkState.CONNECTED and self._ws is not None
 
+    @property
+    def settings(self) -> LinkSettings:
+        """Où est l'agent et le jeton qui ouvre ses portes (le relais du son s'en sert : même agent, même jeton)."""
+        return self._get_settings()
+
     def _set_status(self, state: LinkState, detail: str = "", **fields: Any) -> None:
         settings = self._get_settings()
         since = self.status.since if state == self.status.state else self._clock()
