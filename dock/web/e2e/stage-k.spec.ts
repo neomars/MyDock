@@ -1,21 +1,13 @@
-// Étape k : Divertissement (Freetv et Kiosque) et le petit bouton d'alimentation à droite de l'heure.
-// Vrai Chromium 1024×600 tactile -> vrai dock -> assistant de lecture en démonstration (aucun VLC), faux Freebox
-// (la liste des chaînes en local) et faux « smbclient » (scripts/demo) : rien ne sort de cette machine.
+// Étape k : Divertissement (le Kiosque ; Freetv, retiré à l'étape n, est remplacé par Free TV : voir stage-n.spec.ts)
+// et le petit bouton d'alimentation à droite de l'heure.
+// Vrai Chromium 1024×600 tactile -> vrai dock -> assistant de lecture en démonstration (aucun VLC) et faux « smbclient »
+// (scripts/demo) : rien ne sort de cette machine.
 
 import type { Page } from '@playwright/test'
-import { expect, goHome, openPage, shot, test, typeOnKeyboard } from './fixtures'
+import { expect, goHome, helperReady, openPage, playFilm, shot, test, typeOnKeyboard } from './fixtures'
 
 const noScroll = (page: Page) =>
   page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
-
-/** Attend que l'assistant de lecture soit connecté au dock (il démarre avec la pile, un instant après). */
-async function helperReady(page: Page): Promise<void> {
-  await openPage(page, 'media')
-  await page.getByTestId('media-tv').tap()
-  await expect(page.getByTestId('tv-list')).toBeVisible()
-  await expect(page.getByTestId('tv-blocker')).toHaveCount(0)
-  await goHome(page)
-}
 
 test('Accueil : « Divertissement » remplace « Alimentation », qui devient un petit bouton à droite de l’heure', async ({ dock }) => {
   await expect(dock.getByTestId('tile-media')).toContainText('Divertissement')
@@ -37,67 +29,24 @@ test('Accueil : « Divertissement » remplace « Alimentation », qui devient un
   await expect(dock.getByTestId('page-power')).toBeVisible()
 })
 
-test('Divertissement : le menu propose Freetv et Kiosque', async ({ dock }) => {
+test('Divertissement : le menu propose le Kiosque', async ({ dock }) => {
   await openPage(dock, 'media')
-  await expect(dock.getByTestId('media-tv')).toContainText('Freetv')
   await expect(dock.getByTestId('media-files')).toContainText('Kiosque')
   expect(await noScroll(dock)).toEqual({ w: 1024, h: 600 })
   await dock.waitForTimeout(300)
   await shot(dock, '03-divertissement-menu', 'k')
 })
 
-test('Freetv : les chaînes de la Freebox, la recherche (nom sans accent ou numéro) et le réglage HD', async ({ dock }) => {
-  await openPage(dock, 'media')
-  await dock.getByTestId('media-tv').tap()
-  await expect(dock.getByTestId('tv-list')).toBeVisible()
-  await expect(dock.getByTestId('tv-count')).toContainText('27 chaînes')
-  await expect(dock.locator('[data-testid^=tv-ch-]').first()).toContainText('TF1')
-  await dock.waitForTimeout(300)
-  await shot(dock, '04-freetv-liste', 'k')
-
-  await dock.getByTestId('tv-search').tap()
-  await expect(dock.getByTestId('keyboard')).toBeVisible()
-  await typeOnKeyboard(dock, 'serie')
-  await dock.getByTestId('keyboard-ok').tap()
-  await expect(dock.getByTestId('tv-count')).toContainText('1 chaîne pour « serie »')
-  await expect(dock.locator('[data-testid^=tv-ch-]')).toHaveCount(1)
-  await expect(dock.locator('[data-testid^=tv-ch-]').first()).toContainText('TF1 Séries Films') // sans accent, comme on tape
-  await dock.getByTestId('tv-clear').tap()
-
-  await dock.getByTestId('tv-search').tap()
-  await typeOnKeyboard(dock, '6')
-  await dock.getByTestId('keyboard-ok').tap()
-  await expect(dock.locator('[data-testid^=tv-ch-]').first()).toContainText('M6') // la chaîne 6 d'abord
-  await dock.getByTestId('tv-clear').tap()
-
-  await expect(dock.getByTestId('tv-hd')).toHaveAttribute('aria-pressed', 'false')
-  await dock.getByTestId('tv-hd').tap()
-  await expect(dock.getByTestId('tv-hd')).toHaveAttribute('aria-pressed', 'true')
-  await expect(dock.getByTestId('tv-count')).toContainText('en HD')
-  await dock.reload() // le dock garde le choix, pas le navigateur
-  await openPage(dock, 'media')
-  await dock.getByTestId('media-tv').tap()
-  await expect(dock.getByTestId('tv-hd')).toHaveAttribute('aria-pressed', 'true')
-  await dock.getByTestId('tv-hd').tap()
-})
-
-test('Freetv : toucher une chaîne la lance ; la télécommande montre le direct, met en pause, règle le volume et arrête', async ({ dock }) => {
+test('Kiosque : la télécommande met en pause, règle le volume, l’accueil dit ce qui joue, et on arrête', async ({ dock }) => {
   await helperReady(dock)
-  await openPage(dock, 'media')
-  await dock.getByTestId('media-tv').tap()
-  await dock.locator('[data-testid^=tv-ch-]').first().tap() // TF1
+  await playFilm(dock)
 
   const remote = dock.getByTestId('remote')
-  await expect(remote).toBeVisible()
-  await expect(dock.getByTestId('remote-title')).toHaveText('TF1')
-  await expect(dock.getByTestId('remote-subtitle')).toContainText('1 · SD')
+  await expect(dock.getByTestId('remote-title')).toHaveText("Un film d'été (2020)")
   await expect(remote).toHaveAttribute('data-state', 'playing', { timeout: 10_000 })
-  await expect(dock.getByTestId('remote-state')).toHaveText('En direct')
-  await expect(dock.getByTestId('remote-progress')).toHaveCount(0) // un direct n'a ni durée ni position
-  await expect(dock.getByTestId('remote-back')).toBeDisabled() // ni retour en arrière
+  await expect(dock.getByTestId('remote-progress')).toBeVisible()
   await expect(dock.getByTestId('page-media')).toBeVisible()
   expect(await noScroll(dock)).toEqual({ w: 1024, h: 600 })
-  await shot(dock, '05-telecommande-direct', 'k')
 
   await dock.getByTestId('remote-toggle').tap()
   await expect(remote).toHaveAttribute('data-state', 'paused')
@@ -111,28 +60,24 @@ test('Freetv : toucher une chaîne la lance ; la télécommande montre le direct
   await expect(dock.getByTestId('remote-volume-value')).not.toHaveText('70 %')
 
   await goHome(dock)
-  await expect(dock.getByTestId('tile-media-sub')).toHaveText('TF1') // l'accueil dit ce qui joue
+  await expect(dock.getByTestId('tile-media-sub')).toHaveText("Un film d'été (2020)") // l'accueil dit ce qui joue
   await dock.getByTestId('tile-media').tap()
   await expect(remote).toBeVisible() // la page s'ouvre sur la télécommande tant que ça joue
 
   await dock.getByTestId('remote-stop').tap()
   await expect(dock.getByTestId('remote')).toHaveCount(0)
-  await expect(dock.getByTestId('media-tv')).toBeVisible()
+  await expect(dock.getByTestId('media-files')).toBeVisible()
   await goHome(dock)
   await expect(dock.getByTestId('tile-media-sub')).toHaveCount(0)
 })
 
-test('Freetv : changer de chaîne remplace la lecture, « Choisir autre chose » garde la vidéo qui joue', async ({ dock }) => {
+test('Kiosque : « Choisir autre chose » garde la vidéo qui joue', async ({ dock }) => {
   await helperReady(dock)
-  await openPage(dock, 'media')
-  await dock.getByTestId('media-tv').tap()
-  await dock.locator('[data-testid^=tv-ch-]').nth(1).tap() // France 2
-  await expect(dock.getByTestId('remote-title')).toHaveText('France 2')
+  await playFilm(dock)
   await dock.getByTestId('media-other').tap()
-  await expect(dock.getByTestId('media-now')).toContainText('France 2')
-  await dock.getByTestId('media-tv').tap()
-  await dock.locator('[data-testid^=tv-ch-]').nth(2).tap() // France 3
-  await expect(dock.getByTestId('remote-title')).toHaveText('France 3')
+  await expect(dock.getByTestId('media-now')).toContainText("Un film d'été (2020)")
+  await dock.getByTestId('media-now').tap()
+  await expect(dock.getByTestId('remote-title')).toHaveText("Un film d'été (2020)")
   await dock.getByTestId('remote-stop').tap()
 })
 
@@ -197,12 +142,12 @@ test('Kiosque : un dossier ou un partage introuvable est dit en français, avec 
   await expect(dock.getByTestId('dir-Séries')).toBeVisible()
 })
 
-test('Réglages : la carte Divertissement garde l’adresse, le serveur, l’identifiant et le mot de passe (jamais affiché) et teste chaque maillon', async ({ dock }) => {
+test('Réglages : la carte Divertissement garde le serveur, l’identifiant et le mot de passe (jamais affiché) et teste chaque maillon', async ({ dock }) => {
   await helperReady(dock)
   await openPage(dock, 'settings')
   const card = dock.getByTestId('settings-media')
   await card.scrollIntoViewIfNeeded()
-  await expect(dock.getByTestId('media-url')).toContainText('/freeboxtv/playlist.m3u')
+  await expect(dock.getByTestId('media-url')).toHaveCount(0) // la liste des chaînes de Freetv n'existe plus
   await expect(dock.getByTestId('media-host')).toHaveText('freebox.demo')
   await expect(dock.getByTestId('media-user')).toHaveText('accès libre')
   await expect(dock.getByTestId('media-password')).toHaveText('aucun')
@@ -222,7 +167,7 @@ test('Réglages : la carte Divertissement garde l’adresse, le serveur, l’ide
 
   await dock.getByTestId('media-test').tap()
   await expect(dock.getByTestId('media-results')).toBeVisible({ timeout: 20_000 })
-  await expect(dock.getByTestId('media-result-tv')).toContainText('27 chaînes lues')
+  await expect(dock.getByTestId('media-result-tv')).toHaveCount(0)
   await expect(dock.getByTestId('media-result-files')).toContainText('Partages : Disque dur, Enregistrements')
   await expect(dock.getByTestId('media-result-player')).toContainText('VLC est prêt')
   await card.scrollIntoViewIfNeeded()
@@ -232,13 +177,4 @@ test('Réglages : la carte Divertissement garde l’adresse, le serveur, l’ide
 
   await dock.getByTestId('clear-media-password').tap()
   await expect(dock.getByTestId('media-password')).toHaveText('aucun')
-})
-
-test('Réglages : une adresse de liste invalide est refusée sans rien changer', async ({ dock }) => {
-  await openPage(dock, 'settings')
-  await dock.getByTestId('settings-media').scrollIntoViewIfNeeded()
-  const before = await dock.getByTestId('media-url').textContent()
-  await dock.getByTestId('edit-media-url').tap()
-  await dock.getByTestId('keyboard-cancel').tap()
-  await expect(dock.getByTestId('media-url')).toHaveText(before ?? '')
 })

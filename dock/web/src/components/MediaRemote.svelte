@@ -16,8 +16,8 @@
 
   const ratio = $derived(progressRatio(player))
   const paused = $derived(player.state === 'paused')
-  // Pas d'avance rapide dans un direct, ni quand le fichier arrive par un tube (smbclient : VLC ne peut pas y revenir en arrière).
-  const seekable = $derived(!player.live && player.state !== 'starting' && player.seekable !== false)
+  // Pas d'avance rapide quand le fichier arrive par un tube (smbclient : VLC ne peut pas y revenir en arrière).
+  const seekable = $derived(player.state !== 'starting' && player.seekable !== false)
   // Où sort le son : le Pi n'a pas d'enceintes, il sort sur le PC ; si le PC ne le joue pas, on le dit (sinon : un film muet inexpliqué).
   const audio = $derived(audioLine(player.audio))
 </script>
@@ -27,7 +27,7 @@
     <div class="now">
       <h2 data-testid="remote-title">{player.title}</h2>
       <p class="meta">
-        {#if player.subtitle}<span class="dim" data-testid="remote-subtitle">{player.subtitle}</span>{' · '}{/if}<span class="state" class:wait={player.state === 'starting'} data-testid="remote-state">{stateText(player)}</span>{#if player.seekable === false && !player.live}<span class="dim" data-testid="remote-noseek">{' · '}sans avance rapide</span>{/if}
+        {#if player.subtitle}<span class="dim" data-testid="remote-subtitle">{player.subtitle}</span>{' · '}{/if}<span class="state" class:wait={player.state === 'starting'} data-testid="remote-state">{stateText(player)}</span>{#if player.seekable === false}<span class="dim" data-testid="remote-noseek">{' · '}sans avance rapide</span>{/if}
       </p>
     </div>
     <button class="btn" data-testid="media-other" onclick={onMenu}><ArrowLeft size={30} aria-hidden="true" />Menu</button>

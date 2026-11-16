@@ -3,14 +3,12 @@
   import Folder from '@lucide/svelte/icons/folder'
   import Gamepad2 from '@lucide/svelte/icons/gamepad-2'
   import MonitorPlay from '@lucide/svelte/icons/monitor-play'
-  import Tv from '@lucide/svelte/icons/tv'
   import { untrack } from 'svelte'
   import MediaFiles from '../components/MediaFiles.svelte'
   import MediaGameNow from '../components/MediaGameNow.svelte'
   import MediaGames from '../components/MediaGames.svelte'
   import MediaPads from '../components/MediaPads.svelte'
   import MediaRemote from '../components/MediaRemote.svelte'
-  import MediaTv from '../components/MediaTv.svelte'
   import MediaUpload from '../components/MediaUpload.svelte'
   import PageHeader from '../components/PageHeader.svelte'
   import { playerActive, splitFailure, type MediaView } from '../lib/media'
@@ -18,7 +16,7 @@
   import { gameActive, type RetroView } from '../lib/retro'
   import { sock } from '../lib/socket.svelte'
 
-  // Divertissement : Freetv (les chaînes de la Freebox), Kiosque (ses partages Samba) — lus par VLC sur cet écran — et
+  // Divertissement : Kiosque (les partages Samba de la Freebox, lus par VLC sur cet écran) et
   // Retrogame (les jeux d'arcade de MAME). Pendant une vidéo ou un jeu, l'application occupe tout l'écran ; un toucher
   // ramène ici : sur la télécommande pour une vidéo ; pour un jeu, il le quitte et l'on retrouve la liste des jeux.
   type View = MediaView | RetroView | 'remote' | 'game'
@@ -52,7 +50,6 @@
 
   const TITLES: Record<View, string> = {
     menu: 'Divertissement',
-    tv: 'Freetv',
     files: 'Kiosque',
     remote: 'Lecture en cours',
     games: 'Retrogame',
@@ -62,7 +59,6 @@
   }
   // Le bouton de retour de l'en-tête : les sous-écrans de Retrogame reviennent à la liste des jeux, les autres au menu.
   const BACK: Partial<Record<View, { to: View; label: string }>> = {
-    tv: { to: 'menu', label: 'Divertissement' },
     files: { to: 'menu', label: 'Divertissement' },
     games: { to: 'menu', label: 'Divertissement' },
     pads: { to: 'games', label: 'Retrogame' },
@@ -89,8 +85,6 @@
   <MediaRemote {player} onMenu={() => (view = 'menu')} />
 {:else if view === 'game' && player && gaming}
   <MediaGameNow {player} />
-{:else if view === 'tv'}
-  <MediaTv onPlayed={() => (view = 'remote')} />
 {:else if view === 'files'}
   <MediaFiles onPlayed={() => (view = 'remote')} />
 {:else if view === 'games' || view === 'pads' || view === 'upload'}
@@ -130,11 +124,6 @@
     </button>
   {/if}
   <div class="choices">
-    <button class="choice tv" data-testid="media-tv" onclick={() => (view = 'tv')}>
-      <Tv size={72} strokeWidth={1.6} aria-hidden="true" />
-      <span class="label">Freetv</span>
-      <span class="hint">Les chaînes de la Freebox</span>
-    </button>
     <button class="choice files" data-testid="media-files" onclick={() => (view = 'files')}>
       <Folder size={72} strokeWidth={1.6} aria-hidden="true" />
       <span class="label">Kiosque</span>
@@ -168,9 +157,6 @@
   }
   .choice:active {
     transform: scale(0.97);
-  }
-  .choice.tv {
-    background: linear-gradient(180deg, #a855f7, #6b21a8);
   }
   .choice.files {
     background: linear-gradient(180deg, #0ea5e9, #075985);

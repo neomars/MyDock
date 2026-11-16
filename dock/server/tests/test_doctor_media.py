@@ -1,10 +1,8 @@
-"""`mydock-dock doctor` : la section Divertissement dit ce qui manque sur le Pi et si la Freebox répond."""
+"""`mydock-dock doctor` : la section Divertissement dit ce qui manque sur le Pi et si le serveur de fichiers répond."""
 
 from __future__ import annotations
 
-import http.server
 import shutil
-import threading
 from pathlib import Path
 
 import pytest
@@ -14,11 +12,6 @@ from mydock_dock.config import DockConfig
 from mydock_dock.doctor import check_media, check_media_network, player_session_running
 
 DEMO = Path(__file__).resolve().parents[3] / "scripts" / "demo"
-PLAYLIST = (
-    "#EXTM3U\n"
-    '#EXTINF:0 tvg-id="1",1 - TF1\nrtsp://127.0.0.1:1/fbxtv_pub/stream?namespace=1&service=201\n'
-    '#EXTINF:0 tvg-id="2",2 - France 2\nrtsp://127.0.0.1:1/fbxtv_pub/stream?namespace=1&service=202\n'
-)
 
 
 def config_for(tmp_path, **media) -> DockConfig:
@@ -27,7 +20,7 @@ def config_for(tmp_path, **media) -> DockConfig:
     )
 
 
-ALL = ("vlc", "ffmpeg", "wlrctl", "swayidle", "xwayland", "smbclient")
+ALL = ("vlc", "wlrctl", "swayidle", "xwayland", "smbclient")
 
 
 PLUGINS = frozenset({"smb", "avcodec", "xcb_x11", "gl"})
@@ -38,7 +31,6 @@ def report_for(
     *,
     tools=ALL,
     running=True,
-    live555=False,
     flags=(),
     plugins=PLUGINS,
     journal=None,
@@ -50,7 +42,6 @@ def report_for(
         config,
         which=lambda name: f"/usr/bin/{name}" if name in tools else None,
         running=lambda: running,
-        live555=lambda: live555,
         flags=lambda: list(flags),
         plugin=lambda name: name in plugins,
         journal=lambda: journal,
@@ -113,7 +104,7 @@ def test_without_a_journal_yet_the_doctor_says_where_it_will_be(tmp_path):
 def test_without_vlc_its_modules_are_not_blamed(tmp_path):
     out = report_for(
         config_for(tmp_path),
-        tools=("ffmpeg", "wlrctl", "swayidle", "smbclient"),
+        tools=("wlrctl", "swayidle", "smbclient"),
         plugins=frozenset(),
     )
     assert "⚠ VLC est absent" in out
@@ -138,39 +129,27 @@ def test_the_modules_are_looked_for_in_the_plugin_directories(monkeypatch):
     assert player_session.has_vlc_plugin("smb") is True
 
 
-def test_without_the_rtsp_module_the_channels_go_through_ffmpeg(tmp_path):
-    out = report_for(config_for(tmp_path), live555=False)
-    assert "passent par ffmpeg" in out
-    assert "⚠" not in out
-    assert "VLC lit lui-même" in report_for(config_for(tmp_path), live555=True)
-
-
 def test_without_vlc_the_screen_says_what_to_install(tmp_path):
-    out = report_for(config_for(tmp_path), tools=("ffmpeg", "wlrctl", "swayidle", "smbclient"))
+    out = report_for(config_for(tmp_path), tools=("wlrctl", "swayidle", "smbclient"))
     assert "⚠ VLC est absent" in out
     assert "sudo apt install vlc-bin vlc-plugin-base vlc-plugin-video-output" in out
 
 
-def test_neither_rtsp_nor_ffmpeg_means_no_channel(tmp_path):
-    out = report_for(config_for(tmp_path), tools=("vlc", "wlrctl", "swayidle", "smbclient"))
-    assert "⚠ Ni module RTSP dans VLC ni ffmpeg" in out
-
-
 def test_xdotool_is_enough_when_wlrctl_is_missing(tmp_path):
-    tools = ("vlc", "ffmpeg", "xdotool", "swayidle", "smbclient")
+    tools = ("vlc", "xdotool", "swayidle", "smbclient")
     out = report_for(config_for(tmp_path), tools=tools)
     assert "✔ xdotool présent" in out
     assert "⚠" not in out
-    tools = ("vlc", "ffmpeg", "swayidle", "smbclient")
+    tools = ("vlc", "swayidle", "smbclient")
     out = report_for(config_for(tmp_path), tools=tools)
     assert "⚠ Ni wlrctl ni xdotool" in out
 
 
 def test_a_missing_touch_watcher_or_smb_client_is_a_warning(tmp_path):
-    out = report_for(config_for(tmp_path), tools=("vlc", "ffmpeg", "wlrctl", "smbclient"))
+    out = report_for(config_for(tmp_path), tools=("vlc", "wlrctl", "smbclient"))
     assert "⚠ swayidle est absent" in out
     assert "sudo apt install swayidle" in out
-    out = report_for(config_for(tmp_path), tools=("vlc", "ffmpeg", "wlrctl", "swayidle"))
+    out = report_for(config_for(tmp_path), tools=("vlc", "wlrctl", "swayidle"))
     assert "⚠ smbclient est absent" in out
     assert "sudo apt install smbclient" in out
 
@@ -195,13 +174,12 @@ def test_the_settings_are_shown_but_never_the_password(tmp_path):
     secret = "pas-a-afficher-123"
     config = config_for(
         tmp_path,
-        playlist_url="http://mafreebox.freebox.fr/freeboxtv/playlist.m3u",
         smb_host="mafreebox.freebox.fr",
         smb_user="freebox",
         smb_password=secret,
     )
     out = report_for(config)
-    assert "http://mafreebox.freebox.fr/freeboxtv/playlist.m3u" in out
+    assert "Liste des chaînes" not in out  # Freetv a été remplacé par Free TV
     assert (
         "mafreebox.freebox.fr (identifiant « freebox », mot de passe configuré (non affiché))"
         in out
@@ -216,28 +194,6 @@ def test_an_anonymous_share_and_a_missing_server_are_told(tmp_path):
 
 
 # --- le réseau ----------------------------------------------------------------------------------------------------
-
-
-class _Freebox(http.server.BaseHTTPRequestHandler):
-    body = PLAYLIST.encode()
-
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(self.body)))
-        self.end_headers()
-        self.wfile.write(self.body)
-
-    def log_message(self, *_):
-        pass
-
-
-@pytest.fixture
-def freebox():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Freebox)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_port}/playlist.m3u"
-    server.shutdown()
-    server.server_close()
 
 
 @pytest.fixture
@@ -257,30 +213,15 @@ async def network_report(config, *, online=True) -> str:
     return report.render()
 
 
-async def test_a_freebox_that_answers_gives_its_channels_and_shares(
-    tmp_path, freebox, demo_smbclient
-):
-    config = config_for(tmp_path, playlist_url=freebox, smb_host="127.0.0.1")
+async def test_a_server_that_answers_gives_its_shares(tmp_path, demo_smbclient):
+    config = config_for(tmp_path, smb_host="127.0.0.1")
     out = await network_report(config)
-    assert "✔ La Freebox donne sa liste : 2 chaîne(s)" in out
     assert "✔ 127.0.0.1 répond : 2 partage(s) (Disque dur, Enregistrements)" in out
     assert "⚠" not in out
+    assert "Liste des chaînes" not in out
 
 
-async def test_a_freebox_that_does_not_answer_says_where_to_look(tmp_path, demo_smbclient):
-    config = config_for(tmp_path, playlist_url="http://127.0.0.1:9/playlist.m3u", smb_host="")
-    out = await network_report(config)
-    assert "⚠ Liste des chaînes" in out
-    assert "la Freebox est-elle allumée" in out
-
-
-async def test_a_playlist_outside_the_local_network_is_refused(tmp_path):
-    config = config_for(tmp_path, playlist_url="http://example.org/playlist.m3u", smb_host="")
-    out = await network_report(config)
-    assert "⚠ Liste des chaînes" in out
-
-
-async def test_a_share_server_that_fails_is_a_warning(tmp_path, freebox, monkeypatch):
+async def test_a_share_server_that_fails_is_a_warning(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fake = bin_dir / "smbclient"
@@ -289,16 +230,15 @@ async def test_a_share_server_that_fails_is_a_warning(tmp_path, freebox, monkeyp
     )
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
-    config = config_for(tmp_path, playlist_url=freebox, smb_host="192.0.2.50")
+    config = config_for(tmp_path, smb_host="192.0.2.50")
     out = await network_report(config)
-    assert "✔ La Freebox donne sa liste" in out
     assert "⚠ Partages Samba" in out
 
 
 async def test_offline_nothing_is_probed(tmp_path):
-    config = config_for(tmp_path, playlist_url="http://127.0.0.1:9/x.m3u")
+    config = config_for(tmp_path, smb_host="192.0.2.50")
     out = await network_report(config, online=False)
-    assert "Test de la Freebox ignoré (--offline)" in out
+    assert "Test du serveur de fichiers ignoré (--offline)" in out
     assert "⚠" not in out
 
 

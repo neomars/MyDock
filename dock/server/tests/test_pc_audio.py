@@ -334,7 +334,7 @@ def recorded(monkeypatch):
 
 def make_session(tmp_path: Path, *, demo: bool = False, **kw: Any) -> Session:
     s = Session(
-        "ws://unused", demo=demo, vlc="/usr/bin/vlc", ffmpeg="", smbclient="", live555=False, mame="/usr/games/mame",
+        "ws://unused", demo=demo, vlc="/usr/bin/vlc", smbclient="", mame="/usr/games/mame",
         runtime_dir=tmp_path, extra_vlc_args=["--option-de-l-utilisateur"], env={"HOME": str(tmp_path), "XDG_RUNTIME_DIR": str(tmp_path)}, **kw,
     )  # fmt: skip
     s.windows = type(
@@ -371,8 +371,7 @@ def play(job: int = 1, **kw: Any) -> dict[str, Any]:
         "t": "cmd",
         "name": "play",
         "job": job,
-        "url": "rtsp://h/x",
-        "live": True,
+        "url": "smb://nas/partage/film.mkv",
         "volume": 70,
         **kw,
     }

@@ -1,9 +1,9 @@
-// Divertissement : Freetv (les chaînes de la Freebox) et Kiosque (ses partages Samba), lus par VLC sur l'écran du dock.
+// Divertissement : Kiosque (les partages Samba de la Freebox), lu par VLC sur l'écran du dock.
 // Fonctions pures, testées dans media.test.ts. L'état et les actions sont dans media.svelte.ts.
 
-import type { MediaEntry, PlayerAudio, PlayerSnapshot, TvChannel } from './protocol'
+import type { MediaEntry, PlayerAudio, PlayerSnapshot } from './protocol'
 
-export type MediaView = 'menu' | 'tv' | 'files'
+export type MediaView = 'menu' | 'files'
 
 /** Une lecture est-elle en cours ou en train de démarrer ? */
 export const playerActive = (player: PlayerSnapshot | null | undefined): boolean =>
@@ -44,30 +44,6 @@ export const normalize = (text: string): string =>
     .toLowerCase()
     .trim()
 
-/**
- * Les chaînes qui répondent à une recherche : un numéro (« 6 » trouve la chaîne 6, puis celles dont le numéro commence
- * par 6) ou des mots du nom (tous doivent s'y trouver, dans n'importe quel ordre). Sans recherche, toute la liste.
- */
-export function filterChannels(channels: readonly TvChannel[], query: string): TvChannel[] {
-  const wanted = normalize(query)
-  if (!wanted) return [...channels]
-  if (/^\d+$/.test(wanted)) {
-    const exact = channels.filter((c) => String(c.number) === wanted)
-    const prefix = channels.filter((c) => c.number !== null && String(c.number) !== wanted && String(c.number).startsWith(wanted))
-    return [...exact, ...prefix]
-  }
-  const words = wanted.split(/\s+/)
-  return channels.filter((c) => {
-    const name = normalize(c.name)
-    return words.every((w) => name.includes(w))
-  })
-}
-
-/** « 12 chaînes », « 1 chaîne », « aucune chaîne ». */
-export function channelCount(n: number): string {
-  return n === 0 ? 'aucune chaîne' : `${n} chaîne${n > 1 ? 's' : ''}`
-}
-
 /** Le chemin d'un dossier d'un partage, en morceaux (« Films/Dessins » -> ["Films", "Dessins"]). */
 export const pathParts = (path: string): string[] => path.split('/').filter(Boolean)
 
@@ -87,9 +63,9 @@ export function whereText(share: string | null, path: string): string {
 /** Les entrées affichables d'un dossier : les dossiers d'abord (le dock les envoie déjà triés), puis les vidéos. */
 export const folderCount = (entries: readonly MediaEntry[]): number => entries.filter((e) => e.dir).length
 
-/** Avancement d'une lecture de 0 à 1 ; `null` pour un direct ou tant que la durée est inconnue. */
+/** Avancement d'une lecture de 0 à 1 ; `null` tant que la durée est inconnue. */
 export function progressRatio(player: PlayerSnapshot | null | undefined): number | null {
-  if (!player || player.live || !player.length || player.position === null) return null
+  if (!player || !player.length || player.position === null) return null
   return Math.min(1, Math.max(0, player.position / player.length))
 }
 
@@ -97,11 +73,11 @@ export function progressRatio(player: PlayerSnapshot | null | undefined): number
 export function stateText(player: PlayerSnapshot): string {
   switch (player.state) {
     case 'starting':
-      return player.live ? 'Connexion à la chaîne…' : 'Ouverture du fichier…'
+      return 'Ouverture du fichier…'
     case 'paused':
       return 'En pause'
     case 'playing':
-      return player.live ? 'En direct' : `${formatPlayTime(player.position)} / ${formatPlayTime(player.length)}`
+      return `${formatPlayTime(player.position)} / ${formatPlayTime(player.length)}`
     case 'error':
       return player.error ?? 'La lecture a échoué.'
     default:
@@ -109,7 +85,7 @@ export function stateText(player: PlayerSnapshot): string {
   }
 }
 
-/** Le sous-titre de la tuile « Divertissement » de l'accueil pendant une lecture : « TF1 ». */
+/** Le sous-titre de la tuile « Divertissement » de l'accueil pendant une lecture : le titre de la vidéo. */
 export const nowPlayingTitle = (player: PlayerSnapshot | null | undefined): string | null =>
   playerActive(player) ? (player?.engine === 'mame' ? `En jeu : ${player.title ?? ''}`.trim() : (player?.title ?? null)) : null
 
@@ -126,7 +102,7 @@ export function playerBlocker(player: PlayerSnapshot | null | undefined): string
 export const SEEK_SECONDS = 30
 
 /**
- * Un échec de lecture en deux parties : la phrase, et ce que VLC (ou ffmpeg) a écrit (« Détail : « … ». ») : le détail
+ * Un échec de lecture en deux parties : la phrase, et ce que VLC (ou smbclient) a écrit (« Détail : « … ». ») : le détail
  * s'affiche en plus petit, car il sert à comprendre, pas à lire.
  */
 export function splitFailure(text: string): { main: string; detail: string | null } {

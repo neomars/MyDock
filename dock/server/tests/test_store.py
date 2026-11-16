@@ -19,7 +19,6 @@ def test_defaults(tmp_path):
         "saver_aerial": True,
         "saver_apple": True,
         "saver_sources": [],
-        "tv_hd": False,  # Freetv : la qualité standard d'abord
     }
     assert store.pc["interfaces"] == []
 
@@ -216,7 +215,6 @@ def test_unknown_keys_in_the_file_are_ignored(tmp_path):
         "saver_aerial": True,
         "saver_apple": True,
         "saver_sources": [],
-        "tv_hd": False,  # Freetv : la qualité standard d'abord
     }
     assert store.pc["hostname"] == "x"
 
@@ -392,11 +390,9 @@ def test_the_new_page_can_be_chosen_and_the_old_button_can_still_open_its_page(t
     )  # la page existe toujours
 
 
-def test_the_freetv_quality_is_a_flag_that_survives_a_restart_and_refuses_other_values(tmp_path):
-    store = StateStore(tmp_path)
-    assert store.ui["tv_hd"] is False
-    assert store.update_ui({"tv_hd": True})["tv_hd"] is True
-    assert StateStore(tmp_path).ui["tv_hd"] is True
-    with pytest.raises(ValidationFailure):
-        store.update_ui({"tv_hd": "oui"})
-    assert _write_state(tmp_path, {"tv_hd": "peut-être"}).ui["tv_hd"] is False
+def test_the_old_freetv_quality_of_a_state_file_is_dropped_and_never_comes_back(tmp_path):
+    """Freetv a été remplacé par Free TV : un état d'avant n'a plus de réglage « HD », ni au chargement ni à l'écriture."""
+    store = _write_state(tmp_path, {"tv_hd": True})
+    assert "tv_hd" not in store.ui
+    assert "tv_hd" not in store.update_ui({"tv_hd": True, "saver_aerial": False})
+    assert "tv_hd" not in json.loads((tmp_path / "state.json").read_text())["ui"]

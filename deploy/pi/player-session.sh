@@ -1,5 +1,5 @@
 #!/bin/sh
-# MyDock - lance l'assistant de lecture du Divertissement (Freetv, Kiosque) dans la session de l'écran du dock.
+# MyDock - lance l'assistant de lecture du Divertissement (Kiosque, Retrogame, Free TV) dans la session de l'écran du dock.
 # Lancé par labwc (autostart), sous Wayland, à côté du navigateur : VLC (et MAME, pour Retrogame) doivent tourner dans
 # cette session pour s'afficher sur l'écran du Pi. L'assistant se connecte au dock en local (127.0.0.1, jamais le
 # réseau) ; il ne lit aucun secret : l'adresse d'une chaîne ou d'un fichier, ou le nom d'un jeu, lui arrive du dock au

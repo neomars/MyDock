@@ -44,7 +44,6 @@ from mydock_dock.agent_link import (
 )
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig, default_config_path
-from mydock_dock.freebox import ChannelList, FreeboxError
 from mydock_dock.gpio_button import describe_pin
 from mydock_dock.markets.diagnose import PROBES
 from mydock_dock.markets.errors import ProviderError
@@ -626,29 +625,16 @@ def check_media(
     *,
     which: Callable[[str], str | None] = shutil.which,
     running: Callable[[], bool] = player_session_running,
-    live555: Callable[[], bool] = player_session.has_live555,
     flags: Callable[[], list[str]] = player_session.read_flags,
     plugin: Callable[[str], bool] = player_session.has_vlc_plugin,
     journal: Callable[[], Path | None] = playerlog.existing_path,
     failures: Callable[[], list[str]] = playerlog.recent_failures,
 ) -> None:
     """Divertissement : VLC et ce qu'il faut autour, et les réglages (jamais le mot de passe)."""
-    report.section("Divertissement (Freetv, Kiosque)")
+    report.section("Divertissement (Kiosque)")
     vlc = which("vlc") or which("cvlc")
     if vlc:
         report.add(OK, f"VLC présent ({vlc})")
-        if live555():
-            report.add(OK, "VLC lit lui-même les chaînes de la Freebox (module RTSP présent)")
-        elif which("ffmpeg"):
-            report.add(
-                INFO,
-                "VLC n'a pas le module RTSP : les chaînes passent par ffmpeg (il recopie le flux vers VLC, sans le décoder)",
-            )
-        else:
-            report.add(
-                WARN,
-                "Ni module RTSP dans VLC ni ffmpeg : les chaînes ne pourront pas être lues (sudo apt install ffmpeg)",
-            )
     else:
         report.add(
             WARN,
@@ -721,7 +707,6 @@ def check_media(
         )
     for row in failures():
         report.add(WARN, f"Lecture ratée, d'après le journal : {row}")
-    report.add(INFO, f"Liste des chaînes : {config.playlist_url}")
     if config.smb_host:
         user = f"identifiant « {config.smb_user} »" if config.smb_user else "accès sans identifiant"
         password = (
@@ -1076,18 +1061,10 @@ def retrogame_flags() -> list[str]:
 
 
 async def check_media_network(report: Report, config: DockConfig, *, online: bool = True) -> None:
-    """Divertissement : la Freebox répond-elle (liste des chaînes, partages Samba) ?"""
+    """Divertissement : le serveur de fichiers du Kiosque répond-il (partages Samba) ?"""
     if not online:
-        report.add(INFO, "Test de la Freebox ignoré (--offline)")
+        report.add(INFO, "Test du serveur de fichiers ignoré (--offline)")
         return
-    try:
-        channels, _ = await ChannelList(lambda: config.playlist_url).get()
-        report.add(OK, f"La Freebox donne sa liste : {len(channels)} chaîne(s)")
-    except FreeboxError as exc:
-        report.add(
-            WARN,
-            f"Liste des chaînes : {exc} (la Freebox est-elle allumée, et le Pi sur le même réseau ?)",
-        )
     if config.smb_host and shutil.which("smbclient"):
         browser = SambaBrowser(
             lambda: config.smb_host, lambda: config.smb_user, lambda: config.smb_password

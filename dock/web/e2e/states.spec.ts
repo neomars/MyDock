@@ -1793,9 +1793,9 @@ test('Sortie sonore : un appareil disparu pendant qu’on le touche relit la lis
 
 // --- Divertissement : la télécommande et la lecture, avec un faux dock ----------------------------------------------------
 
-const PLAYER_HELPER = { vlc: true, live555: false, ffmpeg: true, touch: true, demo: false }
+const PLAYER_HELPER = { vlc: true, touch: true, demo: false }
 const playerState = (extra: Record<string, unknown> = {}) => ({
-  available: true, state: 'playing', kind: 'file', title: 'Un film', subtitle: 'Disque dur/Films', live: false,
+  available: true, state: 'playing', kind: 'file', title: 'Un film', subtitle: 'Disque dur/Films',
   position: 120, length: 5400, volume: 70, front: 'video', error: null, helper: PLAYER_HELPER, ...extra,
 }) // prettier-ignore
 
@@ -1825,7 +1825,7 @@ test('Divertissement : un toucher pendant la vidéo ramène la télécommande, q
 
   mock.push('player', playerState({ state: 'idle', title: null, subtitle: null, position: null, length: null, front: 'dock' }))
   await expect(page.getByTestId('remote')).toHaveCount(0) // la lecture est finie : on retrouve le menu
-  await expect(page.getByTestId('media-tv')).toBeVisible()
+  await expect(page.getByTestId('media-files')).toBeVisible()
 })
 
 test('Divertissement : une lecture qui échoue est dite dans le menu, et « Compris » l’efface', async ({ page, stack }) => {
@@ -1851,9 +1851,6 @@ test('Divertissement : un fichier lu par smbclient (tube) n’a pas d’avance r
   await expect(page.getByTestId('remote-toggle')).toBeEnabled() // pause et volume marchent toujours
   await expect(page.getByTestId('remote-volume')).toBeVisible()
   await noPageScroll(page)
-
-  mock.push('player', playerState({ front: 'dock', seekable: false, live: true, position: null, length: null })) // un direct : pas de mention
-  await expect(page.getByTestId('remote-noseek')).toHaveCount(0)
 })
 
 test('Divertissement : le détail que VLC a donné s’affiche à part, en plus petit, sans rien faire déborder', async ({ page, stack }) => {
@@ -1882,9 +1879,8 @@ test('Divertissement : sans assistant de lecture, les listes disent ce qui manqu
   const mock = await mockDock(page, {}, { startPage: 'media' })
   await page.goto(stack.url)
   mock.push('player', { ...playerState({ state: 'idle', front: 'dock' }), available: false, helper: null })
-  await page.getByTestId('media-tv').tap()
-  await expect(page.getByTestId('tv-blocker')).toContainText('assistant de lecture')
-  await expect(page.getByTestId('tv-count')).toContainText('aucune chaîne') // le faux dock ne donne aucune chaîne : pas de plantage
+  await page.getByTestId('media-files').tap()
+  await expect(page.getByTestId('files-blocker')).toContainText('assistant de lecture')
   await page.getByTestId('media-back').tap()
   mock.push('player', { ...playerState({ state: 'idle', front: 'dock' }), helper: { ...PLAYER_HELPER, vlc: false } })
   await page.getByTestId('media-files').tap()

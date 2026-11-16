@@ -1,4 +1,4 @@
-"""Le lecteur du dock : ce qui joue sur l'écran du Pi (Freetv, Kiosque), et la télécommande qui le pilote.
+"""Le lecteur du dock : ce qui joue sur l'écran du Pi (Kiosque, Retrogame), et la télécommande qui le pilote.
 
 VLC ne tourne pas dans ce service : celui-ci est isolé (pas d'écran, pas de session graphique). C'est « l'assistant de
 lecture » (player_session.py), lancé par le compositeur dans la session de l'écran, qui démarre VLC en plein écran et le
@@ -8,7 +8,7 @@ commande. Il se connecte ici par `/ws/player` (en local seulement) et :
   * rend compte de ce qui se passe (VLC joue, position, durée, VLC s'est arrêté, pourquoi).
 
 Ce module garde l'état de lecture, que l'interface lit par le thème « player », et décide de ce qui est permis : l'écran
-n'envoie jamais d'adresse de flux, seulement l'identifiant d'une chaîne ou un partage et un chemin que le dock a vus.
+n'envoie jamais d'adresse de flux, seulement un partage et un chemin que le dock a vus, ou l'identifiant d'un jeu.
 """
 
 from __future__ import annotations
@@ -110,7 +110,6 @@ class PlayerHub:
             "kind": media.get("kind"),
             "title": media.get("title"),
             "subtitle": media.get("subtitle"),
-            "live": bool(media.get("live")),
             "engine": "mame" if media.get("kind") == "game" else "vlc",
             "game": media.get("game"),
             "button": self.button,
@@ -121,10 +120,7 @@ class PlayerHub:
             "seekable": self.seekable,
             "error": self.error,
             "audio": self.audio_snapshot(),
-            "helper": {
-                k: helper.get(k)
-                for k in ("vlc", "live555", "ffmpeg", "touch", "demo", "mame", "gpio")
-            }
+            "helper": {k: helper.get(k) for k in ("vlc", "touch", "demo", "mame", "gpio")}
             if helper
             else None,
         }
@@ -200,8 +196,6 @@ class PlayerHub:
         if kind == "hello":
             conn.info = {
                 "vlc": bool(message.get("vlc")),
-                "live555": bool(message.get("live555")),
-                "ffmpeg": bool(message.get("ffmpeg")),
                 "touch": bool(message.get("touch")),
                 "demo": bool(message.get("demo")),
                 "mame": bool(message.get("mame")),
@@ -276,7 +270,7 @@ class PlayerHub:
         secrets: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """Lance `url` sur l'écran du dock. `media` : de quoi l'afficher (kind, title, subtitle, live).
+        """Lance `url` sur l'écran du dock. `media` : de quoi l'afficher (kind, title, subtitle).
 
         `extra` : ce qui est propre au moteur (un jeu de MAME : son nom et le dossier des ROMs ; jamais une commande)."""
         helper = self._require_helper()
@@ -295,7 +289,7 @@ class PlayerHub:
                     "sudo apt install swayidle wlrctl (la vidéo plein écran garderait l'écran)."
                 )
         self.job += 1
-        self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "live", "game")}
+        self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "game")}
         self.state, self.error = "starting", None
         self.position = self.length = None
         self.seekable = True
@@ -307,7 +301,6 @@ class PlayerHub:
                 "name": "play",
                 "job": self.job,
                 "url": url,
-                "live": bool(media.get("live")),
                 "volume": self.volume,
                 # Où est le fichier d'un partage (jamais le mot de passe : voir `secrets`) : de quoi le lire par smbclient.
                 **({"smb": media["smb"]} if isinstance(media.get("smb"), dict) else {}),
@@ -384,7 +377,7 @@ class PlayerHub:
                     "Le jeu n'a pas démarré : MAME n'a pas ouvert sa fenêtre en 40 secondes."
                 )
             else:
-                self._fail("La lecture n'a pas démarré (la chaîne ou le fichier ne répond pas).")
+                self._fail("La lecture n'a pas démarré (le fichier ne répond pas).")
             self._changed()
 
     def shutdown(self) -> None:

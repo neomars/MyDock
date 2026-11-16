@@ -552,9 +552,8 @@ export interface PadsSnapshot {
   devices: PadDevice[]
 }
 
-/** Divertissement : où le dock prend les chaînes (Freebox) et les fichiers (partage Samba). Jamais le mot de passe. */
+/** Divertissement : où le dock prend les fichiers du Kiosque (partage Samba). Jamais le mot de passe. */
 export interface MediaInfo {
-  playlist_url: string
   smb_host: string
   smb_user: string
   smb_password_set: boolean
@@ -576,16 +575,14 @@ export interface PlayerAudio {
 
 export type PlayerStateName = 'idle' | 'starting' | 'playing' | 'paused' | 'error'
 
-/** Thème « player » : ce que joue l'écran du dock (VLC) et ce que son assistant sait faire. */
+/** Thème « player » : ce que joue l'écran du dock (VLC, MAME) et ce que son assistant sait faire. */
 export interface PlayerSnapshot {
   /** L'assistant de lecture de l'écran est-il connecté ? */
   available: boolean
   state: PlayerStateName
-  kind: 'tv' | 'file' | 'game' | null
+  kind: 'file' | 'game' | null
   title: string | null
   subtitle: string | null
-  /** Un direct (une chaîne) : ni position ni durée. */
-  live: boolean
   position: number | null
   length: number | null
   /** 0 à 100. */
@@ -605,8 +602,6 @@ export interface PlayerSnapshot {
   audio?: PlayerAudio
   helper: {
     vlc: boolean
-    live555: boolean
-    ffmpeg: boolean
     touch: boolean
     demo: boolean
     /** MAME est-il installé ? */
@@ -614,14 +609,6 @@ export interface PlayerSnapshot {
     /** L'état du bouton physique, en une phrase (« GPIO17 (broche 11) : prêt. »). */
     gpio?: string | null
   } | null
-}
-
-/** Une chaîne de la Freebox, sans l'adresse de son flux (le dock la garde). */
-export interface TvChannel {
-  id: string
-  number: number | null
-  name: string
-  qualities: ('ld' | 'sd' | 'hd' | 'auto')[]
 }
 
 /** Un dossier ou une vidéo d'un partage. */
@@ -753,8 +740,6 @@ export interface UiState {
   saver_apple: boolean
   /** Adresses https de vidéos (ou de listes de vidéos) saisies dans Réglages. */
   saver_sources: string[]
-  /** Freetv : lire les chaînes en HD (sinon en définition standard, plus légère pour le Pi). */
-  tv_hd: boolean
 }
 
 export interface Ack {

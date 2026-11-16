@@ -532,9 +532,7 @@ def make_session(rig, **kw):
     s = Session(
         "ws://unused",
         vlc="",
-        ffmpeg="",
         smbclient="",
-        live555=False,
         runtime_dir=rig.run,
         extra_vlc_args=[],
         mame=kw.pop("mame", rig.mame),
@@ -551,7 +549,7 @@ def make_session(rig, **kw):
 
 def play_message(job=1, **kw):
     return {
-        "t": "cmd", "name": "play", "job": job, "url": "", "live": False, "volume": 70,
+        "t": "cmd", "name": "play", "job": job, "url": "", "volume": 70,
         "engine": "mame", "game": "pong", "title": "Pong", "rompath": "/var/lib/mydock/roms", **kw,
     }  # fmt: skip
 

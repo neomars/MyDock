@@ -48,7 +48,6 @@ from mydock_dock.audio_relay import AudioRelay
 from mydock_dock.bluetooth import PadsError, PadsManager
 from mydock_dock.clients import ClientRegistry
 from mydock_dock.config import DockConfig
-from mydock_dock.freebox import ChannelList, FreeboxError
 from mydock_dock.markets.diagnose import diagnose
 from mydock_dock.markets.errors import NotFound, ProviderError
 from mydock_dock.markets.factory import build_providers
@@ -67,7 +66,9 @@ from mydock_dock.wired_pads import WiredPads
 from mydock_dock.wol import send_magic_packet
 
 log = logging.getLogger(__name__)
-media_log = logging.getLogger("mydock_dock.media")  # dock.log : Freetv, Kiosque, lectures demandées
+media_log = logging.getLogger(
+    "mydock_dock.media"
+)  # dock.log : Free TV, Kiosque, lectures demandées
 
 MAX_INFLIGHT_ACTIONS = 32
 #: Combien de temps le dock attend la réponse de l'agent à une action du navigateur, en secondes.
@@ -139,19 +140,13 @@ class UiSetParams(_Strict):
     saver_aerial: StrictBool | None = None
     saver_apple: StrictBool | None = None
     saver_sources: list[str] | None = Field(default=None, max_length=20)
-    tv_hd: StrictBool | None = None
-
-
-class TvListParams(_Strict):
-    refresh: StrictBool = False
 
 
 class PlayParams(_Strict):
-    """Ce qu'on peut demander de lire : une chaîne que le dock a listée, ou un fichier d'un partage. Jamais une adresse."""
+    """Ce qu'on peut demander de lire : un fichier d'un partage, un jeu que MAME a listé. Jamais une adresse."""
 
-    kind: Literal["tv", "file", "game"]
+    kind: Literal["file", "game"]
     id: str | None = Field(default=None, max_length=24)
-    hd: StrictBool | None = None
     share: str | None = Field(default=None, max_length=255)
     path: str | None = Field(default=None, max_length=1000)
 
@@ -169,7 +164,6 @@ class PlayerFrontParams(_Strict):
 
 
 class MediaSetParams(_Strict):
-    playlist_url: str | None = Field(default=None, max_length=300)
     smb_host: str | None = Field(default=None, max_length=253)
     smb_user: str | None = Field(default=None, max_length=64)
     smb_password: str | None = Field(default=None, max_length=128)
@@ -283,7 +277,6 @@ class DockServer:
             timing=markets_timing,
             demo=config.demo_markets,
         )
-        self.channels = ChannelList(lambda: self.config.playlist_url)
         self.samba = SambaBrowser(
             lambda: self.config.smb_host,
             lambda: self.config.smb_user,
@@ -491,7 +484,6 @@ class DockServer:
         """Divertissement, pour les Réglages : jamais le mot de passe, seulement s'il y en a un."""
         cfg = self.config
         return {
-            "playlist_url": cfg.playlist_url,
             "smb_host": cfg.smb_host,
             "smb_user": cfg.smb_user,
             "smb_password_set": bool(cfg.smb_password),
@@ -710,7 +702,6 @@ class DockServer:
         reg.register(
             "dock.saver.forget", self._act_saver_forget, params=SaverForgetParams, timeout=20.0
         )
-        reg.register("dock.tv.list", self._act_tv_list, params=TvListParams, timeout=20.0)
         reg.register("dock.media.shares", self._act_media_shares, timeout=25.0)
         reg.register(
             "dock.media.browse", self._act_media_browse, params=MediaBrowseParams, timeout=25.0
@@ -850,22 +841,7 @@ class DockServer:
         self.push_local("ui")
         return ui
 
-    # --- Divertissement : Freetv et Kiosque ---------------------------------------------------------
-
-    async def _act_tv_list(self, _ctx: ActionContext, params: TvListParams) -> dict[str, Any]:
-        """Les chaînes de la Freebox (sans leurs adresses de flux)."""
-        try:
-            channels, warning = await self.channels.get(refresh=params.refresh)
-        except FreeboxError as exc:
-            media_log.warning(
-                "Freetv : liste des chaînes illisible (%s) : %s", self.config.playlist_url, exc
-            )
-            raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
-        if warning:
-            media_log.warning("Freetv : %d chaînes (liste gardée) : %s", len(channels), warning)
-        elif params.refresh:
-            media_log.info("Freetv : %d chaînes lues (%s)", len(channels), self.config.playlist_url)
-        return {"channels": [c.public() for c in channels], "warning": warning}
+    # --- Divertissement : Kiosque ---------------------------------------------------------
 
     async def _act_media_shares(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         try:
@@ -916,22 +892,9 @@ class DockServer:
         return self.media_info()
 
     async def _act_media_test(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
-        """Essaie chaque maillon (liste des chaînes, partages, lecteur) et dit en clair lequel ne va pas."""
+        """Essaie chaque maillon (partages, lecteur) et dit en clair lequel ne va pas."""
         result: dict[str, Any] = {}
-        media_log.info(
-            "Essai Freetv et Kiosque demandé (liste %s, serveur %s)",
-            self.config.playlist_url,
-            self.config.smb_host,
-        )
-        try:
-            channels, warning = await self.channels.get(refresh=True)
-            result["tv"] = {
-                "ok": True,
-                "text": f"{len(channels)} chaînes lues.",
-                "warning": warning,
-            }
-        except FreeboxError as exc:
-            result["tv"] = {"ok": False, "text": str(exc)}
+        media_log.info("Essai du Kiosque demandé (serveur %s)", self.config.smb_host)
         try:
             shares = await self.samba.shares()
             names = ", ".join(shares[:6]) + ("…" if len(shares) > 6 else "")
@@ -960,15 +923,7 @@ class DockServer:
                 "text": "swayidle, ou wlrctl (ou xdotool), manque : sudo apt install swayidle wlrctl.",
             }
         else:
-            result["player"] = {
-                "ok": True,
-                "text": "VLC est prêt."
-                + (
-                    ""
-                    if info["live555"] or info["ffmpeg"]
-                    else " (ffmpeg manque : les chaînes ne passeront pas)"
-                ),
-            }
+            result["player"] = {"ok": True, "text": "VLC est prêt."}
         media_log.info(
             "Essai : %s",
             " ; ".join(
@@ -1064,12 +1019,9 @@ class DockServer:
                     media["game"],
                 )
                 return {"started": media["title"]}
-            if params.kind == "tv":
-                media, url, secrets = await self._tv_request(params)
-            else:
-                media, url, secrets = self._file_request(params)
+            media, url, secrets = self._file_request(params)
             self.player.play(media, url, secrets=secrets)
-        except (PlayerError, SambaError, FreeboxError) as exc:
+        except (PlayerError, SambaError) as exc:
             media_log.warning("Lecture refusée (%s) : %s", params.kind, exc)
             raise ActionError(proto.ErrorCode.UNAVAILABLE, str(exc)) from None
         media_log.info(
@@ -1092,7 +1044,6 @@ class DockServer:
             "kind": "game",
             "title": game.title,
             "subtitle": " · ".join(part for part in (game.year, game.maker) if part),
-            "live": False,
             "game": game.name,
         }
         return media, {
@@ -1101,26 +1052,6 @@ class DockServer:
             "title": game.title,
             "rompath": str(self.config.roms_path),
         }
-
-    async def _tv_request(self, params: PlayParams) -> tuple[dict[str, Any], str, dict[str, str]]:
-        if not params.id:
-            raise PlayerError("Quelle chaîne ?")
-        channel = self.channels.find(params.id)
-        if channel is None:
-            await self.channels.get()
-            channel = self.channels.find(params.id)
-        if channel is None:
-            raise PlayerError("Cette chaîne n'est plus dans la liste de la Freebox.")
-        hd = self.store.ui["tv_hd"] if params.hd is None else params.hd
-        quality, url = channel.stream(hd=bool(hd))
-        number = f"{channel.number} · " if channel.number else ""
-        media = {
-            "kind": "tv",
-            "title": channel.name,
-            "subtitle": f"{number}{quality.upper() if quality != 'auto' else 'Direct'}",
-            "live": True,
-        }
-        return media, url, {}
 
     def _file_request(self, params: PlayParams) -> tuple[dict[str, Any], str, dict[str, str]]:
         if not params.share or not params.path:
@@ -1138,7 +1069,6 @@ class DockServer:
             "kind": "file",
             "title": stem,
             "subtitle": "/".join([share, *parts[:-1]]),
-            "live": False,
             "smb": {"host": host, "share": share, "path": "/".join(parts)},
         }
         secrets: dict[str, str] = {}

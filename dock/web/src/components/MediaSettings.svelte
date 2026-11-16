@@ -11,15 +11,10 @@
   import { sock } from '../lib/socket.svelte'
   import { notify } from '../lib/toast.svelte'
 
-  // Réglages → Divertissement : où le dock prend les chaînes (la liste de la Freebox) et les films (un partage Samba).
+  // Réglages → Divertissement : où le dock prend les films du Kiosque (un partage Samba), et où sort le son.
   const info = $derived(sock.dock?.media)
   let busy = $state(false)
-  let result = $state<{ tv: MediaTestPart; files: MediaTestPart; player: MediaTestPart } | null>(null)
-
-  async function editUrl(): Promise<void> {
-    const typed = await editText({ title: 'Liste des chaînes', hint: 'http://… : la liste M3U de la Freebox', kind: 'url', value: info?.playlist_url ?? 'http://' })
-    if (typed !== null && (await media.saveSettings({ playlist_url: typed.trim() }))) notify('Liste enregistrée.', 'good')
-  }
+  let result = $state<{ files: MediaTestPart; player: MediaTestPart } | null>(null)
 
   async function editHost(): Promise<void> {
     const typed = await editText({ title: 'Serveur de fichiers', hint: 'nom ou adresse du serveur Samba (la Freebox)', kind: 'host', value: info?.smb_host ?? '' })
@@ -68,11 +63,6 @@
 <section class="card" data-testid="settings-media">
   <h2>Divertissement</h2>
   <div class="setting">
-    <span class="label">Chaînes</span>
-    <span class="value mono" data-testid="media-url">{info?.playlist_url ?? '—'}</span>
-    <button class="btn" data-testid="edit-media-url" onclick={editUrl}>Modifier</button>
-  </div>
-  <div class="setting">
     <span class="label">Fichiers</span>
     <span class="value mono" data-testid="media-host">{info?.smb_host || 'non défini'}</span>
     <button class="btn" data-testid="edit-media-host" onclick={editHost}>Modifier</button>
@@ -109,12 +99,12 @@
   {/if}
   <div class="test">
     <button class="btn primary" data-testid="media-test" disabled={busy} onclick={test}>
-      <PlugZap size={36} aria-hidden="true" />{busy ? 'Test en cours…' : 'Tester Freetv et Kiosque'}
+      <PlugZap size={36} aria-hidden="true" />{busy ? 'Test en cours…' : 'Tester le Kiosque'}
     </button>
   </div>
   {#if result}
     <ul class="results" data-testid="media-results">
-      {#each [['tv', 'Chaînes', result.tv], ['files', 'Fichiers', result.files], ['player', 'Lecteur', result.player]] as const as [key, label, part] (key)}
+      {#each [['files', 'Fichiers', result.files], ['player', 'Lecteur', result.player]] as const as [key, label, part] (key)}
         <li class:ok={part.ok} class:ko={!part.ok} data-testid="media-result-{key}">
           {#if part.ok}<CircleCheck size={30} />{:else}<CircleAlert size={30} />{/if}
           <span><strong>{label}</strong> · {part.text}</span>
@@ -122,7 +112,7 @@
       {/each}
     </ul>
   {/if}
-  <p class="dim small">Freetv : la liste M3U de la Freebox. Kiosque : un partage Samba (Windows) de la Freebox. Les vidéos se lisent avec VLC sur cet écran.</p>
+  <p class="dim small">Kiosque : un partage Samba (Windows) de la Freebox. Les vidéos se lisent avec VLC sur cet écran.</p>
 </section>
 
 <style>
