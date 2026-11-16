@@ -8,7 +8,11 @@
 # Réglages optionnels :
 #   /etc/mydock-kiosk/vlc.flags   options supplémentaires de VLC, une par ligne (# = commentaire)
 #   /etc/mydock-kiosk/mame.flags  options supplémentaires de MAME, une par ligne (# = commentaire)
-# Sans VLC ou sans MAME, l'écran du dock le dit : sudo apt install vlc-bin vlc-plugin-base ; sudo apt install mame
+#   /etc/mydock-kiosk/freetv.flags  options supplémentaires du Chromium de Free TV, une par ligne (# = commentaire)
+# Free TV (tv.free.fr) est un second Chromium, lancé par l'assistant avec son propre profil (~/.config/mydock-freetv) : le
+# dock, lui, est celui de kiosk-browser.sh (profil ~/.cache/mydock-chromium). Aucune commande ne doit fermer « tous les Chromium ».
+# Sans VLC, sans MAME, sans Widevine, l'écran du dock le dit : sudo apt install vlc-bin vlc-plugin-base ; sudo apt install mame ;
+# sudo apt install libwidevinecdm0
 PORT="${MYDOCK_PORT:-8080}"
 URL="http://127.0.0.1:${PORT}/"
 DOCK="${MYDOCK_DOCK_BIN:-/usr/bin/mydock-dock}"
