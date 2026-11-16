@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   ADVANCE_MAX_MS,
+  FREETV_SCALE_MAX,
+  FREETV_SCALE_MIN,
   advanceText,
   audioLine,
   cornerText,
@@ -17,9 +19,11 @@ import {
   playerActive,
   playerBlocker,
   progressRatio,
+  scaleText,
   splitFailure,
   stateText,
   stepAdvance,
+  stepScale,
   whereText,
 } from './media'
 import type { PlayerAudio, PlayerSnapshot } from './protocol'
@@ -184,6 +188,23 @@ describe('le son sur le PC', () => {
     expect(advanceText(150)).toBe('150 ms')
     expect(advanceText(0)).toBe('0 ms')
     expect(advanceText(1000)).toBe('1,0 s')
+  })
+})
+
+describe('la taille de Free TV', () => {
+  it('se règle de 25 % en 25 %, de 50 % à 300 %', () => {
+    expect(stepScale(1.5, 1)).toBe(1.75)
+    expect(stepScale(1.5, -1)).toBe(1.25)
+    expect(stepScale(FREETV_SCALE_MAX, 1)).toBe(FREETV_SCALE_MAX)
+    expect(stepScale(FREETV_SCALE_MIN, -1)).toBe(FREETV_SCALE_MIN)
+    expect(stepScale(2.1, 1)).toBe(2.25) // une valeur écrite à la main dans dock.toml est ramenée au pas le plus proche, puis avancée
+    expect(stepScale(0.7, 1)).toBe(1)
+  })
+
+  it('l’écrit en pourcentage', () => {
+    expect(scaleText(1.5)).toBe('150 %')
+    expect(scaleText(1)).toBe('100 %')
+    expect(scaleText(2.1)).toBe('210 %')
   })
 })
 

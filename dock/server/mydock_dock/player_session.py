@@ -81,7 +81,7 @@ TOUCH_GRACE = 1.5
 GAME_TOUCH_GRACE = 2.0
 #: Pendant Free TV, le geste de coin ne compte pas non plus tout de suite (le doigt qui vient d'ouvrir Free TV est encore là).
 FREETV_TOUCH_GRACE = 2.0
-DEFAULT_FREETV_SCALE = 0.7
+DEFAULT_FREETV_SCALE = 1.5
 #: Les fichiers qui, en mode démo, tiennent lieu du bouton et de l'écran tactile (le test les crée dans XDG_RUNTIME_DIR).
 DEMO_BUTTON = "mydock-demo-button"
 DEMO_TOUCH = "mydock-demo-touch"

@@ -228,10 +228,10 @@ def test_pairing_validates_everything_before_changing_anything(tmp_path, host, p
 # --- Free TV : [freetv], et la clé de Freetv d'avant ------------------------------------------------------------------
 
 
-def test_freetv_defaults_follow_the_chromium_of_the_pi_and_scale_the_page_down():
+def test_freetv_defaults_follow_the_chromium_of_the_pi_and_enlarge_the_page():
     config = DockConfig.from_dict({}, Path("/x/dock.toml"))
     assert config.freetv_user_agent == "auto"
-    assert config.freetv_scale == 0.7
+    assert config.freetv_scale == 1.5
     assert config.freetv_corner == "top-left"
     assert config.freetv_fullscreen is True
 

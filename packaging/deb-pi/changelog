@@ -1,3 +1,18 @@
+mydock (1.9.1) unstable; urgency=medium
+
+  * Free TV est lisible : sa page est rendue à 150 % au lieu de 70 % (2,1 fois plus gros), message d'erreur de lecture compris,
+    qui était illisible sur le 7 pouces en 1024 x 600. La taille se règle à l'écran, Réglages > Divertissement > Free TV, avec
+    - et + (de 50 % à 300 %, par pas de 25 %), et se garde dans dock.toml ([freetv] scale) ; elle s'applique à la prochaine
+    ouverture de Free TV (Chromium ne change pas son zoom en route). Un dock.toml qui avait « scale = 0.7 », l'ancien défaut
+    écrit par la 1.9.0 à la première sauvegarde, est lu comme 1,5 (dit une fois dans dock.log).
+  * La fenêtre de Free TV doit occuper tout l'écran : Chromium se lance avec --kiosk (comme le dock lui-même) en plus de
+    --start-fullscreen, et la demande de plein écran faite à labwc est répétée à 0, 1,5, 4 et 9 secondes après l'apparition
+    de la fenêtre au lieu d'une seule fois. Avec [freetv] fullscreen = false, rien ne change : fenêtre maximisée.
+  * Nouvelle action dock.freetv.set (la taille, de 0,25 à 3), validée côté dock ; la taille arrive à l'assistant de l'écran
+    avec les autres réglages.
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 16 Nov 2026 18:00:00 +0000
+
 mydock (1.9.0) unstable; urgency=medium
 
   * Free TV remplace Freetv. Certaines chaînes manquent au flux local de la Freebox (droits de diffusion) alors que Free TV

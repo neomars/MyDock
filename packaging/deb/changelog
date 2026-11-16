@@ -1,3 +1,10 @@
+mydock-agent (1.9.1) unstable; urgency=medium
+
+  * Rien ne change pour le PC : le numéro suit celui du dock (1.9.1 : Free TV plus lisible, taille réglable à l'écran ; voir le
+    changelog du paquet « mydock »).
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 16 Nov 2026 18:00:00 +0000
+
 mydock-agent (1.9.0) unstable; urgency=medium
 
   * Rien ne change pour le PC : le numéro suit celui du dock (1.9.0 : Free TV, tv.free.fr dans Chromium sur l'écran du Pi,

@@ -26,7 +26,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -47,7 +47,7 @@ from mydock_dock.agent_link import (
 from mydock_dock.audio_relay import AudioRelay
 from mydock_dock.bluetooth import PadsError, PadsManager
 from mydock_dock.clients import ClientRegistry
-from mydock_dock.config import DockConfig
+from mydock_dock.config import MAX_FREETV_SCALE, MIN_FREETV_SCALE, DockConfig
 from mydock_dock.markets.diagnose import diagnose
 from mydock_dock.markets.errors import NotFound, ProviderError
 from mydock_dock.markets.factory import build_providers
@@ -176,6 +176,12 @@ class MediaSetParams(_Strict):
 class SoundSetParams(_Strict):
     pc_audio: StrictBool | None = None
     audio_advance_ms: StrictInt | None = Field(default=None, ge=0, le=1000)
+
+
+class FreeTvSetParams(_Strict):
+    scale: StrictFloat | StrictInt = Field(
+        ge=MIN_FREETV_SCALE, le=MAX_FREETV_SCALE
+    )  # la taille de la page de Free TV
 
 
 class PadParams(_Strict):
@@ -499,6 +505,7 @@ class DockServer:
             "pc_audio": cfg.pc_audio,
             "audio_advance_ms": cfg.audio_advance_ms,
             "freetv_corner": cfg.freetv_corner,
+            "freetv_scale": cfg.freetv_scale,
         }
 
     def retro_info(self) -> dict[str, Any]:
@@ -729,6 +736,7 @@ class DockServer:
         reg.register("dock.retro.refresh", self._act_retro_refresh)
         reg.register("dock.retro.set", self._act_retro_set, params=RetroSetParams)
         reg.register("dock.sound.set", self._act_sound_set, params=SoundSetParams)
+        reg.register("dock.freetv.set", self._act_freetv_set, params=FreeTvSetParams)
         reg.register("dock.retro.upload.open", self._act_retro_upload_open)
         reg.register("dock.retro.upload.close", self._act_retro_upload_close)
         reg.register("dock.pads.scan", self._act_pads_scan, timeout=30.0)
@@ -899,6 +907,17 @@ class DockServer:
         )
         self.push_local("dock")
         self.push_local("player")
+        return self.media_info()
+
+    async def _act_freetv_set(self, _ctx: ActionContext, params: FreeTvSetParams) -> dict[str, Any]:
+        """La taille de la page de Free TV (prise en compte à la prochaine ouverture : Chromium ne change pas son zoom en route)."""
+        self._persist(lambda: self.config.set_freetv(scale=params.scale))
+        self.player.settings = self.player_settings()
+        self.player.send_settings()
+        media_log.info(
+            "Taille de Free TV : %g (à la prochaine ouverture)", self.config.freetv_scale
+        )
+        self.push_local("dock")
         return self.media_info()
 
     async def _act_media_test(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:

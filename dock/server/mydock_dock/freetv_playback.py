@@ -9,7 +9,7 @@ les donne, avec l'abonnement de l'utilisateur. Free TV lit des flux protégés (
 Ce que l'assistant lance (jamais une commande venue de l'écran : le dock ne dit que « ouvre Free TV ») :
 
     chromium --app=https://tv.free.fr --ozone-platform=wayland --password-store=basic --user-data-dir=<profil>
-             --force-device-scale-factor=0.7 --lang=fr-FR --user-agent=<identité de bureau x86_64> + freetv.flags
+             --force-device-scale-factor=1.5 --lang=fr-FR --user-agent=<identité de bureau x86_64> + freetv.flags
 
   * `--app` : une fenêtre sans barre d'adresse. Son identifiant Wayland (`app_id`) vient de l'adresse ouverte : il contient
     toujours `tv.free.fr`, ce qui la distingue de la fenêtre du dock (voir `Windows.classify`) ; `--class` est ignoré en
@@ -71,6 +71,9 @@ WIDEVINE_DIRS = (
 MAX_LOGGED_LINES = 300
 #: Sans pouvoir lister les fenêtres, Free TV est tenu pour affiché au bout de ce temps.
 BLIND_SHOWN_AFTER = 8.0
+#: Quand (en secondes après l'apparition de la fenêtre) demander à labwc le plein écran (ou la maximisation) : la demande est
+#: idempotente, et la répéter rattrape une fenêtre qui n'avait pas fini de s'ouvrir ou un Chromium qui n'a pas suivi son option.
+PLACE_AT = (0.0, 1.5, 4.0, 9.0)
 CLOSE_WAIT = 5.0
 TERM_WAIT = 3.0
 KILL_WAIT = 2.0
@@ -174,7 +177,7 @@ def chromium_command(
     *,
     url: str = FREETV_URL,
     user_agent: str | None = None,
-    scale: float = 0.7,
+    scale: float = 1.5,
     fullscreen: bool = True,
     extra: Sequence[str] = (),
 ) -> list[str]:
@@ -194,7 +197,10 @@ def chromium_command(
         "--autoplay-policy=no-user-gesture-required",
     ]
     if fullscreen:
-        command.append("--start-fullscreen")
+        # `--kiosk` : c'est lui qui met le dock en plein écran sur ce même labwc ; `--start-fullscreen` seul, en mode
+        # application, n'est pas toujours respecté (fenêtre qui ne couvre pas l'écran). Les deux, et `Windows.fullscreen`
+        # le redemande ensuite à labwc (voir `status`).
+        command.extend(["--kiosk", "--start-fullscreen"])
     if user_agent:
         command.append(f"--user-agent={user_agent}")
     # Les options de freetv.flags en dernier : Chromium garde la dernière valeur d'une option répétée.
@@ -324,7 +330,7 @@ class FreeTvPlayback:
         runtime_dir: Path,
         job: int = 0,
         user_agent_setting: str = USER_AGENT_AUTO,
-        scale: float = 0.7,
+        scale: float = 1.5,
         fullscreen: bool = True,
         url: str = FREETV_URL,
         extra: Sequence[str] | None = None,
@@ -348,7 +354,7 @@ class FreeTvPlayback:
         self._started_at = 0.0
         self._shown_at: float | None = None
         self._app_id: str | None = None
-        self._fullscreened = False
+        self._placed = 0
         self._stopped = False
         self.how_stopped: str | None = None
         self.user_agent: str | None = None
@@ -460,8 +466,13 @@ class FreeTvPlayback:
                     f"(identifiant « {found or '?'} »)"
                     + (" (fenêtres illisibles : on le suppose)" if blind and not found else "")
                 )
-        if self._shown_at is not None and not self._fullscreened and self._app_id:
-            self._fullscreened = True
+        if (
+            self._shown_at is not None
+            and self._app_id
+            and self._placed < len(PLACE_AT)
+            and time.monotonic() - self._shown_at >= PLACE_AT[self._placed]
+        ):
+            self._placed += 1
             # Plein écran : repli si `--start-fullscreen` n'a pas été respecté en mode application. Sinon (fullscreen = false
             # dans dock.toml) la fenêtre est seulement maximisée : le clavier à l'écran, une couche du compositeur, s'affiche
             # alors au-dessus d'elle (labwc le cache derrière une fenêtre en plein écran quand le dock l'est aussi).

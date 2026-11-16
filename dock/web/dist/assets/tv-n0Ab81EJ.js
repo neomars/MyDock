@@ -1,1 +1,0 @@
-import{Dn as e,On as t,wn as n}from"./index-CyQeEKQi.js";var r={name:`tv`,size:24,node:[[`path`,{d:`m17 2-5 5-5-5`}],[`rect`,{width:`20`,height:`15`,x:`2`,y:`7`,rx:`2`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as t};

@@ -565,6 +565,8 @@ export interface MediaInfo {
   audio_advance_ms?: number
   /** Le coin de l'écran où un appui long ramène le dock pendant Free TV (dock.toml, [freetv] corner). */
   freetv_corner?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+  /** La taille de la page de Free TV (1 = normale ; dock.toml, [freetv] scale, ou Réglages). Absent d'un dock plus ancien. */
+  freetv_scale?: number
 }
 
 /** Où sort le son du lecteur, et pourquoi on n'entend rien le cas échéant. */

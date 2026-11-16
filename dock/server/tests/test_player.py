@@ -341,7 +341,7 @@ async def test_the_helper_is_told_the_button_pin_when_it_connects_and_when_it_ch
             "pc_audio": True,
             "audio_advance_ms": 150,
             "freetv_user_agent": "auto",
-            "freetv_scale": 0.7,
+            "freetv_scale": 1.5,
             "freetv_corner": "top-left",
             "freetv_fullscreen": True,
         }
@@ -355,7 +355,7 @@ async def test_the_helper_is_told_the_button_pin_when_it_connects_and_when_it_ch
             "pc_audio": True,
             "audio_advance_ms": 150,
             "freetv_user_agent": "auto",
-            "freetv_scale": 0.7,
+            "freetv_scale": 1.5,
             "freetv_corner": "top-left",
             "freetv_fullscreen": True,
         }
@@ -576,6 +576,7 @@ async def test_the_password_is_kept_in_the_private_file_and_never_shown(dock):
             "pc_audio": True,
             "audio_advance_ms": 150,
             "freetv_corner": "top-left",
+            "freetv_scale": 1.5,
         }
         topic = (await snapshot_of(browser, "dock"))["data"]["media"]
         assert "très secret" not in json.dumps(topic)
@@ -1008,7 +1009,7 @@ async def test_the_helper_is_given_the_free_tv_settings_of_dock_toml(dock):
     async with helper(dock) as ws:
         first = json.loads(await asyncio.wait_for(ws.recv(), 3))
         assert first["freetv_user_agent"] == "auto"
-        assert first["freetv_scale"] == 0.7
+        assert first["freetv_scale"] == 1.5
         assert first["freetv_corner"] == "top-left"
         assert first["freetv_fullscreen"] is True
         assert "token" not in json.dumps(first)  # l'assistant ne connaît jamais le jeton

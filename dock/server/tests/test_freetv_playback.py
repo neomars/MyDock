@@ -74,12 +74,15 @@ def test_the_chromium_command_is_a_list_with_the_flags_that_make_free_tv_play(tm
     assert "--user-agent=Mon UA/1.0" in command  # un seul argument : jamais découpé
     assert "--lang=fr-FR" in command
     assert "--start-fullscreen" in command
+    assert "--kiosk" in command  # comme le dock : c'est ce qui le met en plein écran sur ce labwc
 
 
 def test_free_tv_can_be_a_maximised_window_instead_of_a_full_screen_one(tmp_path):
     """Le clavier à l'écran est une couche du compositeur : labwc la cache derrière une fenêtre en plein écran (voir le rapport)."""
     assert "--start-fullscreen" in ft.chromium_command("chromium", tmp_path, fullscreen=True)
-    assert "--start-fullscreen" not in ft.chromium_command("chromium", tmp_path, fullscreen=False)
+    window = ft.chromium_command("chromium", tmp_path, fullscreen=False)
+    assert "--start-fullscreen" not in window
+    assert "--kiosk" not in window  # sans quoi la fenêtre serait en plein écran quoi qu'on demande
 
 
 def test_without_an_identity_chromium_keeps_its_own_and_the_flags_file_comes_last(tmp_path):
@@ -407,9 +410,11 @@ async def test_the_window_is_found_by_its_address_in_its_identifier_and_only_the
         assert pb.shown
         assert fake.windows.fullscreened == [
             "chrome-tv.free.fr__-Default"
-        ]  # le repli plein écran, une seule fois
+        ]  # le repli plein écran, dès l'apparition de la fenêtre
         await pb.status()
-        assert len(fake.windows.fullscreened) == 1
+        assert (
+            len(fake.windows.fullscreened) == 1
+        )  # pas à chaque question : il faut laisser passer le temps
     finally:
         await pb.stop()
 
@@ -598,3 +603,25 @@ async def test_the_dns_check_is_only_advice(monkeypatch):
     loop = asyncio.get_running_loop()
     monkeypatch.setattr(loop, "getaddrinfo", fail)
     assert await ft.host_resolves("tv.free.fr") is False
+
+
+async def test_full_screen_is_asked_again_a_few_times_then_left_alone(fake):
+    """La demande est idempotente : la répéter rattrape une fenêtre qui n'avait pas fini de s'ouvrir, sans la faire à chaque seconde."""
+    pb = playback(fake)
+    await pb.start()
+    try:
+        fake.windows.show()
+        await pb.status()
+        assert len(fake.windows.fullscreened) == 1
+        shown = pb._shown_at
+        assert shown is not None
+        for waited, expected in ((1.0, 1), (1.6, 2), (4.1, 3), (9.1, 4), (60.0, 4)):
+            pb._shown_at = time.monotonic() - waited
+            await pb.status()
+            await pb.status()
+            assert len(fake.windows.fullscreened) == expected, (waited, fake.windows.fullscreened)
+        assert (
+            len(set(fake.windows.fullscreened)) == 1
+        )  # toujours la même fenêtre : celle de Free TV
+    finally:
+        await pb.stop()
