@@ -85,6 +85,7 @@ DEFAULT_FREETV_SCALE = 0.7
 #: Les fichiers qui, en mode démo, tiennent lieu du bouton et de l'écran tactile (le test les crée dans XDG_RUNTIME_DIR).
 DEMO_BUTTON = "mydock-demo-button"
 DEMO_TOUCH = "mydock-demo-touch"
+DEMO_CORNER = "mydock-demo-corner"  # l'appui long dans le coin de l'écran, pendant Free TV
 VLC_VOLUME_MAX = 256  # 100 % pour VLC
 
 _NUMBER_LINE = re.compile(r"^\s*(?:>\s*)?(-?\d+)\s*$")
@@ -1741,18 +1742,23 @@ class Session:
         self.button.configure(self._loop, self.button_pin)
 
     async def _demo_triggers(self) -> None:
-        """Démo : le bouton et le toucher de l'écran du jeu sont deux fichiers que l'essai crée dans le dossier d'exécution."""
+        """Démo : le bouton, le toucher de l'écran du jeu et le coin de Free TV sont trois fichiers que l'essai crée dans le dossier d'exécution."""
         button, touch = self.runtime_dir / DEMO_BUTTON, self.runtime_dir / DEMO_TOUCH
+        corner = self.runtime_dir / DEMO_CORNER
         while True:
             await asyncio.sleep(0.2)
             for path, action in (
                 (button, lambda: self._button_pressed("bouton physique (démo)")),
                 (touch, lambda: self._quit_game("toucher (démo)")),
+                (corner, self._demo_corner),
             ):
                 if path.exists():
                     with contextlib.suppress(OSError):
                         path.unlink()
                     await action()
+
+    async def _demo_corner(self) -> None:
+        self._freetv_corner()
 
     async def _emit_sound(self, frame: bytes) -> None:
         """Une trame du son capturé, pour le dock (qui la relaie au PC) : perdue si le dock n'est pas là."""

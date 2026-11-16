@@ -3,11 +3,14 @@
 
 import type { MediaEntry, PlayerAudio, PlayerSnapshot } from './protocol'
 
-export type MediaView = 'menu' | 'files'
+export type MediaView = 'menu' | 'files' | 'freetv'
 
 /** Une lecture est-elle en cours ou en train de démarrer ? */
 export const playerActive = (player: PlayerSnapshot | null | undefined): boolean =>
   player?.state === 'starting' || player?.state === 'playing' || player?.state === 'paused'
+
+/** Free TV est-il ouvert (ou en train de s'ouvrir) sur l'écran ? */
+export const freetvActive = (player: PlayerSnapshot | null | undefined): boolean => playerActive(player) && player?.engine === 'freetv'
 
 /** « 4:05 », « 1:02:03 » : une position ou une durée de lecture. */
 export function formatPlayTime(seconds: number | null | undefined): string {
@@ -97,6 +100,26 @@ export function playerBlocker(player: PlayerSnapshot | null | undefined): string
   if (player.helper && !player.helper.touch) return 'swayidle, ou wlrctl (ou xdotool), manque sur le Pi : sudo apt install swayidle wlrctl.'
   return null
 }
+
+/** Pourquoi Free TV ne peut pas s'ouvrir d'ici (rien : il le peut). */
+export function freetvBlocker(player: PlayerSnapshot | null | undefined): string | null {
+  if (!player) return null // un dock plus ancien : on essaie, le dock répondra
+  if (!player.available) return "L'assistant de lecture de l'écran ne répond pas : il démarre avec l'écran du dock."
+  if (player.helper && player.helper.chromium === false) return 'Chromium manque : sudo apt install chromium'
+  if (player.helper && player.helper.widevine === false) return 'Widevine manque : sudo apt install libwidevinecdm0'
+  return null
+}
+
+/** La ligne d'état de l'écran « Free TV ouvert ». */
+export function freetvStateText(player: PlayerSnapshot): string {
+  if (player.state === 'starting') return 'Ouverture de Free TV…'
+  return player.front === 'video' ? 'Free TV est à l’écran' : 'Free TV reste ouvert derrière'
+}
+
+const CORNER_TEXT = { 'top-left': 'en haut à gauche', 'top-right': 'en haut à droite', 'bottom-left': 'en bas à gauche', 'bottom-right': 'en bas à droite' } as const
+
+/** « en haut à gauche » : le coin où l'appui long ramène le dock. */
+export const cornerText = (corner: string | null | undefined): string => CORNER_TEXT[corner as keyof typeof CORNER_TEXT] ?? CORNER_TEXT['top-left']
 
 /** Combien de secondes sautent les boutons « avancer » et « reculer ». */
 export const SEEK_SECONDS = 30

@@ -1,3 +1,41 @@
+mydock (1.9.0) unstable; urgency=medium
+
+  * Free TV remplace Freetv. Certaines chaînes manquent au flux local de la Freebox (droits de diffusion) alors que Free TV
+    (https://tv.free.fr) les donne, avec ton abonnement : le Divertissement ouvre maintenant tv.free.fr dans une fenêtre de
+    Chromium sur l'écran du dock, en plein écran. Le Kiosque (VLC et ses partages Samba) et Retrogame (MAME) ne changent pas.
+  * Free TV est le troisième occupant de l'écran, comme une vidéo ou un jeu : un seul à la fois (ouvrir Free TV ferme la
+    vidéo ou le jeu en cours, et inversement). L'entrée « Free TV » du menu l'ouvre ; le dock montre alors « Free TV ouvert »
+    avec « Revenir à Free TV », « Clavier » et « Fermer Free TV ». Revenir au dock ne ferme pas Free TV : il reste ouvert
+    derrière, et les autres pages du dock (Spotify, Système…) restent accessibles.
+  * Un simple toucher navigue dans la page de Free TV : il ne ramène plus le dock. Pour revenir au dock : le bouton physique
+    (GPIO), Select + Start tenus sur une manette, ou un appui long (1,5 s) dans un coin de l'écran (en haut à gauche ; coin
+    réglable : [freetv] corner). Le geste est lu directement sur l'écran tactile (evdev, comme pour Retrogame) : il marche même
+    si la page de Free TV est figée. Il demande que l'utilisateur de l'écran soit dans le groupe input (déjà le cas).
+  * Chromium se lance en mode application, avec son propre profil (~/.config/mydock-freetv, droits 700), séparé de celui du
+    dock : la connexion à Free y est gardée d'un démarrage à l'autre, et l'interface du dock n'en voit jamais rien. Free refuse
+    de lire sur « Linux aarch64 » (erreur Shaka 6001) : Chromium présente donc l'identité d'un Chromium de bureau x86_64 de la
+    même version que celui installé. C'est un contournement fragile, qui peut cesser de marcher si Free change ses règles :
+    [freetv] user_agent de dock.toml le règle (« auto » par défaut, vide pour l'identité d'origine, ou ta chaîne, où
+    {major} devient la version de Chromium). Autres réglages : [freetv] scale (zoom, 0,7), fullscreen ; options en plus de
+    Chromium dans /etc/mydock-kiosk/freetv.flags.
+  * Première connexion : un clavier à l'écran (wvkbd, recommandé) s'ouvre dans Free TV avec le bouton « Clavier » du dock ; un
+    clavier USB marche aussi. Si le clavier reste caché derrière Free TV en plein écran (labwc le fait dans certains cas),
+    mettre fullscreen = false dans [freetv] : Free TV s'ouvre alors en fenêtre maximisée.
+  * Le son de Free TV suit le chemin du son des vidéos (puits virtuel, puis le PC) ; l'écran ne s'endort pas pendant Free TV.
+  * Si Widevine (paquet libwidevinecdm0, recommandé) ou Chromium manque, ou si Chromium s'arrête, le dock le dit, avec la
+    commande à taper. Page de Free TV en panne ou site changé : l'erreur est dans la fenêtre de Free TV, le dock ne peut pas la lire.
+  * Le dock et Free TV sont deux Chromium : l'assistant les distingue par l'identifiant de leur fenêtre (tv.free.fr), le dock
+    n'est plus « la première fenêtre dont l'identifiant contient chrom ». Plus aucune commande ne ferme « tous les Chromium » :
+    la mise à jour et le lanceur du kiosque ne touchent que le profil du dock (mydock-chromium).
+  * Supprimés : la liste des chaînes de la Freebox (freebox.py, l'action dock.tv.list, --playlist-url, la ligne « Chaînes » des
+    Réglages, le réglage « HD ») et, dans VLC, ce qui ne servait qu'aux flux en direct (module RTSP, pont ffmpeg). Une
+    configuration d'avant garde son démarrage : [media] playlist_url est ignorée (une ligne dans le journal), puis disparaît.
+  * mydock-dock doctor : nouvelle section « Free TV » (Chromium et sa version, Widevine, profil, identité utilisée, clavier à
+    l'écran, groupe input, tv.free.fr, ce qui est ouvert). Le paquet recommande libwidevinecdm0 et wvkbd.
+  * Redémarrer le Pi après la mise à jour (nouveau lanceur de l'écran et nouvel assistant de lecture).
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 16 Nov 2026 12:00:00 +0000
+
 mydock (1.8.0) unstable; urgency=medium
 
   * Le son des vidéos, de la TV et des jeux sort sur le PC : le Raspberry Pi n'a pas d'enceintes. VLC (Freetv, Kiosque) et

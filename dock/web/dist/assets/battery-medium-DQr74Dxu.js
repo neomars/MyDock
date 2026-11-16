@@ -1,0 +1,1 @@
+import{Dn as e,On as t,wn as n}from"./index-CyQeEKQi.js";var r={name:`battery-medium`,size:24,node:[[`path`,{d:`M10 14v-4`}],[`path`,{d:`M22 14v-4`}],[`path`,{d:`M6 14v-4`}],[`rect`,{x:`2`,y:`6`,width:`16`,height:`12`,rx:`2`}]]};r.node;var i=new Set([`$$slots`,`$$events`,`$$legacy`]);function a(a,o){let s=e(o,i);n(a,t(()=>s,{get icon(){return r}}))}export{a as t};

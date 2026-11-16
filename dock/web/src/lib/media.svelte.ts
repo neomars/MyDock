@@ -76,6 +76,16 @@ class MediaStore {
 
   // --- la lecture ---------------------------------------------------------------------------------------------------------
 
+  /** Ouvre Free TV (tv.free.fr, dans Chromium) : le dock ne dit que « ouvre Free TV », jamais une adresse. */
+  async openFreeTv(): Promise<boolean> {
+    return this.run('dock.player.play', { kind: 'freetv' })
+  }
+
+  /** Montre ou cache le clavier à l'écran de Free TV (il s'affiche dans la fenêtre de Free TV, devant). */
+  async keyboard(on: boolean): Promise<boolean> {
+    return this.run('dock.player.keyboard', { on })
+  }
+
   async playFile(name: string): Promise<boolean> {
     if (this.share === null) return false
     return this.run('dock.player.play', { kind: 'file', share: this.share, path: joinPath(this.path, name) })

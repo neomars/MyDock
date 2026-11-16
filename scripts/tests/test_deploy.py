@@ -154,7 +154,7 @@ def test_pc_first_install_creates_a_private_config_and_a_working_agent(pc_instal
     assert "198.51.100.0/24" in text
     venv = home / ".local" / "share" / "mydock" / "venv"
     version = sh([venv / "bin" / "mydock-agent", "--version"], env=pc_install["env"])
-    assert version.stdout.startswith("mydock-agent 1.8.0")
+    assert version.stdout.startswith("mydock-agent 1.9.0")
 
 
 @pytest.mark.slow
@@ -383,6 +383,41 @@ def test_pi_setup_keeps_the_arcade_flags_the_user_edited(pi_setup):
     )
     assert again.returncode == 0, again.stdout + again.stderr
     assert flags.read_text() == "-video opengl\n"
+
+
+def test_pi_setup_prepares_the_free_tv_flags_and_keeps_the_ones_the_user_edited(pi_setup):
+    prefix = pi_setup["prefix"]
+    flags = prefix / "etc/mydock-kiosk/freetv.flags"
+    text = flags.read_text()
+    assert text.startswith("# Options supplémentaires de Chromium pour Free TV")
+    assert "# --disable-gpu" in text
+    assert mode(flags) == 0o644
+    flags.write_text("--use-gl=angle\n")
+    again = sh(
+        [
+            PI / "setup.sh",
+            "--prefix",
+            str(prefix),
+            "--kiosk",
+            "systemd",
+            "--force-mode",
+            "1024x600@60",
+        ],
+        env=pi_setup["env"],
+    )
+    assert again.returncode == 0, again.stdout + again.stderr
+    assert flags.read_text() == "--use-gl=angle\n"
+
+
+def test_nothing_closes_every_chromium_any_more_because_free_tv_is_one_too():
+    """Le dock et Free TV sont deux Chromium : une mise à jour ne doit fermer que celui du dock (son profil)."""
+    for name in ("setup.sh", "kiosk-browser.sh"):
+        text = (PI / name).read_text()
+        assert "pkill -x chromium" not in text, name
+        assert 'pkill -u "$USER_NAME" -x chromium' not in text, name
+    setup = (PI / "setup.sh").read_text()
+    assert "--user-data-dir=[^ ]*mydock-chromium" in setup
+    assert "mydock-freetv" not in setup.split("pkill -u", 1)[1].split("\n", 1)[0]
 
 
 def test_pi_kiosk_unit_is_rendered(pi_setup):
@@ -738,6 +773,9 @@ def test_kiosk_launcher_relaunches_a_chromium_that_stays_grey(kiosk):
         ("chromium-browser: MyDock", 1, False),  # les deux : tout va bien
         ("foot: terminal\nchromium: MyDock", 1, False),
         ("foot: terminal", 1, True),  # une fenêtre, mais pas celle de Chromium
+        # Free TV est un autre Chromium (son identifiant porte l'adresse ouverte) : sa fenêtre n'est pas celle du dock
+        ("chrome-tv.free.fr__-Default: Free TV", 1, True),
+        ("chrome-tv.free.fr__-Default: Free TV\nchromium: MyDock", 1, False),
     ],
 )
 def test_kiosk_launcher_needs_both_the_window_and_the_dock_to_see_the_page(

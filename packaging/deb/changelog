@@ -1,3 +1,11 @@
+mydock-agent (1.9.0) unstable; urgency=medium
+
+  * Rien ne change pour le PC : le numéro suit celui du dock (1.9.0 : Free TV, tv.free.fr dans Chromium sur l'écran du Pi,
+    remplace Freetv ; voir le changelog du paquet « mydock »). Le son de Free TV arrive ici par la porte /audio de la 1.8.0 :
+    un agent en 1.8.0 le joue déjà.
+
+ -- neomars <neomars@users.noreply.github.com>  Mon, 16 Nov 2026 12:00:00 +0000
+
 mydock-agent (1.8.0) unstable; urgency=medium
 
   * Le son du dock sort sur ce PC : le Raspberry Pi n'a pas d'enceintes, le son de ses vidéos, de la TV et de ses jeux arrive

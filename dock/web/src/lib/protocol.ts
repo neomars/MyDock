@@ -563,6 +563,8 @@ export interface MediaInfo {
   pc_audio?: boolean
   /** De combien le son des vidéos est avancé (ms), pour rattraper le trajet jusqu'au PC. Absent d'un dock plus ancien. */
   audio_advance_ms?: number
+  /** Le coin de l'écran où un appui long ramène le dock pendant Free TV (dock.toml, [freetv] corner). */
+  freetv_corner?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 }
 
 /** Où sort le son du lecteur, et pourquoi on n'entend rien le cas échéant. */
@@ -580,7 +582,7 @@ export interface PlayerSnapshot {
   /** L'assistant de lecture de l'écran est-il connecté ? */
   available: boolean
   state: PlayerStateName
-  kind: 'file' | 'game' | null
+  kind: 'file' | 'game' | 'freetv' | null
   title: string | null
   subtitle: string | null
   position: number | null
@@ -592,20 +594,26 @@ export interface PlayerSnapshot {
   /** Faux quand le fichier arrive par un tube (smbclient) : pas d'avance ni de retour rapides. Absent d'un dock plus ancien. */
   seekable?: boolean
   error: string | null
-  /** Ce qui occupe l'écran : VLC (vidéo) ou MAME (jeu). Absent d'un dock plus ancien. */
-  engine?: 'vlc' | 'mame'
+  /** Ce qui occupe l'écran : VLC (vidéo), MAME (jeu) ou Chromium (Free TV). Absent d'un dock plus ancien. */
+  engine?: 'vlc' | 'mame' | 'freetv'
   /** Le nom MAME du jeu en cours. */
   game?: string | null
   /** Le nombre d'appuis sur le bouton physique depuis le démarrage du dock : un changement réveille l'écran. */
   button?: number
   /** Où sort le son (le PC, le Pi n'a pas d'enceintes) et son état. Absent d'un dock plus ancien. */
   audio?: PlayerAudio
+  /** Le clavier à l'écran de Free TV est-il montré ? */
+  keyboard?: boolean
   helper: {
     vlc: boolean
     touch: boolean
     demo: boolean
     /** MAME est-il installé ? */
     mame?: boolean
+    /** Free TV : Chromium, Widevine (flux protégés) et un clavier à l'écran (wvkbd) sont-ils là ? Absents d'un dock plus ancien. */
+    chromium?: boolean
+    widevine?: boolean
+    keyboard?: boolean
     /** L'état du bouton physique, en une phrase (« GPIO17 (broche 11) : prêt. »). */
     gpio?: string | null
   } | null

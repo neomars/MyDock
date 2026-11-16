@@ -3,7 +3,11 @@ import {
   ADVANCE_MAX_MS,
   advanceText,
   audioLine,
+  cornerText,
   fileSize,
+  freetvActive,
+  freetvBlocker,
+  freetvStateText,
   formatPlayTime,
   joinPath,
   normalize,
@@ -180,5 +184,37 @@ describe('le son sur le PC', () => {
     expect(advanceText(150)).toBe('150 ms')
     expect(advanceText(0)).toBe('0 ms')
     expect(advanceText(1000)).toBe('1,0 s')
+  })
+})
+
+describe('Free TV', () => {
+  it('est actif quand Chromium l’ouvre ou le montre, jamais pour une vidéo ou un jeu', () => {
+    expect(freetvActive(player({ engine: 'freetv', kind: 'freetv', title: 'Free TV' }))).toBe(true)
+    expect(freetvActive(player({ engine: 'freetv', state: 'starting' }))).toBe(true)
+    expect(freetvActive(player({ engine: 'vlc' }))).toBe(false)
+    expect(freetvActive(player({ engine: 'mame' }))).toBe(false)
+    expect(freetvActive(player({ engine: 'freetv', state: 'idle' }))).toBe(false)
+    expect(freetvActive(player({ engine: 'freetv', state: 'error' }))).toBe(false)
+    expect(freetvActive(null)).toBe(false)
+  })
+  it('dit ce qui empêche de l’ouvrir, avec la commande à taper', () => {
+    const helper = (extra: Record<string, boolean>) => player({ helper: { vlc: true, touch: true, demo: false, chromium: true, widevine: true, keyboard: true, ...extra } })
+    expect(freetvBlocker(helper({}))).toBeNull()
+    expect(freetvBlocker(null)).toBeNull() // un dock plus ancien : on essaie, le dock répondra
+    expect(freetvBlocker(player({ available: false, helper: null }))).toContain('assistant de lecture')
+    expect(freetvBlocker(helper({ chromium: false }))).toContain('sudo apt install chromium')
+    expect(freetvBlocker(helper({ widevine: false }))).toContain('sudo apt install libwidevinecdm0')
+    expect(freetvBlocker(helper({ keyboard: false }))).toBeNull() // sans clavier à l’écran, Free TV s’ouvre quand même
+  })
+  it('dit où il en est', () => {
+    expect(freetvStateText(player({ state: 'starting' }))).toBe('Ouverture de Free TV…')
+    expect(freetvStateText(player({ state: 'playing', front: 'video' }))).toBe('Free TV est à l’écran')
+    expect(freetvStateText(player({ state: 'playing', front: 'dock' }))).toBe('Free TV reste ouvert derrière')
+  })
+  it('nomme le coin du retour au dock', () => {
+    expect(cornerText('top-left')).toBe('en haut à gauche')
+    expect(cornerText('bottom-right')).toBe('en bas à droite')
+    expect(cornerText(undefined)).toBe('en haut à gauche') // un dock plus ancien : le coin par défaut
+    expect(cornerText('milieu')).toBe('en haut à gauche')
   })
 })

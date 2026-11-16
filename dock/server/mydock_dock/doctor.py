@@ -26,6 +26,7 @@ from mydock_common.report import FAIL, INFO, OK, WARN, Report
 from mydock_dock import (
     __version__,
     bluetooth,
+    freetv_playback,
     inputs,
     mame_playback,
     player_session,
@@ -33,6 +34,7 @@ from mydock_dock import (
     retro_upload,
     retrogame,
     screensaver,
+    virtual_keyboard,
 )
 from mydock_dock.agent_link import (
     UNREACHABLE_ERRNOS,
@@ -1077,6 +1079,244 @@ async def check_media_network(report: Report, config: DockConfig, *, online: boo
             report.add(WARN, f"Partages Samba : {exc}")
 
 
+def chromium_version_line(binary: str) -> str | None:
+    """La première ligne de `chromium --version` (« Chromium 156.0.7339.80 built on Debian… »), ou `None`."""
+    try:
+        result = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, timeout=15, check=False,
+            env={**os.environ, "LC_ALL": "C.UTF-8"},
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = (result.stdout or "").strip().splitlines()
+    return lines[0][:120] if lines else None
+
+
+def free_tv_pids(proc_root: str = "/proc") -> list[int]:
+    """Les Chromium de Free TV ouverts (leur ligne de commande porte le profil `mydock-freetv`)."""
+    found: list[int] = []
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return found
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            raw = Path(proc_root, name, "cmdline").read_bytes()
+        except OSError:
+            continue
+        args = raw.decode("utf-8", "replace").split("\0")
+        if any(
+            a.startswith("--user-data-dir=") and a.endswith(freetv_playback.PROFILE_NAME)
+            for a in args
+        ):
+            found.append(int(name))
+    return found
+
+
+def kiosk_home(user: str | None) -> Path | None:
+    if user is None:
+        return None
+    try:
+        import pwd
+
+        return Path(pwd.getpwnam(user).pw_dir)
+    except (ImportError, KeyError):
+        return None
+
+
+def check_freetv(
+    report: Report,
+    config: DockConfig,
+    *,
+    find: Callable[[], str | None] = freetv_playback.find_chromium,
+    version: Callable[[str], str | None] = chromium_version_line,
+    widevine: Callable[[], tuple[str, str | None] | None] = freetv_playback.widevine_info,
+    keyboard: Callable[[], str | None] = virtual_keyboard.find_keyboard,
+    groups: Callable[[str], tuple[bool, set[str]]] = group_members,
+    kiosk: Callable[[], str | None] = kiosk_user,
+    home: Callable[[str | None], Path | None] = kiosk_home,
+    flags: Callable[[], list[str]] = freetv_playback.read_flags,
+    opened: Callable[[], list[int]] = free_tv_pids,
+    journal: Callable[[], Path | None] = playerlog.existing_path,
+) -> None:
+    """Free TV : Chromium et sa version, Widevine, le profil, l'identité présentée, le clavier à l'écran, le geste de retour."""
+    report.section("Free TV (tv.free.fr dans Chromium)")
+    program = find()
+    line = version(program) if program else None
+    major = freetv_playback.major_of(line)
+    if program:
+        report.add(OK, f"Chromium présent ({program}, {line or 'version inconnue'})")
+    else:
+        report.add(
+            WARN, "Chromium est absent : Free TV ne s'ouvrira pas (sudo apt install chromium)"
+        )
+    found = widevine()
+    if found:
+        report.add(
+            OK,
+            f"Widevine présent ({found[0]}, version {found[1] or 'inconnue'}) : Free TV peut lire ses flux protégés",
+        )
+    else:
+        report.add(
+            WARN,
+            "Widevine est absent : Free TV refusera de lire (sudo apt install libwidevinecdm0, puis redémarrer l'écran du dock)",
+        )
+    # --- l'identité présentée : un contournement fragile
+    agent = freetv_playback.compute_user_agent(config.freetv_user_agent, major)
+    if agent:
+        report.add(
+            INFO,
+            f"Identité présentée à Free TV : {agent} — c'est un contournement fragile ([freetv] user_agent de dock.toml) : "
+            "Free refuse « Linux aarch64 » (erreur Shaka 6001), et peut changer ses règles",
+        )
+    elif not config.freetv_user_agent.strip():
+        report.add(
+            INFO,
+            "Identité de Chromium d'origine ([freetv] user_agent vide) : Free peut refuser de lire sur « Linux aarch64 »",
+        )
+    else:
+        report.add(
+            WARN,
+            "Version de Chromium illisible : l'identité de bureau ne peut pas être calculée, Chromium garde la sienne "
+            "(Free peut refuser de lire sur « Linux aarch64 »)",
+        )
+    report.add(
+        INFO,
+        f"Réglages ([freetv] de dock.toml) : zoom {config.freetv_scale:g}, "
+        f"{'plein écran' if config.freetv_fullscreen else 'fenêtre maximisée'}, retour au dock par un appui long {config.freetv_corner}",
+    )
+    extra = flags()
+    if extra:
+        report.add(
+            INFO, f"Options de Chromium ajoutées ({freetv_playback.FLAGS_FILE}) : {' '.join(extra)}"
+        )
+    # --- le profil
+    user = kiosk()
+    base = home(user) or (Path(os.environ["HOME"]) if "HOME" in os.environ else None)
+    profile = base / ".config" / freetv_playback.PROFILE_NAME if base is not None else None
+    if profile is None:
+        report.add(
+            INFO, "Profil de Free TV : ~/.config/mydock-freetv (celui de l'utilisateur de l'écran)"
+        )
+    else:
+        try:
+            mode = profile.stat().st_mode & 0o777
+        except PermissionError:
+            report.add(
+                INFO,
+                f"Profil de Free TV : {profile} (illisible d'ici : normal, il est à l'utilisateur de l'écran)",
+            )
+        except OSError:
+            report.add(
+                INFO,
+                f"Profil de Free TV : {profile} (créé à la première ouverture de Free TV ; la connexion à Free y sera gardée)",
+            )
+        else:
+            if mode & 0o077:
+                report.add(
+                    WARN,
+                    f"Profil de Free TV : {profile} est lisible par d'autres (droits {mode:o}) : chmod 700 {profile}",
+                )
+            else:
+                report.add(
+                    OK,
+                    f"Profil de Free TV : {profile} (droits {mode:o}, séparé de celui du dock : la connexion y est gardée)",
+                )
+    # --- le clavier à l'écran, le geste de retour
+    board = keyboard()
+    if board:
+        report.add(
+            OK,
+            f"Clavier à l'écran présent ({board}) : le bouton « Clavier » aide à la première connexion",
+        )
+    else:
+        report.add(
+            WARN,
+            "Pas de clavier à l'écran : le bouton « Clavier » ne marchera pas (sudo apt install wvkbd ; ou un clavier USB pour la première connexion)",
+        )
+    exists, members = groups("input")
+    if not exists:
+        report.add(
+            WARN,
+            "Le groupe input n'existe pas : le geste de retour au dock (appui long dans le coin) est impossible ; le bouton physique et Select + Start restent",
+        )
+    elif user is None:
+        report.add(
+            INFO,
+            "Mode bureau : l'utilisateur de la session doit être dans le groupe input (appui long dans le coin) : groups",
+        )
+    elif user in members:
+        report.add(
+            OK, f"{user} est dans le groupe input : l'appui long dans le coin ramène le dock"
+        )
+    else:
+        report.add(
+            WARN,
+            f"{user} n'est pas dans le groupe input : l'appui long dans le coin ne marchera pas (le bouton physique et Select + Start oui) : "
+            "sudo /usr/lib/mydock/setup --kiosk systemd",
+        )
+    # --- ce qui est ouvert, ce que l'assistant en dit
+    pids = opened()
+    report.add(
+        INFO,
+        f"Free TV est ouvert (Chromium {', '.join(map(str, pids))})"
+        if pids
+        else "Free TV n'est pas ouvert",
+    )
+    log_path = journal()
+    last = None
+    if log_path is not None:
+        with contextlib.suppress(OSError):
+            for row in log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-4000:]:
+                if " free tv " in row or "| free tv " in row:
+                    last = row.split("free tv ", 1)[1].strip()
+    if last:
+        report.add(
+            INFO, f"Dernier mot de l'assistant de l'écran sur Free TV : free tv {last[:200]}"
+        )
+    else:
+        report.add(
+            INFO,
+            "L'assistant de l'écran n'a encore rien dit de Free TV (il le dit à la première ouverture)",
+        )
+
+
+async def check_freetv_network(
+    report: Report, *, online: bool = True, timeout: float = 6.0
+) -> None:
+    """tv.free.fr répond-il, avec un certificat vérifié ? (jamais sans vérifier)"""
+    if not online:
+        report.add(INFO, "Test de tv.free.fr ignoré (--offline)")
+        return
+    import ssl
+
+    host = freetv_playback.FREETV_HOST
+    if not await freetv_playback.host_resolves(host, timeout):
+        report.add(WARN, f"{host} est introuvable (DNS) : le Pi a-t-il accès à Internet ?")
+        return
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                host, 443, ssl=ssl.create_default_context(), server_hostname=host
+            ),
+            timeout,
+        )
+    except ssl.SSLError as exc:
+        report.add(
+            WARN,
+            f"{host} répond mais son certificat n'est pas accepté ({getattr(exc, 'verify_message', None) or getattr(exc, 'reason', None) or exc}) : l'heure du Pi est-elle juste ?",
+        )
+    except (OSError, TimeoutError) as exc:
+        report.add(
+            WARN, f"{host} ne répond pas sur le port 443 ({exc}) : le Pi a-t-il accès à Internet ?"
+        )
+    else:
+        writer.close()
+        report.add(OK, f"{host} répond (TLS vérifié)")
+
+
 def check_sound(
     report: Report,
     config: DockConfig,
@@ -1137,7 +1377,8 @@ def check_running(report: Report, config: DockConfig) -> None:
             report.add(
                 WARN,
                 "Aucun navigateur n'est connecté au dock : l'écran est gris ou vide (le lanceur du kiosque relance "
-                "Chromium tout seul au bout d'une minute ; sinon : sudo pkill -x chromium)",
+                "Chromium tout seul au bout d'une minute ; sinon : sudo pkill -f -- '--user-data-dir=[^ ]*mydock-chromium', "
+                "qui ne touche pas à Free TV)",
             )
         elif isinstance(browsers, int):
             report.add(OK, f"L'écran du dock est connecté ({browsers} navigateur(s))")
@@ -1182,8 +1423,10 @@ def run_doctor(
         check_portal(report, config)
         check_media(report, config)
         check_retrogame(report, config)
+        check_freetv(report, config)
         check_sound(report, config)
         asyncio.run(check_media_network(report, config, online=not offline))
+        asyncio.run(check_freetv_network(report, online=not offline))
         asyncio.run(check_markets(report, config, online=not offline, fetcher=markets_fetcher))
         check_running(report, config)
     print(report.render())

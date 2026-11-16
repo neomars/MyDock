@@ -177,7 +177,19 @@ def test_the_entertainment_programs_are_recommended(pi_deb):
     assert "wlrctl | xdotool" in recommends  # changer de fenêtre : l'un ou l'autre
     depends = field(pi_deb, "Depends")
     assert "vlc" not in depends
-    assert "ffmpeg" in depends.split(", ")  # le pont vers VLC pour les chaînes
+    assert "ffmpeg" in depends.split(", ")  # la conversion des films de l'économiseur d'écran
+
+
+def test_free_tv_needs_chromium_and_recommends_widevine_and_the_screen_keyboard(pi_deb):
+    """Free TV : Chromium est celui du kiosque (obligatoire) ; Widevine lit les flux protégés, wvkbd sert à la première connexion."""
+    depends = field(pi_deb, "Depends").split(", ")
+    recommends = [r.strip() for r in field(pi_deb, "Recommends").split(", ")]
+    assert "chromium | chromium-browser" in depends
+    for wanted in ("libwidevinecdm0", "wvkbd"):
+        assert wanted in recommends, wanted
+        assert wanted not in depends  # sans eux le dock marche, et l'écran dit ce qui manque
+    assert "Free TV" in field(pi_deb, "Description")
+    assert "chaînes de la Freebox" not in field(pi_deb, "Description")  # Freetv n'existe plus
 
 
 def test_the_description_tells_where_to_go_next(pi_deb):

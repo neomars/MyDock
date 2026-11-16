@@ -3,53 +3,67 @@
   import Folder from '@lucide/svelte/icons/folder'
   import Gamepad2 from '@lucide/svelte/icons/gamepad-2'
   import MonitorPlay from '@lucide/svelte/icons/monitor-play'
+  import Tv from '@lucide/svelte/icons/tv'
   import { untrack } from 'svelte'
   import MediaFiles from '../components/MediaFiles.svelte'
+  import MediaFreeTv from '../components/MediaFreeTv.svelte'
   import MediaGameNow from '../components/MediaGameNow.svelte'
   import MediaGames from '../components/MediaGames.svelte'
   import MediaPads from '../components/MediaPads.svelte'
   import MediaRemote from '../components/MediaRemote.svelte'
   import MediaUpload from '../components/MediaUpload.svelte'
   import PageHeader from '../components/PageHeader.svelte'
-  import { playerActive, splitFailure, type MediaView } from '../lib/media'
+  import { freetvActive, freetvBlocker, playerActive, splitFailure, type MediaView } from '../lib/media'
   import { media } from '../lib/media.svelte'
   import { gameActive, type RetroView } from '../lib/retro'
   import { sock } from '../lib/socket.svelte'
 
-  // Divertissement : Kiosque (les partages Samba de la Freebox, lus par VLC sur cet écran) et
-  // Retrogame (les jeux d'arcade de MAME). Pendant une vidéo ou un jeu, l'application occupe tout l'écran ; un toucher
-  // ramène ici : sur la télécommande pour une vidéo ; pour un jeu, il le quitte et l'on retrouve la liste des jeux.
+  // Divertissement : Free TV (tv.free.fr, dans Chromium), Kiosque (les partages Samba de la Freebox, lus par VLC) et
+  // Retrogame (les jeux d'arcade de MAME) sur cet écran. Pendant une vidéo ou un jeu, l'application occupe tout l'écran ;
+  // un toucher ramène ici : sur la télécommande pour une vidéo ; pour un jeu, il le quitte et l'on retrouve la liste des
+  // jeux. Free TV, lui, se touche : on revient ici par le bouton du Pi, Select + Start ou un appui long dans un coin, et
+  // Free TV reste ouvert derrière.
   type View = MediaView | RetroView | 'remote' | 'game'
 
   const player = $derived(sock.player)
   const active = $derived(playerActive(player))
   const gaming = $derived(gameActive(player))
-  const watching = $derived(active && !gaming) // une vidéo
-  let view = $state<View>(untrack(() => (gameActive(sock.player) ? 'game' : playerActive(sock.player) ? 'remote' : 'menu')))
+  const freetv = $derived(freetvActive(player))
+  const watching = $derived(active && !gaming && !freetv) // une vidéo
+  const blocker = $derived(freetvBlocker(player))
+  let view = $state<View>(
+    untrack(() => (gameActive(sock.player) ? 'game' : freetvActive(sock.player) ? 'freetv' : playerActive(sock.player) ? 'remote' : 'menu')),
+  )
 
   // La télécommande s'ouvre d'elle-même quand une lecture démarre ou que le dock revient devant la vidéo ; elle se ferme
   // quand la lecture s'arrête (le message d'une lecture en échec reste dans le menu). Un jeu a son propre écran, et quand
   // il s'arrête (toucher, bouton, Select + Start, ou MAME qui se ferme) on revient à la liste des jeux.
   let wasWatching = untrack(() => watching)
   let wasGaming = untrack(() => gaming)
+  let wasFreetv = untrack(() => freetv)
   let wasFront = untrack(() => player?.front)
   $effect(() => {
     const video = watching
     const game = gaming
+    const tv = freetv
     const front = player?.front
     untrack(() => {
       if (video && (!wasWatching || (wasFront === 'video' && front === 'dock'))) view = 'remote'
       if (!video && view === 'remote') view = 'menu'
       if (game && !wasGaming) view = 'game'
       if (!game && view === 'game') view = 'games'
+      if (tv && (!wasFreetv || (wasFront === 'video' && front === 'dock'))) view = 'freetv'
+      if (!tv && view === 'freetv') view = 'menu'
       wasWatching = video
       wasGaming = game
+      wasFreetv = tv
       wasFront = front
     })
   })
 
   const TITLES: Record<View, string> = {
     menu: 'Divertissement',
+    freetv: 'Free TV',
     files: 'Kiosque',
     remote: 'Lecture en cours',
     games: 'Retrogame',
@@ -68,9 +82,15 @@
   const failed = $derived(player?.state === 'error' ? player.error : null)
   const failure = $derived(failed ? splitFailure(failed) : null)
   const failedGame = $derived(player?.state === 'error' && player.engine === 'mame')
+  const failedFreetv = $derived(player?.state === 'error' && player.engine === 'freetv')
+
+  async function openFreeTv(): Promise<void> {
+    if (freetv) view = 'freetv'
+    else await media.openFreeTv()
+  }
 </script>
 
-{#if !((view === 'remote' && watching) || (view === 'game' && gaming))}
+{#if !((view === 'remote' && watching) || (view === 'game' && gaming) || (view === 'freetv' && freetv))}
   <PageHeader title={TITLES[view]}>
     {#if back}
       <button class="btn" data-testid="media-back" onclick={() => (view = back.to)}>
@@ -85,6 +105,8 @@
   <MediaRemote {player} onMenu={() => (view = 'menu')} />
 {:else if view === 'game' && player && gaming}
   <MediaGameNow {player} />
+{:else if view === 'freetv' && player && freetv}
+  <MediaFreeTv {player} onMenu={() => (view = 'menu')} />
 {:else if view === 'files'}
   <MediaFiles onPlayed={() => (view = 'remote')} />
 {:else if view === 'games' || view === 'pads' || view === 'upload'}
@@ -108,7 +130,7 @@
 {:else}
   {#if failed}
     <section class="card failed" data-testid="media-error">
-      <h2>{failedGame ? 'Le jeu n’a pas pu se lancer' : 'La lecture a échoué'}</h2>
+      <h2>{failedGame ? 'Le jeu n’a pas pu se lancer' : failedFreetv ? 'Free TV n’a pas pu s’ouvrir' : 'La lecture a échoué'}</h2>
       <p data-testid="media-error-text">{failure?.main}</p>
       {#if failure?.detail}<p class="detail dim" data-testid="media-error-detail">{failure.detail}</p>{/if}
       <div class="ok-row">
@@ -118,12 +140,18 @@
     </section>
   {/if}
   {#if active && player}
-    <button class="now card" data-testid="media-now" onclick={() => (view = gaming ? 'game' : 'remote')}>
-      {#if gaming}<Gamepad2 size={44} aria-hidden="true" />{:else}<MonitorPlay size={44} aria-hidden="true" />{/if}
-      <span class="what"><strong>{player.title}</strong><small class="dim">{gaming ? 'En jeu' : player.state === 'paused' ? 'En pause' : 'En lecture'} · {gaming ? 'touche pour voir l’état' : 'touche pour la télécommande'}</small></span>
+    <button class="now card" data-testid="media-now" onclick={() => (view = gaming ? 'game' : freetv ? 'freetv' : 'remote')}>
+      {#if gaming}<Gamepad2 size={44} aria-hidden="true" />{:else if freetv}<Tv size={44} aria-hidden="true" />{:else}<MonitorPlay size={44} aria-hidden="true" />{/if}
+      <span class="what"><strong>{player.title}</strong><small class="dim">{gaming ? 'En jeu' : freetv ? 'Ouvert' : player.state === 'paused' ? 'En pause' : 'En lecture'} · {gaming ? 'touche pour voir l’état' : freetv ? 'touche pour le gérer' : 'touche pour la télécommande'}</small></span>
     </button>
   {/if}
+  {#if blocker && !active}<p class="notice warn" data-testid="freetv-blocker">{blocker}</p>{/if}
   <div class="choices">
+    <button class="choice tv" data-testid="media-freetv" disabled={!!blocker && !freetv} onclick={openFreeTv}>
+      <Tv size={72} strokeWidth={1.6} aria-hidden="true" />
+      <span class="label">Free TV</span>
+      <span class="hint">Les chaînes de Free, avec ton abonnement</span>
+    </button>
     <button class="choice files" data-testid="media-files" onclick={() => (view = 'files')}>
       <Folder size={72} strokeWidth={1.6} aria-hidden="true" />
       <span class="label">Kiosque</span>
@@ -158,8 +186,21 @@
   .choice:active {
     transform: scale(0.97);
   }
+  .choice.tv {
+    background: linear-gradient(180deg, #a855f7, #6b21a8);
+  }
   .choice.files {
     background: linear-gradient(180deg, #0ea5e9, #075985);
+  }
+  .choice:disabled {
+    opacity: 0.5;
+  }
+  .notice {
+    margin: 0 0 14px;
+    font-size: var(--fs-small);
+  }
+  .notice.warn {
+    color: var(--warn);
   }
   .choice.games {
     background: linear-gradient(180deg, #f97316, #9a3412);

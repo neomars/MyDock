@@ -112,7 +112,7 @@
       {/each}
     </ul>
   {/if}
-  <p class="dim small">Kiosque : un partage Samba (Windows) de la Freebox. Les vidéos se lisent avec VLC sur cet écran.</p>
+  <p class="dim small">Kiosque : un partage Samba (Windows) de la Freebox. Les vidéos se lisent avec VLC sur cet écran. Free TV (tv.free.fr) s’ouvre dans Chromium ; son identité, son zoom et le coin du retour au dock se règlent dans dock.toml ([freetv]).</p>
 </section>
 
 <style>

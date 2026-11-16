@@ -498,6 +498,7 @@ class DockServer:
             "smbclient": self.samba.available(),
             "pc_audio": cfg.pc_audio,
             "audio_advance_ms": cfg.audio_advance_ms,
+            "freetv_corner": cfg.freetv_corner,
         }
 
     def retro_info(self) -> dict[str, Any]:

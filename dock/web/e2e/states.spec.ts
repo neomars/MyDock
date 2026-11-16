@@ -1886,3 +1886,57 @@ test('Divertissement : sans assistant de lecture, les listes disent ce qui manqu
   await page.getByTestId('media-files').tap()
   await expect(page.getByTestId('files-blocker')).toContainText('VLC est absent')
 })
+
+// --- Free TV : ce qui manque, dit sur place ----------------------------------------------------------------------------
+
+const FREETV_HELPER = { ...PLAYER_HELPER, chromium: true, widevine: true, keyboard: true }
+
+test('Free TV : sans Widevine, l’entrée est grisée et dit la commande à taper', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock', title: null }), helper: { ...FREETV_HELPER, widevine: false } })
+  await expect(page.getByTestId('freetv-blocker')).toContainText('sudo apt install libwidevinecdm0')
+  await expect(page.getByTestId('media-freetv')).toBeDisabled()
+  await noPageScroll(page)
+  expect(await page.getByTestId('media-freetv').evaluate((el) => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(600) // l'entrée reste visible en entier
+  await shot(page, '04-widevine-absent', 'n')
+
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock', title: null }), helper: { ...FREETV_HELPER, chromium: false } })
+  await expect(page.getByTestId('freetv-blocker')).toContainText('sudo apt install chromium')
+
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock', title: null }), helper: FREETV_HELPER })
+  await expect(page.getByTestId('freetv-blocker')).toHaveCount(0)
+  await expect(page.getByTestId('media-freetv')).toBeEnabled()
+  await page.getByTestId('media-freetv').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.play', p: { kind: 'freetv' } }) // « ouvre Free TV » : aucun autre paramètre
+})
+
+test('Free TV : un Free TV qui ne s’ouvre pas est dit dans le menu, et « Compris » l’efface', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ state: 'error', kind: 'freetv', engine: 'freetv', title: 'Free TV', error: 'Chromium s’est arrêté avant d’avoir ouvert Free TV : voir /var/log/mydock/player.log.', front: 'dock', position: null, length: null, helper: FREETV_HELPER }))
+  await expect(page.getByTestId('media-error')).toContainText('Free TV n’a pas pu s’ouvrir')
+  await expect(page.getByTestId('media-error-text')).toContainText('Chromium s’est arrêté')
+  await expect(page.getByTestId('freetv-now')).toHaveCount(0)
+  await noPageScroll(page)
+  await shot(page, '05-free-tv-ne-s-ouvre-pas', 'n')
+  await page.getByTestId('media-error-ok').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.dismiss' })
+})
+
+test('Free TV : sans clavier à l’écran sur le Pi, le bouton « Clavier » le dit au lieu de ne rien faire', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ kind: 'freetv', engine: 'freetv', title: 'Free TV', front: 'dock', position: null, length: null, helper: { ...FREETV_HELPER, keyboard: false } }))
+  await expect(page.getByTestId('freetv-now')).toBeVisible()
+  await expect(page.getByTestId('freetv-keyboard')).toBeDisabled()
+  await expect(page.getByTestId('freetv-no-keyboard')).toContainText('sudo apt install wvkbd')
+  await noPageScroll(page)
+  expect(await page.getByTestId('freetv-now').evaluate((el) => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(600)
+
+  mock.push('player', playerState({ kind: 'freetv', engine: 'freetv', title: 'Free TV', front: 'dock', position: null, length: null, helper: FREETV_HELPER }))
+  await expect(page.getByTestId('freetv-keyboard')).toBeEnabled()
+  await page.getByTestId('freetv-keyboard').tap()
+  await expect.poll(() => mock.acts.map((a) => a.a).slice(-2)).toEqual(['dock.player.front', 'dock.player.keyboard']) // Free TV d'abord, puis le clavier
+  expect(mock.acts.at(-1)).toMatchObject({ p: { on: true } })
+})

@@ -575,6 +575,7 @@ async def test_the_password_is_kept_in_the_private_file_and_never_shown(dock):
             "smbclient": shutil.which("smbclient") is not None,
             "pc_audio": True,
             "audio_advance_ms": 150,
+            "freetv_corner": "top-left",
         }
         topic = (await snapshot_of(browser, "dock"))["data"]["media"]
         assert "très secret" not in json.dumps(topic)
