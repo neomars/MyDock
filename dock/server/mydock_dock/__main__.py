@@ -64,9 +64,6 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--state-dir", type=Path)
     init.add_argument("--web-dir", type=Path)
     init.add_argument(
-        "--playlist-url", help="Divertissement : la liste M3U des chaînes de la Freebox"
-    )
-    init.add_argument(
         "--smb-host", help="Divertissement : le serveur de fichiers Samba (la Freebox)"
     )
     init.add_argument(
@@ -231,7 +228,6 @@ def cmd_init(args: argparse.Namespace) -> int:
             clients_dir=args.clients_dir,
             state_dir=args.state_dir,
             web_dir=args.web_dir,
-            playlist_url=args.playlist_url,
             smb_host=args.smb_host,
             roms_dir=args.roms_dir,
             button_gpio=args.button_gpio,

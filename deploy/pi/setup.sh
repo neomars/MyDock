@@ -239,6 +239,13 @@ if [ "$KIOSK" != none ]; then
     printf '# Options supplémentaires de MAME pour Retrogame, une par ligne (voir « Retrogame » du README).\n# -video opengl   (au lieu de accel, le défaut)\n# -sound none\n' |
       put_file "$KETC/mame.flags" 644
   fi
+  if [ ! -e "$KETC/freetv.flags" ]; then
+    printf '# Options supplémentaires de Chromium pour Free TV, une par ligne (voir « Free TV » du README).
+# --disable-gpu
+# --use-gl=angle
+' |
+      put_file "$KETC/freetv.flags" 644
+  fi
   subst "$HERE/labwc/autostart" "LIB=$R_LIB" | put_file "$KETC/labwc/autostart" 644
 fi
 
@@ -282,8 +289,10 @@ case "$KIOSK" in
       warn "La session du bureau n'est pas labwc (X11 ou Wayfire) : le kiosque ne démarrera pas. Passe en labwc : sudo raspi-config → Advanced Options → Wayland → labwc."
     fi
     if [ "$STAGING" != 1 ] && [ "$DRY_RUN" != 1 ] && [ "$NO_START" = 0 ]; then
-      # Mise à jour : le navigateur du kiosque se relance tout seul (le lanceur boucle) sur la nouvelle interface.
-      pkill -u "$USER_NAME" -x chromium >/dev/null 2>&1 || true
+      # Mise à jour : le navigateur du kiosque se relance tout seul (le lanceur boucle) sur la nouvelle interface. Seul celui du
+      # dock (son profil mydock-chromium) : le Chromium de Free TV a son propre profil, et l'assistant de lecture, relancé
+      # juste après, referme ce qu'il en reste.
+      pkill -u "$USER_NAME" -f -- '--user-data-dir=[^ ]*mydock-chromium' >/dev/null 2>&1 || true
       # L'assistant de lecture aussi : son lanceur le relance sur la nouvelle version.
       pkill -u "$USER_NAME" -f 'mydock-dock player-session' >/dev/null 2>&1 || true
     fi

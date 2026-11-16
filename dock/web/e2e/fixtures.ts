@@ -236,7 +236,7 @@ export function rehashInterface(dir: string): void {
  * MYDOCK_SHOTS=j ne refait que les captures de l'étape j, MYDOCK_SHOTS=a, b, c, d, e, f, g, h ou i celles des étapes
  * précédentes (figées à leur livraison : on ne les écrase pas par erreur), MYDOCK_SHOTS=1 toutes.
  */
-export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' | 'l' | 'm' = 'a'): Promise<void> {
+export async function shot(page: Page, name: string, stage: 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'g' | 'h' | 'i' | 'j' | 'k' | 'l' | 'm' | 'n' = 'a'): Promise<void> {
   const wanted = process.env.MYDOCK_SHOTS
   if (!wanted || (wanted !== '1' && wanted !== stage)) return
   const dir = path.join(SHOTS_ROOT, stage)
@@ -258,4 +258,23 @@ export async function typeOnKeyboard(page: Page, text: string): Promise<void> {
 export async function clearKeyboard(page: Page): Promise<void> {
   const erase = page.getByTestId('keyboard').getByRole('button', { name: 'Effacer' })
   while ((await page.getByTestId('keyboard-value').innerText()).trim() !== '') await erase.tap()
+}
+
+/** Attend que l'assistant de lecture soit connecté au dock (il démarre avec la pile, un instant après), puis revient à l'accueil. */
+export async function helperReady(page: Page): Promise<void> {
+  await openPage(page, 'media')
+  await page.getByTestId('media-files').tap()
+  await expect(page.getByTestId('files-shares')).toBeVisible()
+  await expect(page.getByTestId('files-blocker')).toHaveCount(0)
+  await goHome(page)
+}
+
+/** Lance « Un film d'été (2020) » du Kiosque (le faux partage de la démo) : la télécommande s'ouvre. */
+export async function playFilm(page: Page): Promise<void> {
+  await openPage(page, 'media')
+  await page.getByTestId('media-files').tap()
+  await page.getByTestId('share-Disque dur').tap()
+  await page.getByTestId('dir-Films').tap()
+  await page.getByTestId("video-Un film d'été (2020).mkv").tap()
+  await expect(page.getByTestId('remote')).toBeVisible()
 }

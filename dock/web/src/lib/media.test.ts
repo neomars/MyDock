@@ -3,9 +3,11 @@ import {
   ADVANCE_MAX_MS,
   advanceText,
   audioLine,
-  channelCount,
+  cornerText,
   fileSize,
-  filterChannels,
+  freetvActive,
+  freetvBlocker,
+  freetvStateText,
   formatPlayTime,
   joinPath,
   normalize,
@@ -20,10 +22,7 @@ import {
   stepAdvance,
   whereText,
 } from './media'
-import type { PlayerAudio, PlayerSnapshot, TvChannel } from './protocol'
-
-const channel = (id: string, number: number | null, name: string): TvChannel => ({ id, number, name, qualities: ['sd'] })
-const CHANNELS = [channel('a', 1, 'TF1'), channel('b', 2, 'France 2'), channel('c', 6, 'M6'), channel('d', 61, 'Télé Paris'), channel('e', null, 'Radio Classique'), channel('f', 16, 'Équidia')]
+import type { PlayerAudio, PlayerSnapshot } from './protocol'
 
 const player = (extra: Partial<PlayerSnapshot> = {}): PlayerSnapshot => ({
   available: true,
@@ -31,13 +30,12 @@ const player = (extra: Partial<PlayerSnapshot> = {}): PlayerSnapshot => ({
   kind: 'file',
   title: 'Un film',
   subtitle: 'Disque dur/Films',
-  live: false,
   position: 65,
   length: 5400,
   volume: 70,
   front: 'dock',
   error: null,
-  helper: { vlc: true, live555: false, ffmpeg: true, touch: true, demo: false },
+  helper: { vlc: true, touch: true, demo: false },
   ...extra,
 })
 
@@ -60,30 +58,10 @@ describe('les durées et les tailles', () => {
   })
 })
 
-describe('la recherche d’une chaîne', () => {
-  it('sans recherche rend toute la liste', () => {
-    expect(filterChannels(CHANNELS, '')).toHaveLength(6)
-    expect(filterChannels(CHANNELS, '   ')).toHaveLength(6)
-  })
-  it('ignore les accents et les majuscules', () => {
-    expect(filterChannels(CHANNELS, 'tele').map((c) => c.id)).toEqual(['d'])
-    expect(filterChannels(CHANNELS, 'EQUIDIA').map((c) => c.id)).toEqual(['f'])
-    expect(normalize('  Équidia ')).toBe('equidia')
-  })
-  it('cherche des mots dans n’importe quel ordre', () => {
-    expect(filterChannels(CHANNELS, 'classique radio').map((c) => c.id)).toEqual(['e'])
-    expect(filterChannels(CHANNELS, 'tf')).toHaveLength(1)
-    expect(filterChannels(CHANNELS, 'zzz')).toEqual([])
-  })
-  it('un numéro donne la chaîne exacte d’abord, puis celles dont le numéro commence ainsi', () => {
-    expect(filterChannels(CHANNELS, '6').map((c) => c.id)).toEqual(['c', 'd'])
-    expect(filterChannels(CHANNELS, '1').map((c) => c.id)).toEqual(['a', 'f'])
-    expect(filterChannels(CHANNELS, '99')).toEqual([])
-  })
-  it('compte les chaînes', () => {
-    expect(channelCount(0)).toBe('aucune chaîne')
-    expect(channelCount(1)).toBe('1 chaîne')
-    expect(channelCount(12)).toBe('12 chaînes')
+describe('la recherche sans accents', () => {
+  it('ignore les accents, les majuscules et les espaces autour', () => {
+    expect(normalize('  Équidia Télé ')).toBe('equidia tele')
+    expect(normalize('')).toBe('')
   })
 })
 
@@ -112,20 +90,18 @@ describe('la lecture en cours', () => {
     expect(playerActive(player({ state: 'error' }))).toBe(false)
     expect(playerActive(null)).toBe(false)
   })
-  it('donne l’avancement d’un fichier, jamais d’un direct', () => {
+  it('donne l’avancement d’un fichier, tant que sa durée est connue', () => {
     expect(progressRatio(player({ position: 2700, length: 5400 }))).toBe(0.5)
     expect(progressRatio(player({ position: 9999, length: 5400 }))).toBe(1)
-    expect(progressRatio(player({ live: true, position: null, length: null }))).toBeNull()
+    expect(progressRatio(player({ position: null }))).toBeNull()
     expect(progressRatio(player({ length: null }))).toBeNull()
     expect(progressRatio(null)).toBeNull()
   })
   it('dit où elle en est', () => {
     expect(stateText(player())).toBe('1:05 / 1:30:00')
-    expect(stateText(player({ live: true, position: null, length: null }))).toBe('En direct')
     expect(stateText(player({ state: 'paused' }))).toBe('En pause')
-    expect(stateText(player({ state: 'starting', live: true }))).toBe('Connexion à la chaîne…')
     expect(stateText(player({ state: 'starting' }))).toBe('Ouverture du fichier…')
-    expect(stateText(player({ state: 'error', error: 'La chaîne ne répond pas.' }))).toBe('La chaîne ne répond pas.')
+    expect(stateText(player({ state: 'error', error: 'Le fichier ne répond pas.' }))).toBe('Le fichier ne répond pas.')
   })
   it('titre la tuile de l’accueil seulement pendant la lecture', () => {
     expect(nowPlayingTitle(player())).toBe('Un film')
@@ -146,8 +122,8 @@ describe('ce qui empêche de lire', () => {
   })
   it('dit ce qui manque', () => {
     expect(playerBlocker(player({ available: false, helper: null }))).toContain('assistant de lecture')
-    expect(playerBlocker(player({ helper: { vlc: false, live555: false, ffmpeg: true, touch: true, demo: false } }))).toContain('VLC est absent')
-    expect(playerBlocker(player({ helper: { vlc: true, live555: false, ffmpeg: true, touch: false, demo: false } }))).toContain('swayidle')
+    expect(playerBlocker(player({ helper: { vlc: false, touch: true, demo: false } }))).toContain('VLC est absent')
+    expect(playerBlocker(player({ helper: { vlc: true, touch: false, demo: false } }))).toContain('swayidle')
   })
 })
 
@@ -208,5 +184,37 @@ describe('le son sur le PC', () => {
     expect(advanceText(150)).toBe('150 ms')
     expect(advanceText(0)).toBe('0 ms')
     expect(advanceText(1000)).toBe('1,0 s')
+  })
+})
+
+describe('Free TV', () => {
+  it('est actif quand Chromium l’ouvre ou le montre, jamais pour une vidéo ou un jeu', () => {
+    expect(freetvActive(player({ engine: 'freetv', kind: 'freetv', title: 'Free TV' }))).toBe(true)
+    expect(freetvActive(player({ engine: 'freetv', state: 'starting' }))).toBe(true)
+    expect(freetvActive(player({ engine: 'vlc' }))).toBe(false)
+    expect(freetvActive(player({ engine: 'mame' }))).toBe(false)
+    expect(freetvActive(player({ engine: 'freetv', state: 'idle' }))).toBe(false)
+    expect(freetvActive(player({ engine: 'freetv', state: 'error' }))).toBe(false)
+    expect(freetvActive(null)).toBe(false)
+  })
+  it('dit ce qui empêche de l’ouvrir, avec la commande à taper', () => {
+    const helper = (extra: Record<string, boolean>) => player({ helper: { vlc: true, touch: true, demo: false, chromium: true, widevine: true, keyboard: true, ...extra } })
+    expect(freetvBlocker(helper({}))).toBeNull()
+    expect(freetvBlocker(null)).toBeNull() // un dock plus ancien : on essaie, le dock répondra
+    expect(freetvBlocker(player({ available: false, helper: null }))).toContain('assistant de lecture')
+    expect(freetvBlocker(helper({ chromium: false }))).toContain('sudo apt install chromium')
+    expect(freetvBlocker(helper({ widevine: false }))).toContain('sudo apt install libwidevinecdm0')
+    expect(freetvBlocker(helper({ keyboard: false }))).toBeNull() // sans clavier à l’écran, Free TV s’ouvre quand même
+  })
+  it('dit où il en est', () => {
+    expect(freetvStateText(player({ state: 'starting' }))).toBe('Ouverture de Free TV…')
+    expect(freetvStateText(player({ state: 'playing', front: 'video' }))).toBe('Free TV est à l’écran')
+    expect(freetvStateText(player({ state: 'playing', front: 'dock' }))).toBe('Free TV reste ouvert derrière')
+  })
+  it('nomme le coin du retour au dock', () => {
+    expect(cornerText('top-left')).toBe('en haut à gauche')
+    expect(cornerText('bottom-right')).toBe('en bas à droite')
+    expect(cornerText(undefined)).toBe('en haut à gauche') // un dock plus ancien : le coin par défaut
+    expect(cornerText('milieu')).toBe('en haut à gauche')
   })
 })

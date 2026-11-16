@@ -70,7 +70,6 @@ def _default_state() -> dict[str, Any]:
             "saver_aerial": True,
             "saver_apple": True,
             "saver_sources": [],
-            "tv_hd": False,
         },
         "pc": {"hostname": None, "interfaces": [], "wol": None, "seen_at": None},
         "markets": {
@@ -118,8 +117,6 @@ class StateStore:
         if type(ui.get("saver_apple")) is not bool:
             ui["saver_apple"] = True
         ui["saver_sources"] = _saver_sources_or_empty(ui.get("saver_sources"))
-        if type(ui.get("tv_hd")) is not bool:
-            ui["tv_hd"] = False
         self._migrate_pages(ui)
 
     @staticmethod
@@ -196,10 +193,6 @@ class StateStore:
             new["saver_apple"] = patch["saver_apple"]
         if "saver_sources" in patch:
             new["saver_sources"] = _saver_sources(patch["saver_sources"])
-        if "tv_hd" in patch:
-            if type(patch["tv_hd"]) is not bool:
-                raise ValidationFailure("Réglage de la qualité HD invalide.")
-            new["tv_hd"] = patch["tv_hd"]
         if new != ui:
             self._data["ui"] = new
             self._save()

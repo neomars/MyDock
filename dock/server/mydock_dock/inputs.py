@@ -1,11 +1,15 @@
-"""Ce que l'assistant lit directement sur les périphériques de saisie (/dev/input) pendant un jeu : l'écran tactile et les manettes.
+"""Ce que l'assistant lit directement sur les périphériques de saisie (/dev/input) pendant un jeu ou Free TV : l'écran tactile et les manettes.
 
-Pendant un jeu, MAME est devant : le navigateur du dock ne voit plus rien, et le compositeur n'est pas fait pour dire
-« quelqu'un a touché l'écran » à un programme tiers sans le déranger. On lit donc les évènements du noyau (evdev) :
+Pendant un jeu ou Free TV, une autre fenêtre est devant : le navigateur du dock ne voit plus rien, et le compositeur n'est pas
+fait pour dire « quelqu'un a touché l'écran » à un programme tiers sans le déranger. On lit donc les évènements du noyau (evdev) :
 
   * **un toucher de l'écran tactile** quitte le jeu (le toucher qui a lancé le jeu, et celui qui le suit de près, ne
     comptent pas : voir `arm`) ;
-  * **Select + Start tenus deux secondes** sur une manette quittent le jeu (même chemin que le bouton physique).
+  * **Select + Start tenus deux secondes** sur une manette quittent le jeu (même chemin que le bouton physique) ;
+  * **un appui long dans un coin de l'écran** (en haut à gauche par défaut) ramène le dock pendant Free TV : là, un toucher
+    simple navigue dans la page de Free TV, il ne peut donc pas servir à en sortir. Le geste est lu ici, sans passer par
+    Chromium : il marche même si la page est figée. Il faut pour cela la position du doigt (les bornes de l'écran
+    tactile, lues avec `EVIOCGABS`), faute de quoi le geste est désactivé et on s'en sert du bouton physique ou de la manette.
 
 Seuls les écrans tactiles et les manettes sont ouverts, jamais un clavier : l'assistant ne lit pas ce qui se tape.
 L'utilisateur du kiosque doit être dans le groupe `input` (le paquet l'y met ; c'est aussi ce qui laisse MAME lire les manettes).
@@ -19,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
+import fcntl
 import logging
 import os
 import re
@@ -31,7 +36,9 @@ from typing import Any
 log = logging.getLogger("mydock.player")
 
 DEVICES_FILE = "/proc/bus/input/devices"
-EV_KEY, EV_ABS = 0x01, 0x03
+EV_SYN, EV_KEY, EV_ABS = 0x00, 0x01, 0x03
+ABS_X, ABS_Y = 0x00, 0x01
+ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y = 0x2F, 0x35, 0x36
 BTN_SOUTH, BTN_SELECT, BTN_START, BTN_TOUCH = 0x130, 0x13A, 0x13B, 0x14A
 BUS_USB, BUS_BLUETOOTH = 0x03, 0x05  # « I: Bus=… » de /proc/bus/input/devices
 INPUT_PROP_POINTER = 0  # un pavé tactile (jamais un écran tactile, qui est « direct »)
@@ -40,9 +47,55 @@ EVENT = struct.Struct(
     "@llHHi"
 )  # struct input_event : l'heure (2 longs), le type, le code, la valeur
 COMBO_SECONDS = 2.0
+CORNER_SECONDS = 1.5
+#: La taille du coin, en part de l'écran : de quoi viser avec un doigt (environ 150 × 130 px sur un écran de 1024 × 600).
+CORNER_WIDTH, CORNER_HEIGHT = 0.15, 0.22
+CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+DEFAULT_CORNER = "top-left"
 RESCAN_SECONDS = 2.0
 READ_EVENTS = 64
 MAX_DEVICES = 12
+
+
+Range = tuple[int, int]  # (minimum, maximum) d'un axe
+
+
+def eviocgabs(axis: int) -> int:
+    """Le numéro de la commande `EVIOCGABS(axis)` du noyau (`_IOR('E', 0x40 + axis, struct input_absinfo)`, 24 octets)."""
+    return (2 << 30) | (24 << 16) | (ord("E") << 8) | (0x40 + axis)
+
+
+def read_abs_ranges(fd: int) -> tuple[Range, Range] | None:
+    """Les bornes des axes X et Y de l'écran tactile ouvert (`None` s'il ne les donne pas : le geste de coin est alors inutile)."""
+    found: list[Range] = []
+    for choices in ((ABS_MT_POSITION_X, ABS_X), (ABS_MT_POSITION_Y, ABS_Y)):
+        for axis in choices:
+            buffer = bytearray(24)
+            try:
+                fcntl.ioctl(fd, eviocgabs(axis), buffer)
+            except OSError:
+                continue
+            _value, low, high, *_ = struct.unpack("@6i", bytes(buffer))
+            if high > low:
+                found.append((low, high))
+                break
+    return (found[0], found[1]) if len(found) == 2 else None
+
+
+def in_corner(x: int, y: int, ranges: tuple[Range, Range], corner: str = DEFAULT_CORNER) -> bool:
+    """Le doigt est-il dans le coin demandé ? (`ranges` : les bornes des deux axes de l'écran tactile)"""
+    (x0, x1), (y0, y1) = ranges
+    fx, fy = (x - x0) / (x1 - x0), (y - y0) / (y1 - y0)
+    left = fx <= CORNER_WIDTH
+    right = fx >= 1 - CORNER_WIDTH
+    top = fy <= CORNER_HEIGHT
+    bottom = fy >= 1 - CORNER_HEIGHT
+    return {
+        "top-left": left and top,
+        "top-right": right and top,
+        "bottom-left": left and bottom,
+        "bottom-right": right and bottom,
+    }.get(corner, False)
 
 
 @dataclass(frozen=True)
@@ -117,6 +170,12 @@ class _Open:
     device: Device
     fd: int
     touching: bool = False
+    #: Le doigt (premier contact) : sa dernière position et les bornes de l'écran, pour le geste de coin.
+    slot: int = 0
+    x: int | None = None
+    y: int | None = None
+    ranges: tuple[Range, Range] | None = None
+    corner_fired: bool = False
     held: set[int] = field(default_factory=set)
     buffer: bytes = b""
 
@@ -129,14 +188,19 @@ class InputWatcher:
         *,
         on_touch: Callable[[], Any],
         on_combo: Callable[[], Any],
+        on_corner: Callable[[], Any] | None = None,
         combo_seconds: float = COMBO_SECONDS,
+        corner_seconds: float = CORNER_SECONDS,
+        abs_reader: Callable[[int], tuple[Range, Range] | None] = read_abs_ranges,
         rescan_seconds: float = RESCAN_SECONDS,
         devices_file: str = DEVICES_FILE,
         opener: Callable[[str], int] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._on_touch, self._on_combo = on_touch, on_combo
+        self._on_touch, self._on_combo, self._on_corner = on_touch, on_combo, on_corner
         self._combo_seconds, self._rescan = combo_seconds, rescan_seconds
+        self._corner_seconds, self._abs_reader = corner_seconds, abs_reader
+        self.corner = DEFAULT_CORNER
         self._devices_file = devices_file
         self._opener = opener or (
             lambda path: os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -146,6 +210,7 @@ class InputWatcher:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._rescan_handle: asyncio.TimerHandle | None = None
         self._combo_handle: asyncio.TimerHandle | None = None
+        self._corner_handle: asyncio.TimerHandle | None = None
         self._armed_at = float("inf")
         self.denied: list[str] = []
         self.touch_seen = False
@@ -165,6 +230,7 @@ class InputWatcher:
             self._rescan_handle.cancel()
             self._rescan_handle = None
         self._cancel_combo()
+        self._cancel_corner()
         for entry in list(self._open.values()):
             self._close(entry)
         self.touch_seen = False
@@ -182,6 +248,7 @@ class InputWatcher:
         with contextlib.suppress(OSError):
             os.close(entry.fd)
         self._cancel_combo()
+        self._cancel_corner()
         self.touch_seen = any(e.device.kind == "touch" for e in self._open.values())
 
     # --- les périphériques ------------------------------------------------------------------------------------
@@ -213,7 +280,12 @@ class InputWatcher:
             self._loop.add_reader(fd, self._readable, entry)
             if device.kind == "touch":
                 self.touch_seen = True
-            log.info("Saisie : %s lu (%s, %s)", device.path, device.name, device.kind)
+                if self._on_corner is not None:
+                    entry.ranges = self._abs_reader(fd)
+            log.info(
+                "Saisie : %s lu (%s, %s%s)", device.path, device.name, device.kind,
+                ", geste de coin possible" if entry.ranges else "",
+            )  # fmt: skip
         self._rescan_handle = self._loop.call_later(self._rescan, self._scan)
 
     def _readable(self, entry: _Open) -> None:
@@ -244,7 +316,22 @@ class InputWatcher:
             else:
                 self._pad_event(entry, kind, code, value)
 
+    @property
+    def corner_ready(self) -> bool:
+        """Le geste de coin est-il possible ? (un écran tactile est lu, et l'on sait où est son coin)"""
+        return any(e.ranges for e in self._open.values() if e.device.kind == "touch")
+
     def _touch_event(self, entry: _Open, kind: int, code: int, value: int) -> None:
+        if kind == EV_ABS:
+            if code == ABS_MT_SLOT:
+                entry.slot = value
+            elif code == ABS_X or (code == ABS_MT_POSITION_X and entry.slot == 0):
+                entry.x = value
+            elif code == ABS_Y or (code == ABS_MT_POSITION_Y and entry.slot == 0):
+                entry.y = value
+        elif kind == EV_SYN and code == 0:
+            self._corner_check(entry)
+            return
         down: bool | None = None
         if kind == EV_KEY and code == BTN_TOUCH:
             down = value != 0
@@ -258,6 +345,43 @@ class InputWatcher:
                 self._on_touch()
         elif not down:
             entry.touching = False
+
+    # --- le geste de coin : un doigt tenu dans le coin pendant `corner_seconds` ---------------------------------------
+
+    def _corner_check(self, entry: _Open) -> None:
+        if self._on_corner is None or self._loop is None:
+            return
+        inside = bool(
+            entry.touching
+            and entry.ranges is not None
+            and entry.x is not None
+            and entry.y is not None
+            and in_corner(entry.x, entry.y, entry.ranges, self.corner)
+        )
+        if not inside:
+            entry.corner_fired = False
+            self._cancel_corner()
+        elif (
+            self._corner_handle is None
+            and not entry.corner_fired
+            and self._clock() >= self._armed_at
+        ):
+            self._corner_handle = self._loop.call_later(
+                self._corner_seconds, self._corner_done, entry
+            )
+
+    def _corner_done(self, entry: _Open) -> None:
+        self._corner_handle = None
+        if entry.touching and self._on_corner is not None:
+            entry.corner_fired = (
+                True  # un seul retour par appui : il faut lever le doigt pour recommencer
+            )
+            self._on_corner()
+
+    def _cancel_corner(self) -> None:
+        if self._corner_handle is not None:
+            self._corner_handle.cancel()
+            self._corner_handle = None
 
     def _pad_event(self, entry: _Open, kind: int, code: int, value: int) -> None:
         if kind != EV_KEY or code not in (BTN_SELECT, BTN_START):

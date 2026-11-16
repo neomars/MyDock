@@ -275,7 +275,6 @@ class MamePlayback:
     #: Sans pouvoir lister les fenêtres, le jeu est tenu pour affiché au bout de ce temps.
     BLIND_SHOWN_AFTER = 6.0
 
-    live = False
     volume: int | None = None
 
     def __init__(
@@ -495,7 +494,6 @@ DEMO_BROKEN = frozenset({"mslug"})
 class DemoGamePlayback:
     """Un faux jeu pour le mode démo : « affiché » au bout d'une seconde, jusqu'à ce qu'on l'arrête."""
 
-    live = False
     volume: int | None = None
 
     def __init__(self, game: str, *, title: str = "", **_: Any) -> None:

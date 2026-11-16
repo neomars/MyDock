@@ -59,13 +59,13 @@ function storedZip(entry: string, data: Buffer): Buffer {
   return Buffer.concat([body, directory, end])
 }
 
-test('Divertissement : le menu propose Freetv, Kiosque et Retrogame, sans rien qui déborde', async ({ dock }) => {
+test('Divertissement : le menu propose Free TV, Kiosque et Retrogame, sans rien qui déborde', async ({ dock }) => {
   await openPage(dock, 'media')
-  await expect(dock.getByTestId('media-tv')).toContainText('Freetv')
+  await expect(dock.getByTestId('media-freetv')).toContainText('Free TV')
   await expect(dock.getByTestId('media-files')).toContainText('Kiosque')
   await expect(dock.getByTestId('media-games')).toContainText('Retrogame')
   expect(await noScroll(dock)).toEqual({ w: 1024, h: 600 })
-  const boxes = await Promise.all(['media-tv', 'media-files', 'media-games'].map(async (id) => (await dock.getByTestId(id).boundingBox())!))
+  const boxes = await Promise.all(['media-freetv', 'media-files', 'media-games'].map(async (id) => (await dock.getByTestId(id).boundingBox())!))
   for (const box of boxes) {
     expect(box.x + box.width, 'dans l’écran').toBeLessThanOrEqual(1024)
     expect(box.height, 'un gros bouton').toBeGreaterThanOrEqual(240)

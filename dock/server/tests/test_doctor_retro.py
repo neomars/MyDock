@@ -372,7 +372,9 @@ def running_report(health_server, **body) -> str:
 def test_a_dock_without_a_browser_is_called_a_grey_screen(health_server):
     out = running_report(health_server, browsers=0)
     assert "⚠ Aucun navigateur n'est connecté au dock : l'écran est gris ou vide" in out
-    assert "sudo pkill -x chromium" in out
+    assert "pkill -f" in out
+    assert "mydock-chromium" in out  # seul le Chromium du dock : celui de Free TV a un autre profil
+    assert "pkill -x chromium" not in out
 
 
 def test_a_dock_with_its_browser_is_green(health_server):

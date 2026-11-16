@@ -6,15 +6,15 @@ Installed-Size: @INSTALLED_SIZE@
 Depends: @DEPENDS@
 Recommends: wlopm, fonts-dejavu-core, vlc-bin, vlc-plugin-base, vlc-plugin-video-output, vlc-plugin-samba,
  smbclient, xwayland, wlrctl | xdotool, mame, python3-libgpiod, python3-dbus-fast, bluez,
- pipewire-pulse, wireplumber, pulseaudio-utils
+ pipewire-pulse, wireplumber, pulseaudio-utils, libwidevinecdm0, wvkbd
 Section: utils
 Priority: optional
 Homepage: https://github.com/neomars/MyDock
 Description: dock tactile MyDock : l'écran du Raspberry Pi qui pilote un PC
  Un seul paquet pour le Raspberry Pi : l'interface tactile en plein écran
  (Chromium dans labwc), son serveur local, la bourse, le réveil du PC par le
- réseau, le Divertissement (les chaînes de la Freebox et ses partages Samba,
- lus par VLC sur l'écran du dock), Retrogame (les jeux d'arcade de MAME, joués
+ réseau, le Divertissement (Free TV, tv.free.fr dans Chromium, et les partages
+ Samba de la Freebox, lus par VLC sur l'écran du dock), Retrogame (les jeux d'arcade de MAME, joués
  à la manette Bluetooth, quittés par un bouton câblé sur le GPIO), et le paquet
  du PC.
  .

@@ -552,9 +552,8 @@ export interface PadsSnapshot {
   devices: PadDevice[]
 }
 
-/** Divertissement : où le dock prend les chaînes (Freebox) et les fichiers (partage Samba). Jamais le mot de passe. */
+/** Divertissement : où le dock prend les fichiers du Kiosque (partage Samba). Jamais le mot de passe. */
 export interface MediaInfo {
-  playlist_url: string
   smb_host: string
   smb_user: string
   smb_password_set: boolean
@@ -564,6 +563,8 @@ export interface MediaInfo {
   pc_audio?: boolean
   /** De combien le son des vidéos est avancé (ms), pour rattraper le trajet jusqu'au PC. Absent d'un dock plus ancien. */
   audio_advance_ms?: number
+  /** Le coin de l'écran où un appui long ramène le dock pendant Free TV (dock.toml, [freetv] corner). */
+  freetv_corner?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
 }
 
 /** Où sort le son du lecteur, et pourquoi on n'entend rien le cas échéant. */
@@ -576,16 +577,14 @@ export interface PlayerAudio {
 
 export type PlayerStateName = 'idle' | 'starting' | 'playing' | 'paused' | 'error'
 
-/** Thème « player » : ce que joue l'écran du dock (VLC) et ce que son assistant sait faire. */
+/** Thème « player » : ce que joue l'écran du dock (VLC, MAME) et ce que son assistant sait faire. */
 export interface PlayerSnapshot {
   /** L'assistant de lecture de l'écran est-il connecté ? */
   available: boolean
   state: PlayerStateName
-  kind: 'tv' | 'file' | 'game' | null
+  kind: 'file' | 'game' | 'freetv' | null
   title: string | null
   subtitle: string | null
-  /** Un direct (une chaîne) : ni position ni durée. */
-  live: boolean
   position: number | null
   length: number | null
   /** 0 à 100. */
@@ -595,33 +594,29 @@ export interface PlayerSnapshot {
   /** Faux quand le fichier arrive par un tube (smbclient) : pas d'avance ni de retour rapides. Absent d'un dock plus ancien. */
   seekable?: boolean
   error: string | null
-  /** Ce qui occupe l'écran : VLC (vidéo) ou MAME (jeu). Absent d'un dock plus ancien. */
-  engine?: 'vlc' | 'mame'
+  /** Ce qui occupe l'écran : VLC (vidéo), MAME (jeu) ou Chromium (Free TV). Absent d'un dock plus ancien. */
+  engine?: 'vlc' | 'mame' | 'freetv'
   /** Le nom MAME du jeu en cours. */
   game?: string | null
   /** Le nombre d'appuis sur le bouton physique depuis le démarrage du dock : un changement réveille l'écran. */
   button?: number
   /** Où sort le son (le PC, le Pi n'a pas d'enceintes) et son état. Absent d'un dock plus ancien. */
   audio?: PlayerAudio
+  /** Le clavier à l'écran de Free TV est-il montré ? */
+  keyboard?: boolean
   helper: {
     vlc: boolean
-    live555: boolean
-    ffmpeg: boolean
     touch: boolean
     demo: boolean
     /** MAME est-il installé ? */
     mame?: boolean
+    /** Free TV : Chromium, Widevine (flux protégés) et un clavier à l'écran (wvkbd) sont-ils là ? Absents d'un dock plus ancien. */
+    chromium?: boolean
+    widevine?: boolean
+    keyboard?: boolean
     /** L'état du bouton physique, en une phrase (« GPIO17 (broche 11) : prêt. »). */
     gpio?: string | null
   } | null
-}
-
-/** Une chaîne de la Freebox, sans l'adresse de son flux (le dock la garde). */
-export interface TvChannel {
-  id: string
-  number: number | null
-  name: string
-  qualities: ('ld' | 'sd' | 'hd' | 'auto')[]
 }
 
 /** Un dossier ou une vidéo d'un partage. */
@@ -753,8 +748,6 @@ export interface UiState {
   saver_apple: boolean
   /** Adresses https de vidéos (ou de listes de vidéos) saisies dans Réglages. */
   saver_sources: string[]
-  /** Freetv : lire les chaînes en HD (sinon en définition standard, plus légère pour le Pi). */
-  tv_hd: boolean
 }
 
 export interface Ack {

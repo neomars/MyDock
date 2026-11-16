@@ -1,16 +1,13 @@
-"""Le lecteur du dock : ce que joue l'écran (Freetv, Kiosque), la télécommande, et l'assistant de lecture qui pilote VLC."""
+"""Le lecteur du dock : ce que joue l'écran (Kiosque, Retrogame), la télécommande, et l'assistant de lecture qui pilote VLC."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import http.server
 import json
 import shutil
 import stat
 import textwrap
-import threading
-import types
 
 import pytest
 
@@ -18,34 +15,8 @@ from mydock_dock import player as player_module
 from mydock_dock.player import HelperConn, PlayerError, PlayerHub
 from mydock_dock.testing import call, eventually, running_dock, snapshot_of
 
-PLAYLIST = """#EXTM3U
-#EXTINF:0,1 - TF1
-rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=ld
-#EXTINF:0,1 - TF1 (SD)
-rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=sd
-#EXTINF:0,1 - TF1 (HD)
-rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=hd
-#EXTINF:0,2 - France 2
-rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=2&flavour=sd
-#EXTINF:0,Radio Classique
-http://mafreebox.freebox.fr/radio/classique.mp3
-"""
-
-
-class _Handler(http.server.BaseHTTPRequestHandler):
-    routes: dict = {}
-
-    def do_GET(self):
-        status, headers, body = self.routes.get(self.path, (404, {}, b""))
-        self.send_response(status)
-        for name, value in headers.items():
-            self.send_header(name, value)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *_):
-        pass
+#: Un film du Kiosque : de quoi lancer une lecture sans rien lister.
+FILM = {"kind": "file", "share": "Disque dur", "path": "Films/Un film.mkv"}
 
 
 # --- le hub, seul ----------------------------------------------------------------------------------------------------
@@ -92,21 +63,21 @@ def test_playing_needs_vlc_and_a_way_back_to_the_dock():
 
 async def test_a_play_request_reaches_the_helper_and_the_screen_sees_it_start():
     h, conn, changes = hub()
-    h.play({"kind": "tv", "title": "TF1", "subtitle": "1 · SD", "live": True}, "rtsp://h/tf1")
+    h.play(
+        {"kind": "file", "title": "Film", "subtitle": "Disque dur/Films"}, "smb://nas/x/film.mkv"
+    )
     (command,) = sent(conn)
     assert command == {
         "t": "cmd",
         "name": "play",
         "job": 1,
-        "url": "rtsp://h/tf1",
-        "live": True,
+        "url": "smb://nas/x/film.mkv",
         "volume": 70,
     }
     snapshot = h.snapshot()
-    assert (snapshot["state"], snapshot["title"], snapshot["live"], snapshot["front"]) == (
+    assert (snapshot["state"], snapshot["title"], snapshot["front"]) == (
         "starting",
-        "TF1",
-        True,
+        "Film",
         "video",
     )
     assert changes
@@ -115,7 +86,7 @@ async def test_a_play_request_reaches_the_helper_and_the_screen_sees_it_start():
 
 async def test_the_helper_reports_progress_and_the_end():
     h, conn, _ = hub()
-    h.play({"kind": "file", "title": "Film", "live": False}, "smb://nas/x/film.mkv")
+    h.play({"kind": "file", "title": "Film"}, "smb://nas/x/film.mkv")
     h.on_message(
         conn,
         {
@@ -144,7 +115,7 @@ async def test_the_helper_reports_progress_and_the_end():
 async def test_a_file_read_through_a_pipe_has_no_fast_forward_and_the_next_playback_starts_afresh():
     h, conn, _ = hub()
     assert h.snapshot()["seekable"] is True
-    h.play({"kind": "file", "title": "Film", "live": False}, "smb://nas/x/film.mkv")
+    h.play({"kind": "file", "title": "Film"}, "smb://nas/x/film.mkv")
     h.on_message(
         conn,
         {
@@ -170,7 +141,7 @@ async def test_a_file_read_through_a_pipe_has_no_fast_forward_and_the_next_playb
             "seekable": False,
         },
     )
-    h.play({"kind": "file", "title": "Autre", "live": False}, "smb://nas/x/autre.mkv")
+    h.play({"kind": "file", "title": "Autre"}, "smb://nas/x/autre.mkv")
     assert h.snapshot()["seekable"] is True  # une nouvelle lecture repart de zéro
 
 
@@ -179,7 +150,6 @@ async def test_the_smb_source_is_passed_to_the_helper_but_never_to_the_screen():
     media = {
         "kind": "file",
         "title": "F",
-        "live": False,
         "smb": {"host": "nas", "share": "S", "path": "a/b.mkv"},
     }
     h.play(media, "smb://nas/S/a/b.mkv", secrets={"smb_user": "u", "smb_password": "p"})
@@ -187,16 +157,16 @@ async def test_the_smb_source_is_passed_to_the_helper_but_never_to_the_screen():
     assert command["smb"] == {"host": "nas", "share": "S", "path": "a/b.mkv"}
     assert (command["smb_user"], command["smb_password"]) == ("u", "p")
     assert "smb" not in h.snapshot()
-    h.play({"kind": "tv", "title": "TF1", "live": True}, "rtsp://box/x")
-    assert "smb" not in sent(conn)[-1]  # une chaîne n'a pas de partage
+    h.play({"kind": "file", "title": "Autre"}, "http://box/x.mkv")
+    assert "smb" not in sent(conn)[-1]  # un fichier hors partage n'a pas de partage
 
 
 async def test_an_error_from_the_helper_is_kept_for_the_screen():
     h, conn, _ = hub()
     h.play({"title": "x"}, "rtsp://h/x")
-    h.on_message(conn, {"t": "ended", "job": 1, "error": "La chaîne ne répond pas."})
+    h.on_message(conn, {"t": "ended", "job": 1, "error": "Le fichier ne répond pas."})
     snapshot = h.snapshot()
-    assert (snapshot["state"], snapshot["error"]) == ("error", "La chaîne ne répond pas.")
+    assert (snapshot["state"], snapshot["error"]) == ("error", "Le fichier ne répond pas.")
     h.reset_error()
     assert h.snapshot()["state"] == "idle"
 
@@ -341,8 +311,6 @@ async def helper(dock, **hello):
                     "t": "hello",
                     "v": 1,
                     "vlc": True,
-                    "live555": False,
-                    "ffmpeg": True,
                     "touch": True,
                     "demo": False,
                     **hello,
@@ -372,6 +340,10 @@ async def test_the_helper_is_told_the_button_pin_when_it_connects_and_when_it_ch
             "button_gpio": 17,
             "pc_audio": True,
             "audio_advance_ms": 150,
+            "freetv_user_agent": "auto",
+            "freetv_scale": 0.7,
+            "freetv_corner": "top-left",
+            "freetv_fullscreen": True,
         }
         async with dock.connect() as browser:
             await call(browser, "a1", "dock.retro.set", {"button_gpio": 22})
@@ -382,28 +354,17 @@ async def test_the_helper_is_told_the_button_pin_when_it_connects_and_when_it_ch
             "button_gpio": 22,
             "pc_audio": True,
             "audio_advance_ms": 150,
+            "freetv_user_agent": "auto",
+            "freetv_scale": 0.7,
+            "freetv_corner": "top-left",
+            "freetv_fullscreen": True,
         }
 
 
 @pytest.fixture
-def freebox_web():
-    """Un faux serveur de la Freebox (la liste des chaînes), sur 127.0.0.1."""
-    routes: dict = {"/freeboxtv/playlist.m3u": (200, {}, PLAYLIST.encode())}
-    server = http.server.ThreadingHTTPServer(
-        ("127.0.0.1", 0), type("H", (_Handler,), {"routes": routes})
-    )
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield types.SimpleNamespace(
-        routes=routes, url=f"http://127.0.0.1:{server.server_port}/freeboxtv/playlist.m3u"
-    )
-    server.shutdown()
-    server.server_close()
-
-
-@pytest.fixture
-async def dock(tmp_path, freebox_web):
+async def dock(tmp_path):
     async with running_dock(tmp_path) as running:
-        running.config.set_media(playlist_url=freebox_web.url, smb_host="nas.local")
+        running.config.set_media(smb_host="nas.local")
         yield running
 
 
@@ -425,48 +386,22 @@ async def test_the_screen_learns_when_the_helper_is_there(dock):
             assert seen["data"]["available"] is True
             assert seen["data"]["helper"] == {
                 "vlc": True,
-                "live555": False,
-                "ffmpeg": True,
                 "touch": True,
                 "demo": False,
                 "mame": False,
+                "chromium": False,
+                "widevine": False,
+                "keyboard": False,
                 "gpio": None,
             }
         await eventually(lambda: dock.server.player.helper is None)
-
-
-async def test_the_channels_come_without_their_stream_addresses(dock):
-    async with dock.connect() as browser:
-        ack = await call(browser, "l", "dock.tv.list")
-    assert ack["ok"], ack
-    assert [c["name"] for c in ack["r"]["channels"]] == ["TF1", "France 2", "Radio Classique"]
-    assert "rtsp" not in json.dumps(ack["r"])
-
-
-async def test_a_channel_starts_on_the_helper_in_the_chosen_quality(dock):
-    async with dock.connect() as browser, helper(dock) as ws:
-        channels = (await call(browser, "l", "dock.tv.list"))["r"]["channels"]
-        tf1 = channels[0]["id"]
-        ack = await call(browser, "p", "dock.player.play", {"kind": "tv", "id": tf1})
-        assert ack["ok"], ack
-        command = await command_of(ws)
-        assert command["name"] == "play"
-        assert command["url"].endswith("service=201&flavour=sd")
-        assert command["live"] is True
-        hd = await call(browser, "q", "dock.player.play", {"kind": "tv", "id": tf1, "hd": True})
-        assert hd["ok"]
-        assert (await command_of(ws))["url"].endswith("flavour=hd")
-        assert (await call(browser, "r", "dock.ui.set", {"tv_hd": True}))["ok"]
-        await call(browser, "s", "dock.player.play", {"kind": "tv", "id": tf1})
-        assert (await command_of(ws))["url"].endswith("flavour=hd")  # le réglage « HD » du dock
 
 
 async def test_playing_and_stopping_are_seen_on_the_screen_and_keep_it_awake(dock):
     import httpx
 
     async with dock.connect() as browser, helper(dock) as ws:
-        tf1 = (await call(browser, "l", "dock.tv.list"))["r"]["channels"][0]["id"]
-        await call(browser, "p", "dock.player.play", {"kind": "tv", "id": tf1})
+        await call(browser, "p", "dock.player.play", FILM)
         job = (await command_of(ws))["job"]
         await ws.send(
             json.dumps(
@@ -482,7 +417,7 @@ async def test_playing_and_stopping_are_seen_on_the_screen_and_keep_it_awake(doc
             )
         )
         seen = await asyncio.wait_for(_until(browser, lambda d: d["state"] == "playing"), 3)
-        assert (seen["title"], seen["subtitle"], seen["live"]) == ("TF1", "1 · SD", True)
+        assert (seen["title"], seen["subtitle"]) == ("Un film", "Disque dur/Films")
         await call(browser, "u", "dock.ui.set", {"screen_sleep": 300})
         async with httpx.AsyncClient() as http:
             assert (await http.get(dock.origin + "/api/screen")).json() == {
@@ -507,8 +442,7 @@ async def _until(browser, predicate):
 
 async def test_the_remote_control_reaches_the_helper(dock):
     async with dock.connect() as browser, helper(dock) as ws:
-        tf1 = (await call(browser, "l", "dock.tv.list"))["r"]["channels"][0]["id"]
-        await call(browser, "p", "dock.player.play", {"kind": "tv", "id": tf1})
+        await call(browser, "p", "dock.player.play", FILM)
         await command_of(ws)
         for act, params, expected in [
             ("dock.player.pause", {}, {"name": "toggle"}),
@@ -535,9 +469,13 @@ async def test_the_remote_control_reaches_the_helper(dock):
         ("dock.player.play", {"kind": "radio"}),
         (
             "dock.player.play",
-            {"kind": "tv", "url": "rtsp://pirate/x"},
+            {"kind": "file", "url": "rtsp://pirate/x"},
         ),  # jamais une adresse venue de l'écran
-        ("dock.player.play", {"kind": "tv", "id": "x" * 40}),
+        (
+            "dock.player.play",
+            {"kind": "tv", "id": "tf1"},
+        ),  # Freetv n'existe plus : Free TV, lui, a sa propre action
+        ("dock.player.play", {"kind": "game", "id": "x" * 40}),
     ],
 )
 async def test_the_remote_control_refuses_what_makes_no_sense(dock, act, params):
@@ -547,17 +485,9 @@ async def test_the_remote_control_refuses_what_makes_no_sense(dock, act, params)
 
 async def test_without_the_helper_playing_says_what_is_missing(dock):
     async with dock.connect() as browser:
-        tf1 = (await call(browser, "l", "dock.tv.list"))["r"]["channels"][0]["id"]
-        ack = await call(browser, "p", "dock.player.play", {"kind": "tv", "id": tf1})
+        ack = await call(browser, "p", "dock.player.play", FILM)
     assert ack["e"]["code"] == "unavailable"
     assert "assistant de lecture" in ack["e"]["msg"]
-
-
-async def test_a_channel_that_left_the_list_is_said(dock):
-    async with dock.connect() as browser, helper(dock):
-        ack = await call(browser, "p", "dock.player.play", {"kind": "tv", "id": "zzzzzzzzzz"})
-    assert ack["e"]["code"] == "unavailable"
-    assert "plus dans la liste" in ack["e"]["msg"]
 
 
 async def test_a_file_starts_with_its_share_address_and_the_identifier_only_when_one_is_set(dock):
@@ -570,7 +500,6 @@ async def test_a_file_starts_with_its_share_address_and_the_identifier_only_when
             command["url"]
             == "smb://nas.local/Disque%20dur/Films/Un%20film%20d%27%C3%A9t%C3%A9%20%282020%29.mkv"
         )
-        assert command["live"] is False
         # De quoi lire le fichier par smbclient si VLC n'y arrive pas : l'hôte, le partage et le chemin, jamais de secret.
         assert command["smb"] == {
             "host": "nas.local",
@@ -620,8 +549,7 @@ async def test_only_a_video_inside_a_share_can_be_played(dock, params):
 async def test_losing_the_helper_while_playing_is_said(dock):
     async with dock.connect() as browser:
         async with helper(dock) as ws:
-            tf1 = (await call(browser, "l", "dock.tv.list"))["r"]["channels"][0]["id"]
-            await call(browser, "p", "dock.player.play", {"kind": "tv", "id": tf1})
+            await call(browser, "p", "dock.player.play", FILM)
             await command_of(ws)
         data = await asyncio.wait_for(_until(browser, lambda d: d["state"] == "error"), 3)
     assert data["available"] is False
@@ -641,13 +569,13 @@ async def test_the_password_is_kept_in_the_private_file_and_never_shown(dock):
         )
         assert ack["ok"], ack
         assert ack["r"] == {
-            "playlist_url": dock.config.playlist_url,
             "smb_host": "freebox.lan",
             "smb_user": "moi",
             "smb_password_set": True,
             "smbclient": shutil.which("smbclient") is not None,
             "pc_audio": True,
             "audio_advance_ms": 150,
+            "freetv_corner": "top-left",
         }
         topic = (await snapshot_of(browser, "dock"))["data"]["media"]
         assert "très secret" not in json.dumps(topic)
@@ -659,12 +587,12 @@ async def test_the_password_is_kept_in_the_private_file_and_never_shown(dock):
 @pytest.mark.parametrize(
     "params",
     [
-        {"playlist_url": "ftp://x/y"},
-        {"playlist_url": "http://user:pw@h/x"},
+        {
+            "playlist_url": "http://mafreebox.freebox.fr/freeboxtv/playlist.m3u"
+        },  # Freetv n'existe plus
         {"smb_host": "http://nas"},
         {"smb_user": "a%b"},
         {"smb_password": "x" * 200},
-        {"playlist_url": 12},
     ],
 )
 async def test_invalid_settings_change_nothing(dock, params):
@@ -677,8 +605,7 @@ async def test_invalid_settings_change_nothing(dock, params):
 async def test_the_connection_test_says_which_link_is_broken(dock):
     async with dock.connect() as browser:
         no_helper = (await call(browser, "t", "dock.media.test"))["r"]
-        assert no_helper["tv"]["ok"] is True
-        assert "3 chaînes" in no_helper["tv"]["text"]
+        assert "tv" not in no_helper
         assert no_helper["player"]["ok"] is False
         assert "assistant de lecture" in no_helper["player"]["text"]
         async with helper(dock, vlc=False):
@@ -695,14 +622,6 @@ async def test_the_connection_test_says_which_link_is_broken(dock):
                 "ok": True,
                 "text": "VLC est prêt.",
             }
-
-
-async def test_an_unreachable_freebox_is_said_for_the_channels(dock, freebox_web):
-    freebox_web.routes.clear()
-    async with dock.connect() as browser:
-        ack = await call(browser, "l", "dock.tv.list")
-    assert ack["e"]["code"] == "unavailable"
-    assert "404" in ack["e"]["msg"]
 
 
 @pytest.fixture
@@ -797,7 +716,6 @@ async def test_a_game_is_launched_by_name_and_the_screen_learns_what_runs(arcade
         assert snap["state"] == "starting"
         assert snap["title"] == "Pong"
         assert snap["subtitle"] == "1972 · Atari"
-        assert snap["live"] is False
 
 
 async def test_a_game_that_is_not_in_the_list_is_never_launched(arcade):
@@ -888,3 +806,209 @@ async def test_a_game_stuck_before_its_window_is_stopped_by_the_watchdog(arcade,
         await eventually(lambda: dock.server.player.snapshot()["state"] == "error", timeout=3)
         assert "Le jeu n'a pas démarré" in dock.server.player.snapshot()["error"]
         assert (await command_of(ws))["name"] == "stop"  # l'assistant est prié d'arrêter MAME
+
+
+# --- Free TV : le troisième occupant de l'écran --------------------------------------------------------------------------
+
+
+FREETV = {"kind": "freetv", "title": "Free TV", "subtitle": "tv.free.fr"}
+
+
+def freetv_hub(**info):
+    h, conn, changes = hub()
+    conn.info = {
+        "vlc": True,
+        "touch": True,
+        "chromium": True,
+        "widevine": True,
+        "keyboard": True,
+        **info,
+    }
+    return h, conn, changes
+
+
+async def test_free_tv_is_opened_on_the_helper_without_any_address_and_the_screen_sees_it():
+    h, conn, _ = freetv_hub()
+    h.play(FREETV, "", extra={"engine": "freetv"})
+    (command,) = sent(conn)
+    assert (command["name"], command["engine"], command["url"]) == ("play", "freetv", "")
+    snapshot = h.snapshot()
+    assert (snapshot["state"], snapshot["kind"], snapshot["engine"], snapshot["front"]) == (
+        "starting",
+        "freetv",
+        "freetv",
+        "video",
+    )
+    assert snapshot["title"] == "Free TV"
+    assert snapshot["keyboard"] is False
+    h.shutdown()
+
+
+async def test_free_tv_needs_chromium_and_widevine_and_says_what_to_install():
+    h, conn, _ = freetv_hub(chromium=False)
+    with pytest.raises(PlayerError, match=r"Chromium est absent.*sudo apt install chromium"):
+        h.play(FREETV, "", extra={"engine": "freetv"})
+    conn.info = {"vlc": True, "touch": True, "chromium": True, "widevine": False}
+    with pytest.raises(PlayerError, match=r"Widevine est absent.*sudo apt install libwidevinecdm0"):
+        h.play(FREETV, "", extra={"engine": "freetv"})
+    assert h.state == "idle"
+    assert sent(conn) == []
+
+
+async def test_free_tv_does_not_need_vlc_nor_the_touch_tools():
+    """Pas de swayidle : un toucher ne ramène pas le dock pendant Free TV (le retour se fait par le bouton, la manette, le coin)."""
+    h, _conn, _ = freetv_hub(vlc=False, touch=False)
+    h.play(FREETV, "", extra={"engine": "freetv"})
+    assert h.state == "starting"
+    h.shutdown()
+
+
+async def test_the_screen_stays_awake_while_free_tv_plays_like_for_a_video():
+    h, conn, _ = freetv_hub()
+    h.play(FREETV, "", extra={"engine": "freetv"})
+    assert not h.playing
+    h.on_message(
+        conn, {"t": "state", "job": 1, "state": "playing", "front": "video", "keyboard": False}
+    )
+    assert h.playing  # /api/screen dit alors « pas de veille » (sleep_after = 0)
+    h.shutdown()
+
+
+async def test_the_keyboard_state_comes_from_the_helper_and_resets_at_the_end():
+    h, conn, _ = freetv_hub()
+    h.play(FREETV, "", extra={"engine": "freetv"})
+    h.on_message(
+        conn, {"t": "state", "job": 1, "state": "playing", "front": "video", "keyboard": True}
+    )
+    assert h.snapshot()["keyboard"] is True
+    h.on_message(
+        conn, {"t": "state", "job": 1, "state": "playing", "front": "video", "keyboard": "oui"}
+    )
+    assert h.snapshot()["keyboard"] is True  # une valeur qui n'en est pas une est ignorée
+    h.on_message(conn, {"t": "ended", "job": 1})
+    assert h.snapshot()["keyboard"] is False
+    h.shutdown()
+
+
+async def test_the_keyboard_command_is_checked_and_only_for_free_tv():
+    h, conn, _ = freetv_hub()
+    with pytest.raises(PlayerError, match=r"ne sert que pendant Free TV"):
+        h.command("keyboard", on=True)
+    h.play({"kind": "file", "title": "Film"}, "smb://nas/x.mkv")
+    with pytest.raises(PlayerError, match=r"ne sert que pendant Free TV"):
+        h.command("keyboard", on=True)
+    h.play(FREETV, "", extra={"engine": "freetv"})
+    sent(conn)
+    with pytest.raises(PlayerError, match=r"invalide"):
+        h.command("keyboard", on="oui")
+    h.command("keyboard", on=True)
+    assert sent(conn)[-1] == {"t": "cmd", "name": "keyboard", "job": 2, "on": True}
+    conn.info = {**conn.info, "keyboard": False}
+    with pytest.raises(PlayerError, match=r"sudo apt install wvkbd"):
+        h.command("keyboard", on=True)
+    h.command("keyboard", on=False)  # cacher n'a jamais besoin du clavier
+    h.shutdown()
+
+
+async def test_a_free_tv_that_does_not_open_is_said_after_the_watchdog(monkeypatch):
+    monkeypatch.setattr(player_module, "START_TIMEOUT", 0.1)
+    h, conn, _ = freetv_hub()
+    h.play(FREETV, "", extra={"engine": "freetv"})
+    await asyncio.sleep(0.4)
+    assert h.state == "error"
+    assert "Free TV ne s'est pas ouvert" in h.error
+    assert "player.log" in h.error
+    assert sent(conn)[-1]["name"] == "stop"
+    h.shutdown()
+
+
+async def test_the_hub_reports_what_the_helper_has_for_free_tv():
+    h, conn, _ = hub()
+    h.on_message(
+        conn,
+        {
+            "t": "hello",
+            "vlc": True,
+            "touch": True,
+            "chromium": True,
+            "widevine": False,
+            "keyboard": True,
+            "gpio": None,
+        },
+    )
+    helper = h.snapshot()["helper"]
+    assert (helper["chromium"], helper["widevine"], helper["keyboard"]) == (True, False, True)
+    h.on_message(conn, {"t": "hello", "vlc": True, "touch": True})  # un assistant plus ancien
+    helper = h.snapshot()["helper"]
+    assert (helper["chromium"], helper["widevine"], helper["keyboard"]) == (False, False, False)
+
+
+# --- dans le dock : l'écran ouvre Free TV, jamais une adresse -------------------------------------------------------------
+
+
+async def test_the_screen_opens_free_tv_and_the_helper_gets_nothing_but_the_name_of_the_engine(
+    dock,
+):
+    async with (
+        dock.connect() as browser,
+        helper(dock, chromium=True, widevine=True, keyboard=True) as ws,
+    ):
+        ack = await call(browser, "f", "dock.player.play", {"kind": "freetv"})
+        assert ack["ok"], ack
+        assert ack["r"] == {"started": "Free TV"}
+        command = await command_of(ws)
+        assert (command["name"], command["engine"], command["url"]) == ("play", "freetv", "")
+        assert not {"smb", "smb_user", "smb_password", "game", "rompath"} & command.keys()
+        snap = (await snapshot_of(browser, "player"))["data"]
+        assert (snap["engine"], snap["kind"], snap["state"]) == ("freetv", "freetv", "starting")
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"kind": "freetv", "url": "https://pirate.example/"},  # jamais une adresse venue de l'écran
+        {"kind": "freetv", "user_agent": "x"},
+        {"kind": "freetv", "id": "x"},
+        {"kind": "freetv", "share": "Disque dur"},
+        {"kind": "freetv", "path": "/etc/passwd"},
+    ],
+)
+async def test_free_tv_takes_no_parameter_from_the_screen(dock, params):
+    async with dock.connect() as browser, helper(dock, chromium=True, widevine=True) as ws:
+        ack = await call(browser, "f", "dock.player.play", params)
+        assert ack["e"]["code"] == "bad_params"
+        with pytest.raises(TimeoutError):
+            await command_of(ws, timeout=0.3)  # rien n'est parti vers l'assistant
+
+
+async def test_free_tv_without_the_helper_says_what_is_missing(dock):
+    async with dock.connect() as browser:
+        ack = await call(browser, "f", "dock.player.play", {"kind": "freetv"})
+    assert ack["e"]["code"] == "unavailable"
+    assert "assistant de lecture" in ack["e"]["msg"]
+
+
+async def test_the_keyboard_of_free_tv_goes_through_a_named_action(dock):
+    async with (
+        dock.connect() as browser,
+        helper(dock, chromium=True, widevine=True, keyboard=True) as ws,
+    ):
+        await call(browser, "f", "dock.player.play", {"kind": "freetv"})
+        await command_of(ws)
+        assert (await call(browser, "k", "dock.player.keyboard", {"on": True}))["ok"]
+        command = await command_of(ws)
+        assert (command["name"], command["on"]) == ("keyboard", True)
+        for bad in ({"on": "oui"}, {"on": 1}, {}, {"on": True, "x": 1}):
+            assert (await call(browser, "k", "dock.player.keyboard", bad))["e"][
+                "code"
+            ] == "bad_params"
+
+
+async def test_the_helper_is_given_the_free_tv_settings_of_dock_toml(dock):
+    async with helper(dock) as ws:
+        first = json.loads(await asyncio.wait_for(ws.recv(), 3))
+        assert first["freetv_user_agent"] == "auto"
+        assert first["freetv_scale"] == 0.7
+        assert first["freetv_corner"] == "top-left"
+        assert first["freetv_fullscreen"] is True
+        assert "token" not in json.dumps(first)  # l'assistant ne connaît jamais le jeton

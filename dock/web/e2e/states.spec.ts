@@ -1793,9 +1793,9 @@ test('Sortie sonore : un appareil disparu pendant qu’on le touche relit la lis
 
 // --- Divertissement : la télécommande et la lecture, avec un faux dock ----------------------------------------------------
 
-const PLAYER_HELPER = { vlc: true, live555: false, ffmpeg: true, touch: true, demo: false }
+const PLAYER_HELPER = { vlc: true, touch: true, demo: false }
 const playerState = (extra: Record<string, unknown> = {}) => ({
-  available: true, state: 'playing', kind: 'file', title: 'Un film', subtitle: 'Disque dur/Films', live: false,
+  available: true, state: 'playing', kind: 'file', title: 'Un film', subtitle: 'Disque dur/Films',
   position: 120, length: 5400, volume: 70, front: 'video', error: null, helper: PLAYER_HELPER, ...extra,
 }) // prettier-ignore
 
@@ -1825,7 +1825,7 @@ test('Divertissement : un toucher pendant la vidéo ramène la télécommande, q
 
   mock.push('player', playerState({ state: 'idle', title: null, subtitle: null, position: null, length: null, front: 'dock' }))
   await expect(page.getByTestId('remote')).toHaveCount(0) // la lecture est finie : on retrouve le menu
-  await expect(page.getByTestId('media-tv')).toBeVisible()
+  await expect(page.getByTestId('media-files')).toBeVisible()
 })
 
 test('Divertissement : une lecture qui échoue est dite dans le menu, et « Compris » l’efface', async ({ page, stack }) => {
@@ -1851,9 +1851,6 @@ test('Divertissement : un fichier lu par smbclient (tube) n’a pas d’avance r
   await expect(page.getByTestId('remote-toggle')).toBeEnabled() // pause et volume marchent toujours
   await expect(page.getByTestId('remote-volume')).toBeVisible()
   await noPageScroll(page)
-
-  mock.push('player', playerState({ front: 'dock', seekable: false, live: true, position: null, length: null })) // un direct : pas de mention
-  await expect(page.getByTestId('remote-noseek')).toHaveCount(0)
 })
 
 test('Divertissement : le détail que VLC a donné s’affiche à part, en plus petit, sans rien faire déborder', async ({ page, stack }) => {
@@ -1882,11 +1879,64 @@ test('Divertissement : sans assistant de lecture, les listes disent ce qui manqu
   const mock = await mockDock(page, {}, { startPage: 'media' })
   await page.goto(stack.url)
   mock.push('player', { ...playerState({ state: 'idle', front: 'dock' }), available: false, helper: null })
-  await page.getByTestId('media-tv').tap()
-  await expect(page.getByTestId('tv-blocker')).toContainText('assistant de lecture')
-  await expect(page.getByTestId('tv-count')).toContainText('aucune chaîne') // le faux dock ne donne aucune chaîne : pas de plantage
+  await page.getByTestId('media-files').tap()
+  await expect(page.getByTestId('files-blocker')).toContainText('assistant de lecture')
   await page.getByTestId('media-back').tap()
   mock.push('player', { ...playerState({ state: 'idle', front: 'dock' }), helper: { ...PLAYER_HELPER, vlc: false } })
   await page.getByTestId('media-files').tap()
   await expect(page.getByTestId('files-blocker')).toContainText('VLC est absent')
+})
+
+// --- Free TV : ce qui manque, dit sur place ----------------------------------------------------------------------------
+
+const FREETV_HELPER = { ...PLAYER_HELPER, chromium: true, widevine: true, keyboard: true }
+
+test('Free TV : sans Widevine, l’entrée est grisée et dit la commande à taper', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock', title: null }), helper: { ...FREETV_HELPER, widevine: false } })
+  await expect(page.getByTestId('freetv-blocker')).toContainText('sudo apt install libwidevinecdm0')
+  await expect(page.getByTestId('media-freetv')).toBeDisabled()
+  await noPageScroll(page)
+  expect(await page.getByTestId('media-freetv').evaluate((el) => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(600) // l'entrée reste visible en entier
+  await shot(page, '04-widevine-absent', 'n')
+
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock', title: null }), helper: { ...FREETV_HELPER, chromium: false } })
+  await expect(page.getByTestId('freetv-blocker')).toContainText('sudo apt install chromium')
+
+  mock.push('player', { ...playerState({ state: 'idle', front: 'dock', title: null }), helper: FREETV_HELPER })
+  await expect(page.getByTestId('freetv-blocker')).toHaveCount(0)
+  await expect(page.getByTestId('media-freetv')).toBeEnabled()
+  await page.getByTestId('media-freetv').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.play', p: { kind: 'freetv' } }) // « ouvre Free TV » : aucun autre paramètre
+})
+
+test('Free TV : un Free TV qui ne s’ouvre pas est dit dans le menu, et « Compris » l’efface', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ state: 'error', kind: 'freetv', engine: 'freetv', title: 'Free TV', error: 'Chromium s’est arrêté avant d’avoir ouvert Free TV : voir /var/log/mydock/player.log.', front: 'dock', position: null, length: null, helper: FREETV_HELPER }))
+  await expect(page.getByTestId('media-error')).toContainText('Free TV n’a pas pu s’ouvrir')
+  await expect(page.getByTestId('media-error-text')).toContainText('Chromium s’est arrêté')
+  await expect(page.getByTestId('freetv-now')).toHaveCount(0)
+  await noPageScroll(page)
+  await shot(page, '05-free-tv-ne-s-ouvre-pas', 'n')
+  await page.getByTestId('media-error-ok').tap()
+  expect(mock.acts.at(-1)).toMatchObject({ a: 'dock.player.dismiss' })
+})
+
+test('Free TV : sans clavier à l’écran sur le Pi, le bouton « Clavier » le dit au lieu de ne rien faire', async ({ page, stack }) => {
+  const mock = await mockDock(page, {}, { startPage: 'media' })
+  await page.goto(stack.url)
+  mock.push('player', playerState({ kind: 'freetv', engine: 'freetv', title: 'Free TV', front: 'dock', position: null, length: null, helper: { ...FREETV_HELPER, keyboard: false } }))
+  await expect(page.getByTestId('freetv-now')).toBeVisible()
+  await expect(page.getByTestId('freetv-keyboard')).toBeDisabled()
+  await expect(page.getByTestId('freetv-no-keyboard')).toContainText('sudo apt install wvkbd')
+  await noPageScroll(page)
+  expect(await page.getByTestId('freetv-now').evaluate((el) => el.getBoundingClientRect().bottom)).toBeLessThanOrEqual(600)
+
+  mock.push('player', playerState({ kind: 'freetv', engine: 'freetv', title: 'Free TV', front: 'dock', position: null, length: null, helper: FREETV_HELPER }))
+  await expect(page.getByTestId('freetv-keyboard')).toBeEnabled()
+  await page.getByTestId('freetv-keyboard').tap()
+  await expect.poll(() => mock.acts.map((a) => a.a).slice(-2)).toEqual(['dock.player.front', 'dock.player.keyboard']) // Free TV d'abord, puis le clavier
+  expect(mock.acts.at(-1)).toMatchObject({ p: { on: true } })
 })

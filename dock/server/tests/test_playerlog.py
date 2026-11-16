@@ -178,10 +178,10 @@ def test_attaching_twice_changes_nothing(tmp_path):
 def test_the_dock_journal_collects_the_media_events_of_the_server(tmp_path):
     path = tmp_path / "dock.log"
     assert playerlog.attach_dock({playerlog.DOCK_ENV_PATH: str(path)}) == path
-    logging.getLogger(playerlog.DOCK_LOGGER).info("Freetv : 27 chaînes lues")
+    logging.getLogger(playerlog.DOCK_LOGGER).info("Kiosque : 27 entrées lues")
     logging.getLogger(playerlog.DOCK_LOGGER).warning("Kiosque : partages de nas illisibles")
     text = path.read_text(encoding="utf-8")
-    assert "INFO Freetv : 27 chaînes lues" in text
+    assert "INFO Kiosque : 27 entrées lues" in text
     assert "WARNING Kiosque : partages de nas illisibles" in text
     assert stat.S_IMODE(path.stat().st_mode) == 0o644
 

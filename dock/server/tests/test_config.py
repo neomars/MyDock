@@ -223,3 +223,92 @@ def test_pairing_validates_everything_before_changing_anything(tmp_path, host, p
         config.set_pairing(host, port, token)
     assert (config.agent_host, config.agent_port, config.token) == ("192.168.1.50", 8765, TOKEN)
     assert DockConfig.load(path).agent_host == "192.168.1.50"
+
+
+# --- Free TV : [freetv], et la clé de Freetv d'avant ------------------------------------------------------------------
+
+
+def test_freetv_defaults_follow_the_chromium_of_the_pi_and_scale_the_page_down():
+    config = DockConfig.from_dict({}, Path("/x/dock.toml"))
+    assert config.freetv_user_agent == "auto"
+    assert config.freetv_scale == 0.7
+    assert config.freetv_corner == "top-left"
+    assert config.freetv_fullscreen is True
+
+
+def test_the_freetv_section_is_read_and_written_back(tmp_path):
+    path = tmp_path / "dock.toml"
+    write_toml_private(path, {"freetv": {"user_agent": "", "scale": 1}}, header="x")
+    config = DockConfig.load(path)
+    assert (config.freetv_user_agent, config.freetv_scale) == (
+        "",
+        1.0,
+    )  # vide : l'identité d'origine
+    config.save()
+    again = DockConfig.load(path)
+    assert (again.freetv_user_agent, again.freetv_scale) == ("", 1.0)
+    assert load_toml(path)["freetv"] == {
+        "user_agent": "",
+        "scale": 1.0,
+        "corner": "top-left",
+        "fullscreen": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("freetv", "message"),
+    [
+        ({"scale": 0}, "scale"),
+        ({"scale": 9}, "scale"),
+        ({"scale": "grand"}, "scale"),
+        ({"scale": True}, "scale"),
+        ({"user_agent": 12}, "user_agent"),
+        ({"user_agent": "x" * 301}, "user_agent"),
+        ({"user_agent": "Mozilla\n/5.0"}, "user_agent"),
+        ({"corner": "milieu"}, "corner"),
+        ({"corner": 3}, "corner"),
+        ({"fullscreen": "oui"}, "fullscreen"),
+    ],
+)
+def test_an_invalid_freetv_section_is_explained(freetv, message):
+    with pytest.raises(ConfigError, match=rf"\[freetv\].*{message}"):
+        DockConfig.from_dict({"freetv": freetv}, Path("/x/dock.toml"))
+
+
+def test_the_playlist_of_freetv_is_ignored_said_in_the_journal_and_dropped_on_the_next_save(
+    tmp_path, caplog
+):
+    """Une configuration d'avant Free TV garde son démarrage : l'ancienne clé est ignorée, une fois dite, puis disparaît."""
+    from mydock_dock import config as config_module
+
+    config_module._NOTED.clear()
+    path = tmp_path / "dock.toml"
+    write_toml_private(
+        path,
+        {
+            "media": {
+                "playlist_url": "http://mafreebox.freebox.fr/freeboxtv/playlist.m3u",
+                "smb_host": "nas.lan",
+            }
+        },
+        header="x",
+    )
+    with caplog.at_level("WARNING", logger="mydock_dock.config"):
+        config = DockConfig.load(path)
+        DockConfig.load(path)  # une seconde lecture ne redit rien
+    assert config.smb_host == "nas.lan"
+    said = [r.getMessage() for r in caplog.records if "playlist_url" in r.getMessage()]
+    assert len(said) == 1
+    assert "Free TV" in said[0]
+    assert "playlist_url" in load_toml(path)["media"]  # le fichier n'est pas touché à la lecture
+    config.save()
+    assert "playlist_url" not in load_toml(path)["media"]
+    assert load_toml(path)["media"]["smb_host"] == "nas.lan"
+
+
+def test_the_old_playlist_option_of_the_command_line_is_gone(tmp_path, capsys):
+    from mydock_dock.__main__ import main
+
+    with pytest.raises(SystemExit):
+        main(["init", "--config", str(tmp_path / "dock.toml"), "--playlist-url", "http://x/y.m3u"])
+    assert "playlist-url" in capsys.readouterr().err

@@ -34,7 +34,7 @@ if [ -z "${MYDOCK_KIOSK_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
   MYDOCK_KIOSK_LOCKED=1 flock -n -E 75 "$LOCK" /bin/sh "$0" "$@"
   status=$?
   if [ "$status" -eq 75 ]; then
-    say "le lanceur du kiosque tourne déjà (pour relancer l'écran : sudo pkill -x chromium, il repart tout seul)"
+    say "le lanceur du kiosque tourne déjà (pour relancer l'écran : sudo pkill -f -- '--user-data-dir=[^ ]*mydock-chromium', il repart tout seul ; Free TV a son propre Chromium, que cette commande ne touche pas)"
     exit 0
   fi
   exit "$status"
@@ -83,10 +83,12 @@ stop_orphans() {
 }
 
 # La fenêtre de Chromium existe-t-elle (elle est annoncée par le compositeur quand elle est affichée) ? yes | no | unknown
+# La fenêtre de Free TV (un autre Chromium, ouvert par l'assistant de lecture : son identifiant contient tv.free.fr) n'est
+# pas celle du dock : elle ne prouve rien de l'écran du kiosque.
 window_shown() {
   command -v wlrctl >/dev/null 2>&1 || { echo unknown; return; }
   windows=$(wlrctl toplevel list 2>/dev/null) || { echo unknown; return; }
-  case $windows in
+  case $(printf '%s\n' "$windows" | grep -v 'tv\.free\.fr') in
     *[Cc]hrom*) echo yes ;;
     *) echo no ;;
   esac

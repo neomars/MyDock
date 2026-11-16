@@ -4,26 +4,15 @@
 // (agent/tests/test_audio_in.py, dock/server/tests/test_pc_audio.py) avec un vrai PipeWire sans carte son.
 
 import type { Page } from '@playwright/test'
-import { expect, goHome, openPage, shot, test } from './fixtures'
+import { expect, helperReady, openPage, playFilm, shot, test } from './fixtures'
 
 const noScroll = (page: Page) =>
   page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }))
 
-/** Attend que l'assistant de lecture soit connecté au dock (il démarre avec la pile, un instant après). */
-async function helperReady(page: Page): Promise<void> {
-  await openPage(page, 'media')
-  await page.getByTestId('media-tv').tap()
-  await expect(page.getByTestId('tv-list')).toBeVisible()
-  await expect(page.getByTestId('tv-blocker')).toHaveCount(0)
-  await goHome(page)
-}
-
 test('Divertissement : le son sort sur le PC et la télécommande le dit ; sans le PC elle dit pourquoi on n’entend rien', async ({ dock, stack }) => {
   test.setTimeout(120_000)
   await helperReady(dock)
-  await openPage(dock, 'media')
-  await dock.getByTestId('media-tv').tap()
-  await dock.locator('[data-testid^=tv-ch-]').first().tap()
+  await playFilm(dock)
   await expect(dock.getByTestId('remote')).toHaveAttribute('data-state', 'playing', { timeout: 10_000 })
 
   const audio = dock.getByTestId('remote-audio')
@@ -82,9 +71,7 @@ test('Divertissement : avec le son sur le Pi, la télécommande le dit sans alar
   await dock.getByTestId('settings-media').scrollIntoViewIfNeeded()
   await dock.getByTestId('sound-toggle').tap()
   await expect(dock.getByTestId('sound-mode')).toHaveText('sur le Pi')
-  await openPage(dock, 'media')
-  await dock.getByTestId('media-tv').tap()
-  await dock.locator('[data-testid^=tv-ch-]').first().tap()
+  await playFilm(dock)
   await expect(dock.getByTestId('remote')).toHaveAttribute('data-state', 'playing', { timeout: 10_000 })
   await expect(dock.getByTestId('remote-audio')).toHaveText('Son : sur le Pi')
   await expect(dock.getByTestId('remote-audio')).toHaveAttribute('data-level', 'dim')

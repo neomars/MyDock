@@ -22,21 +22,6 @@ from mydock_dock.player_session import DemoPlayback, Session, VlcPlayback
 # --- fonctions pures -------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("url", "live555", "expected"),
-    [
-        ("rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?service=1", False, True),
-        ("RTSP://h/x", False, True),
-        ("rtsp://h/x", True, False),  # VLC sait le lire lui-même
-        ("http://h/x.mp3", False, False),
-        ("smb://nas/Films/a.mkv", False, False),
-        ("udp://@239.0.0.1:1234", False, False),
-    ],
-)
-def test_only_rtsp_needs_the_ffmpeg_bridge_and_only_without_live555(url, live555, expected):
-    assert ps.needs_bridge(url, live555) is expected
-
-
 def test_the_vlc_command_is_a_list_with_the_source_last_after_a_double_dash():
     command = ps.vlc_command(
         "/usr/bin/vlc",
@@ -63,14 +48,6 @@ def test_the_config_file_comes_first_when_there_is_one():
     assert "--volume=0" in command
 
 
-def test_the_bridge_copies_the_stream_without_decoding_it():
-    command = ps.ffmpeg_bridge_command("ffmpeg", "rtsp://h/x?a=1&b=2")
-    assert command[command.index("-i") + 1] == "rtsp://h/x?a=1&b=2"
-    assert command[command.index("-c") + 1] == "copy"
-    assert command[-3:] == ["-f", "mpegts", "pipe:1"]
-    assert "-nostdin" in command
-
-
 def test_vlc_answers_are_read_by_their_numbers_only():
     text = "status change: ( new input: fd://0 )\n> 1\n  42  \nrien\n> \n-3\nvolume: returned 0 (no error)\n"
     assert ps.parse_numbers(text) == [1, 42, -3]
@@ -78,23 +55,21 @@ def test_vlc_answers_are_read_by_their_numbers_only():
 
 
 @pytest.mark.parametrize(
-    ("played", "live", "tail", "expected"),
+    ("played", "tail", "expected"),
     [
-        (True, True, "n'importe quoi", None),
+        (True, "n'importe quoi", None),
         (
-            False,
             False,
             "smb stream error: open failed for 'nas/x' (Permission denied)",
             "Accès refusé",
         ),
-        (False, False, "access error: Access denied", "Accès refusé"),
-        (False, False, "file stream error: No such file or directory", "introuvable"),
-        (False, True, "", "La chaîne ne répond pas"),
-        (False, False, "", "n'a pas pu lire cette vidéo"),
+        (False, "access error: Access denied", "Accès refusé"),
+        (False, "file stream error: No such file or directory", "introuvable"),
+        (False, "", "n'a pas pu lire cette vidéo"),
     ],
 )
-def test_a_playback_that_never_started_is_explained(played, live, tail, expected):
-    message = ps.explain_exit(played, live, tail)
+def test_a_playback_that_never_started_is_explained(played, tail, expected):
+    message = ps.explain_exit(played, tail)
     if expected is None:
         assert message is None
     else:
@@ -102,44 +77,44 @@ def test_a_playback_that_never_started_is_explained(played, live, tail, expected
 
 
 @pytest.mark.parametrize(
-    ("live", "tail", "code", "expected"),
+    ("tail", "code", "expected"),
     [
         (
-            False,
             "main input error: VLC is unable to open the MRL 'smb://nas/Films/a.mkv'. Check the log for details.",
             None,
             "vlc-plugin-samba",
         ),
         (
-            False,
             "main input error: VLC is unable to open the MRL 'smb://nas/a.mkv'. Check the log for details.\nsmb stream error: open failed for 'nas/a.mkv' (Invalid argument)",
             None,
             "Détail : « smb stream error: open failed",
         ),
         (
-            False,
             "avcodec decoder error: no suitable decoder module for fourcc `hev1'",
             None,
             "ne sait pas décoder",
         ),
-        (False, "main decoder error: Codec not supported", None, "ne sait pas décoder"),
-        (False, "main video output error: video output creation failed", None, "afficher la vidéo"),
-        (False, "xcb window error: cannot open display :0", None, "xwayland"),
-        (False, "", -11, "arrêté brutalement (SIGSEGV)"),
+        ("main decoder error: Codec not supported", None, "ne sait pas décoder"),
+        ("main video output error: video output creation failed", None, "afficher la vidéo"),
+        ("xcb window error: cannot open display :0", None, "xwayland"),
+        ("", -11, "arrêté brutalement (SIGSEGV)"),
         (
-            False,
             "[00aa] smb stream error: read failed (Invalid argument)",
             None,
             "sudo apt install smbclient",
         ),
-        (False, "", -9, "arrêté brutalement (SIGKILL)"),
-        (False, "", -250, "arrêté brutalement (signal 250)"),
-        (True, "ffmpeg : Connection refused", None, "Détail : « ffmpeg : Connection refused »"),
-        (False, "", 0, "n'a pas pu lire cette vidéo"),
+        ("", -9, "arrêté brutalement (SIGKILL)"),
+        ("", -250, "arrêté brutalement (signal 250)"),
+        (
+            "smbclient : tree connect failed: NT_STATUS_ACCESS_DENIED",
+            None,
+            "Détail : « smbclient : tree connect failed: NT_STATUS_ACCESS_DENIED »",
+        ),
+        ("", 0, "n'a pas pu lire cette vidéo"),
     ],
 )
-def test_the_real_reason_is_given_when_vlc_says_it(live, tail, code, expected):
-    assert expected in ps.explain_exit(False, live, tail, code)
+def test_the_real_reason_is_given_when_vlc_says_it(tail, code, expected):
+    assert expected in ps.explain_exit(False, tail, code)
 
 
 def test_vlc_details_leave_out_the_memory_address_and_the_usual_noise():
@@ -220,16 +195,7 @@ def test_the_x11_screen_is_found_for_vlc_when_the_session_does_not_say(monkeypat
     assert "QT_QPA_PLATFORM" not in ps.session_environment({"QT_QPA_PLATFORM": "wayland"})
 
 
-def test_live555_is_looked_for_in_the_plugin_directories(monkeypatch):
-    monkeypatch.setattr(ps.glob, "glob", lambda pattern: [])
-    assert ps.has_live555() is False
-    monkeypatch.setattr(
-        ps.glob, "glob", lambda pattern: ["/usr/lib/x/vlc/plugins/access/liblive555_plugin.so"]
-    )
-    assert ps.has_live555() is True
-
-
-# --- un faux VLC et un faux ffmpeg, qui parlent vraiment « oldrc » --------------------------------------------------------
+# --- un faux VLC et un faux smbclient, qui parlent vraiment « oldrc » --------------------------------------------------------
 
 FAKE_VLC = """\
 #!{python}
@@ -278,7 +244,7 @@ def handle(line):
     if word == "is_playing": return "0" if os.environ.get("FAKE_VLC_NEVER") else "1"  # comme VLC 3 : 1 même en pause
     if word == "status":
         return ("Type 'pause' to continue." if not state["playing"] else "( audio volume: %d )" % state["volume"]) + "\\nstatus: returned 0 (no error)"
-    # Un flux RTSP en MPEG-TS lu par live555 : le temps de lecture reste à 0 alors que l'image est à l'écran.
+    # Un flux sans horloge : le temps de lecture reste à 0 alors que l'image est à l'écran.
     if word == "get_time": return "0" if os.environ.get("FAKE_VLC_NO_CLOCK") else str(int(now()))
     if word == "stats":
         if os.environ.get("FAKE_VLC_NO_STATS"): return ""
@@ -316,18 +282,6 @@ while True:
     threading.Thread(target=serve, daemon=True).start()
 """
 
-FAKE_FFMPEG = """\
-#!/bin/sh
-printf '%s\\n' "$@" > "$FAKE_LOG.ffmpeg"
-if [ -n "$FAKE_FFMPEG_ERROR" ]; then
-  printf '%s\\n' "$FAKE_FFMPEG_ERROR" >&2
-  exit 1
-fi
-printf 'TSDATA'
-exec sleep 30
-"""
-
-
 FAKE_SMBCLIENT = """\
 #!/bin/sh
 # Un faux smbclient (il n'hérite que d'un environnement minimal, comme le vrai : le journal est à un chemin fixe).
@@ -345,12 +299,11 @@ exec sleep 30
 
 @pytest.fixture
 def fakes(tmp_path, monkeypatch):
-    """De faux `vlc`, `ffmpeg` et `smbclient` : ils notent leurs arguments dans FAKE_LOG et répondent comme les vrais."""
-    vlc, ffmpeg, smbclient = tmp_path / "vlc", tmp_path / "ffmpeg", tmp_path / "smbclient"
+    """De faux `vlc` et `smbclient` : ils notent leurs arguments dans FAKE_LOG et répondent comme les vrais."""
+    vlc, smbclient = tmp_path / "vlc", tmp_path / "smbclient"
     vlc.write_text(FAKE_VLC.format(python=sys.executable))
-    ffmpeg.write_text(FAKE_FFMPEG)
     smbclient.write_text(FAKE_SMBCLIENT.replace("@LOG@", str(tmp_path / "log.json")))
-    for script in (vlc, ffmpeg, smbclient):
+    for script in (vlc, smbclient):
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
     log = tmp_path / "log.json"
     monkeypatch.setenv("FAKE_LOG", str(log))
@@ -361,7 +314,6 @@ def fakes(tmp_path, monkeypatch):
         (),
         {
             "vlc": str(vlc),
-            "ffmpeg": str(ffmpeg),
             "smbclient": str(smbclient),
             "log": log,
             "run": run,
@@ -373,20 +325,14 @@ def playback(
     fakes,
     url="smb://nas/Films/a.mkv",
     *,
-    live=False,
-    live555=False,
     smb=None,
-    ffmpeg=True,
     volume=70,
     smb_source=None,
 ):
     return VlcPlayback(
         url,
-        live=live,
         volume=volume,
         vlc=fakes.vlc,
-        ffmpeg=fakes.ffmpeg if ffmpeg else None,
-        live555=live555,
         runtime_dir=fakes.run,
         env={**os.environ, "DISPLAY": ":9"},
         smb=smb,
@@ -450,20 +396,19 @@ async def test_pause_resume_seek_and_volume_reach_vlc(fakes):
         await pb.stop()
 
 
-async def test_a_live_channel_has_neither_position_nor_length_and_cannot_seek(fakes, monkeypatch):
-    monkeypatch.setenv("FAKE_LIVE", "1")
-    pb = playback(fakes, "http://h/direct", live=True)
+async def test_a_stream_of_unknown_length_reports_no_length(fakes, monkeypatch):
+    monkeypatch.setenv("FAKE_LIVE", "1")  # le faux VLC répond « 0 » à get_length
+    pb = playback(fakes, "http://h/flux")
     await pb.start()
     try:
         status = await settled(pb)
-        assert (status["position"], status["length"]) == (None, None)
-        await pb.command("seek", delta=60)  # sans effet sur un direct
-        assert (await pb.status())["position"] is None
+        assert status["length"] is None
+        assert status["position"] is not None
     finally:
         await pb.stop()
 
 
-# --- « en lecture » sans le temps de lecture : le chien de garde du dock ne doit plus arrêter la chaîne --------------------
+# --- « en lecture » sans le temps de lecture : le chien de garde du dock ne doit pas arrêter la lecture -------------------
 
 
 def test_the_statistics_of_vlc_are_read_as_numbers():
@@ -482,21 +427,18 @@ def test_the_statistics_of_vlc_are_read_as_numbers():
     assert ps.parse_stats("status change: ( play state: 3 )\r\n1\r\n") == {}
 
 
-async def test_a_channel_whose_clock_stays_at_zero_is_playing_once_pictures_are_displayed(
+async def test_a_stream_whose_clock_stays_at_zero_is_playing_once_pictures_are_displayed(
     fakes, monkeypatch, journal
 ):
-    """Le cas du Pi : `get_time` reste à 0 sur les chaînes de la Freebox (RTSP en MPEG-TS), l'image est pourtant là."""
+    """Le cas du Pi : `get_time` reste à 0 sur certains flux, l'image est pourtant là."""
     monkeypatch.setenv("FAKE_LIVE", "1")
     monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
-    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    pb = playback(fakes, "http://h/flux")
     await pb.start()
     try:
         status = await settled(pb, timeout=5)
         assert status["state"] == "playing"
-        assert (status["position"], status["length"]) == (
-            None,
-            None,
-        )  # un direct n'a ni l'un ni l'autre
+        assert status["length"] is None  # un flux sans durée
         text = journal.read_text(encoding="utf-8")
         assert "la lecture a démarré" in text
         assert "des images sont affichées" in text
@@ -511,7 +453,7 @@ async def test_without_statistics_a_full_buffer_is_enough_to_say_it_plays(
     monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
     monkeypatch.setenv("FAKE_VLC_NO_STATS", "1")  # un VLC qui ne répond rien à « stats »
     monkeypatch.setenv("FAKE_VLC_BUFFERED", "1")
-    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    pb = playback(fakes, "http://h/flux")
     await pb.start()
     try:
         await settled(pb, timeout=5)
@@ -524,7 +466,7 @@ async def test_a_clock_at_zero_with_nothing_displayed_does_not_pretend_to_play(f
     monkeypatch.setenv("FAKE_LIVE", "1")
     monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
     monkeypatch.setenv("FAKE_VLC_NO_PICTURES", "1")
-    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    pb = playback(fakes, "http://h/flux")
     await pb.start()
     try:
         await settled(pb, "starting", timeout=5)
@@ -540,7 +482,7 @@ async def test_the_journal_follows_the_playback_with_the_counters_of_vlc(
     monkeypatch.setattr(ps, "FOLLOW_EVERY", 0.2)
     monkeypatch.setenv("FAKE_LIVE", "1")
     monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
-    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
+    pb = playback(fakes, "http://h/flux")
     await pb.start()
     try:
         await settled(pb, timeout=5)
@@ -557,13 +499,13 @@ async def test_the_journal_follows_the_playback_with_the_counters_of_vlc(
     )
 
 
-async def test_a_channel_with_a_frozen_clock_tells_the_dock_it_plays_and_a_stop_is_journaled(
+async def test_a_stream_with_a_frozen_clock_tells_the_dock_it_plays_and_a_stop_is_journaled(
     fakes, fast, monkeypatch, journal
 ):
-    """Le dock arrêtait la chaîne au bout de 40 s faute d'apprendre que ça jouait ; il doit l'apprendre, et on doit le lire."""
+    """Le dock arrêtait la lecture au bout de 40 s faute d'apprendre que ça jouait ; il doit l'apprendre, et on doit le lire."""
     monkeypatch.setenv("FAKE_VLC_NO_CLOCK", "1")
     s, box = session(fakes), Mailbox()
-    await s.handle(live_message(60), box)
+    await s.handle(video_message(60), box)
     try:
         await box.wait(
             lambda m: m["t"] == "state" and m["job"] == 60 and m["state"] == "playing", timeout=15
@@ -603,50 +545,6 @@ async def test_the_share_password_is_in_a_private_file_never_in_the_arguments(fa
     finally:
         await pb.stop()
     assert not config.exists()  # effacé avec la lecture
-
-
-async def test_without_live555_a_channel_goes_through_ffmpeg(fakes):
-    url = "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=sd"
-    pb = playback(fakes, url, live=True)
-    await pb.start()
-    try:
-        await settled(pb)
-        record = json.loads(fakes.log.read_text())
-        assert record["args"][-1] == "fd://0"  # VLC lit le tube
-        assert record["stdin"] == "TSDATA"  # ce que ffmpeg y a écrit
-        assert "--network-caching=1500" in record["args"]
-        ffmpeg_args = Path(str(fakes.log) + ".ffmpeg").read_text().split("\n")
-        assert url in ffmpeg_args
-        assert "copy" in ffmpeg_args
-    finally:
-        await pb.stop()
-
-
-async def test_stopping_also_stops_the_bridge(fakes):
-    pb = playback(fakes, "rtsp://h/x", live=True)
-    await pb.start()
-    await settled(pb)
-    ffmpeg_pid = pb._procs[0].pid
-    await pb.stop()
-    with pytest.raises(ProcessLookupError):
-        os.kill(ffmpeg_pid, 0)
-
-
-async def test_with_live555_vlc_reads_the_channel_itself(fakes):
-    pb = playback(fakes, "rtsp://h/x", live=True, live555=True)
-    await pb.start()
-    try:
-        await settled(pb)
-        assert json.loads(fakes.log.read_text())["args"][-1] == "rtsp://h/x"
-        assert not Path(str(fakes.log) + ".ffmpeg").exists()
-    finally:
-        await pb.stop()
-
-
-async def test_a_missing_ffmpeg_is_said_when_the_channel_needs_it(fakes):
-    pb = playback(fakes, "rtsp://h/x", live=True, ffmpeg=False)
-    with pytest.raises(RuntimeError, match=r"sudo apt install ffmpeg"):
-        await pb.start()
 
 
 async def test_a_vlc_that_gives_up_is_explained_from_what_it_said(fakes, monkeypatch):
@@ -711,6 +609,102 @@ async def test_a_dock_window_with_any_other_name_is_still_found(tmp_path, only_t
     )
     assert await ps.Windows({}).focus("dock")
     assert calls(tmp_path, "wlrctl")[-1] == "toplevel focus app_id:super-kiosque"
+
+
+@pytest.mark.parametrize(
+    ("app_id", "title", "kind"),
+    [
+        ("chromium", "MyDock", "dock"),
+        ("chromium-browser", "MyDock", "dock"),
+        ("Chromium", "MyDock", "dock"),
+        ("chrome", "MyDock", "dock"),
+        ("google-chrome", "MyDock", "dock"),
+        (
+            "chrome-tv.free.fr__-Default",
+            "Free TV",
+            "freetv",
+        ),  # --app : l'identifiant porte l'adresse ouverte
+        (
+            "chromium-tv.free.fr__-Default",
+            "Free TV",
+            "freetv",
+        ),  # le préfixe change selon le paquet, pas l'adresse
+        ("Chromium-browser-tv.free.fr__-Default", "x", "freetv"),
+        ("vlc", "VLC media player", "video"),
+        ("org.videolan.VLC", "x", "video"),
+        ("mame", "MAME: Pong", "game"),
+        ("xterm", "MAME: Pong [pong]", "game"),
+        ("foot", "terminal", "other"),
+    ],
+)
+def test_each_window_belongs_to_one_occupant_of_the_screen(app_id, title, kind):
+    assert ps.classify_window(app_id, title) == kind
+
+
+@pytest.mark.parametrize("order", ["dock-first", "free-tv-first"])
+def test_free_tv_is_never_taken_for_the_dock_whatever_the_order_of_the_windows(order):
+    dock, freetv, vlc = (
+        ("chromium", "MyDock"),
+        ("chrome-tv.free.fr__-Default", "Free TV"),
+        ("vlc", "v"),
+    )
+    windows = [dock, freetv, vlc] if order == "dock-first" else [freetv, vlc, dock]
+    assert ps.pick_window(windows, "dock") == "chromium"
+    assert ps.pick_window(windows, "freetv") == "chrome-tv.free.fr__-Default"
+    assert ps.pick_window(windows, "video") == "vlc"
+    assert ps.pick_window([freetv], "dock") is None  # Free TV seul : il n'est pas le dock
+    assert ps.pick_window([dock], "freetv") is None
+    assert ps.pick_window([], "dock") is None
+
+
+def test_a_dock_with_any_other_name_is_still_found_but_never_free_tv_nor_vlc():
+    assert ps.pick_window([("vlc", "v"), ("super-kiosque", "Dock")], "dock") == "super-kiosque"
+    assert ps.pick_window([("vlc", "v"), ("chrome-tv.free.fr__-Default", "x")], "dock") is None
+
+
+async def test_the_windows_of_the_three_occupants_are_brought_forward_by_their_exact_names(
+    tmp_path, only_tools
+):
+    fake_tool(
+        tmp_path,
+        "wlrctl",
+        'case "$1 $2" in "toplevel list") printf "chrome-tv.free.fr__-Default: Free TV\nchromium: Dock\nVlc: v\nmame: Pong\n";; esac',
+    )
+    windows = ps.Windows({})
+    assert await windows.focus("freetv")
+    assert await windows.focus("dock")
+    assert await windows.focus("video")
+    assert await windows.focus("game")
+    focused = [c for c in calls(tmp_path, "wlrctl") if c.startswith("toplevel focus")]
+    assert focused == [
+        "toplevel focus app_id:chrome-tv.free.fr__-Default",
+        "toplevel focus app_id:chromium",
+        "toplevel focus app_id:Vlc",
+        "toplevel focus app_id:mame",
+    ]
+
+
+async def test_free_tv_has_no_xwayland_fallback_and_is_not_found_when_closed(tmp_path, only_tools):
+    fake_tool(
+        tmp_path, "wlrctl", 'case "$1 $2" in "toplevel list") printf "chromium: Dock\n";; esac'
+    )
+    fake_tool(tmp_path, "xdotool", 'case "$1" in search) printf "42\n";; esac')
+    assert not await ps.Windows({}).focus("freetv")
+    assert calls(tmp_path, "xdotool") == []  # Chromium n'est pas une fenêtre X11 : rien à tenter
+
+
+async def test_a_window_can_be_put_in_full_screen_and_closed_by_its_address(tmp_path, only_tools):
+    fake_tool(
+        tmp_path,
+        "wlrctl",
+        'case "$1 $2" in "toplevel list") printf "chrome-tv.free.fr__-Default: Free TV\nchromium: Dock\n";; esac',
+    )
+    windows = ps.Windows({})
+    assert await windows.fullscreen("chrome-tv.free.fr__-Default")
+    assert calls(tmp_path, "wlrctl")[-1] == "toplevel fullscreen app_id:chrome-tv.free.fr__-Default"
+    assert await windows.close_app("tv.free.fr") == 1  # le dock n'est pas touché
+    closed = [c for c in calls(tmp_path, "wlrctl") if c.startswith("toplevel close")]
+    assert closed == ["toplevel close app_id:chrome-tv.free.fr__-Default"]
 
 
 async def test_without_wlrctl_xdotool_hides_and_shows_the_video_window(tmp_path, only_tools):
@@ -783,9 +777,7 @@ def session(fakes, **kw):
     s = Session(
         "ws://unused",
         vlc=fakes.vlc,
-        ffmpeg=fakes.ffmpeg,
         smbclient=fakes.smbclient,
-        live555=False,
         runtime_dir=fakes.run,
         extra_vlc_args=[],
         env={**os.environ, "DISPLAY": ":9"},
@@ -813,18 +805,20 @@ class Mailbox:
                 await asyncio.sleep(0.02)
 
 
-async def test_hello_says_what_the_screen_can_do(fakes):
-    s = session(fakes)
+async def test_hello_says_what_the_screen_can_do(fakes, monkeypatch):
+    monkeypatch.setattr(ps, "has_widevine", lambda: False)
+    s = session(fakes, chromium="", keyboard=type("K", (), {"available": False})())
     assert s.hello() == {
         "t": "hello",
         "v": 1,
         "vlc": True,
-        "live555": False,
-        "ffmpeg": True,
         "smbclient": True,
         "touch": True,
         "demo": False,
         "mame": False,
+        "chromium": False,  # Free TV : ni Chromium, ni Widevine, ni clavier à l'écran
+        "widevine": False,
+        "keyboard": False,
         "gpio": None,
     }
     s.touch = type("T", (), {"available": False})()
@@ -840,7 +834,6 @@ async def test_a_play_command_starts_vlc_in_front_and_reports(fakes, fast):
             "name": "play",
             "job": 4,
             "url": "smb://nas/Films/a.mkv",
-            "live": False,
             "volume": 50,
         },
         box,
@@ -997,11 +990,11 @@ async def test_vlc_dropping_the_pictures_is_said_in_the_journal_while_the_playba
         "FAKE_VLC_NOISE",
         "[0000007f500013f0] wl_dmabuf vout display warning: Video discarded due to Wayland congestion",
     )
+    monkeypatch.setattr(
+        ps, "DISPLAY_PROFILES", ps.DISPLAY_PROFILES[:1]
+    )  # une seule façon d'afficher : il n'y en a pas d'autre à essayer
     s, box = session(fakes), Mailbox()
-    s.live_profile = (
-        len(ps.DISPLAY_PROFILES) - 1
-    )  # la dernière façon d'afficher : il n'y en a pas d'autre à essayer
-    await s.handle(live_message(21), box)
+    await s.handle(video_message(21), box)
     await box.wait(lambda m: m["t"] == "state" and m["state"] == "playing")
     try:
         text = ""
@@ -1021,13 +1014,12 @@ async def test_vlc_dropping_the_pictures_is_said_in_the_journal_while_the_playba
 # --- l'image n'arrive pas à l'écran : une façon d'afficher plus sûre ----------------------------------------------------
 
 
-def live_message(job, **extra):
+def video_message(job, **extra):
     return {
         "t": "cmd",
         "name": "play",
         "job": job,
-        "url": "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201&flavour=sd",
-        "live": True,
+        "url": "smb://nas/Films/a.mkv",
         "volume": 70,
         **extra,
     }
@@ -1045,13 +1037,13 @@ async def wait_for_launches(fakes, count, timeout=15.0):
     await asyncio.sleep(0.6)  # le temps qu'une relance de plus, s'il y en avait une, se montre
 
 
-async def test_a_fatal_wayland_error_relaunches_the_channel_with_software_decoding(
+async def test_a_fatal_wayland_error_relaunches_the_video_with_software_decoding(
     fakes, fast, monkeypatch, journal
 ):
     """Le cas du Pi : VLC ne peut plus rien montrer après l'erreur fatale, mais continue de « jouer »."""
     monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
     s, box = session(fakes), Mailbox()
-    await s.handle(live_message(30), box)
+    await s.handle(video_message(30), box)
     await wait_for_launches(fakes, 2)
     try:
         assert launches(fakes) == 2  # le premier lancement (matériel), puis un seul de plus
@@ -1070,56 +1062,17 @@ async def test_a_fatal_wayland_error_relaunches_the_channel_with_software_decodi
         )
         assert "on relance en « logiciel »" in text
         assert "(affichage : logiciel)" in text
-        assert s.live_profile == 1  # les chaînes suivantes partent avec
     finally:
         await s._stop_playback()
 
 
-async def test_the_next_channel_starts_directly_with_the_way_of_displaying_that_worked(
-    fakes, fast, monkeypatch
-):
-    monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
-    s, box = session(fakes), Mailbox()
-    await s.handle(live_message(31), box)
-    await wait_for_launches(fakes, 2)
-    Path(str(fakes.log) + ".launches").unlink()
-    await s.handle(live_message(32), box)
-    await wait_for_launches(fakes, 1)
-    try:
-        assert launches(fakes) == 1  # plus de premier essai raté : on repart de ce qui a marché
-        assert "--avcodec-hw=none" in json.loads(fakes.log.read_text())["args"]
-    finally:
-        await s._stop_playback()
-
-
-async def test_a_file_never_inherits_the_software_display_of_the_channels(fakes, fast, monkeypatch):
-    """Un film en 1080p ne se décode pas par le processeur du Pi : la mémoire ne vaut que pour les chaînes."""
-    monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
-    s, box = session(fakes), Mailbox()
-    await s.handle(live_message(33), box)
-    await wait_for_launches(fakes, 2)
-    assert s.live_profile == 1
-    s.env["FAKE_VLC_NEEDS_PROFILE"] = (
-        "0"  # l'environnement des programmes est celui de la session, copié à sa création
-    )
-    Path(str(fakes.log) + ".launches").unlink()
-    await s.handle(
-        {"t": "cmd", "name": "play", "job": 34, "url": "/tmp/film.mkv", "volume": 70}, box
-    )
-    await wait_for_launches(fakes, 1)
-    try:
-        assert "--avcodec-hw=none" not in json.loads(fakes.log.read_text())["args"]
-    finally:
-        await s._stop_playback()
-
-
-async def test_images_dropped_in_series_relaunch_the_channel_too(fakes, fast, monkeypatch, journal):
+async def test_images_dropped_in_series_relaunch_the_video_too(fakes, fast, monkeypatch, journal):
     monkeypatch.setenv("FAKE_VLC_NEEDS_PROFILE", "1")
     monkeypatch.setenv(
         "FAKE_VLC_DISCARD", "1"
     )  # pas d'erreur fatale : seulement des images écartées
     s, box = session(fakes), Mailbox()
-    await s.handle(live_message(35), box)
+    await s.handle(video_message(35), box)
     await wait_for_launches(fakes, 2)
     try:
         assert launches(fakes) == 2
@@ -1137,14 +1090,13 @@ async def test_the_ladder_goes_up_to_shared_memory_display_and_stops_there(
         "FAKE_VLC_NEEDS_PROFILE", "9"
     )  # rien n'y fait : on ne doit pas relancer sans fin
     s, box = session(fakes), Mailbox()
-    await s.handle(live_message(36), box)
+    await s.handle(video_message(36), box)
     await wait_for_launches(fakes, 3)
     try:
         assert (
             launches(fakes) == 3
         )  # matériel, logiciel, logiciel en mémoire partagée : puis plus rien
         assert "--vout=wl_shm" in json.loads(fakes.log.read_text())["args"]
-        assert s.live_profile == 2
         text = journal.read_text(encoding="utf-8")
         assert "on relance en « logiciel, mémoire partagée »" in text
         assert not box.of("ended")  # la lecture reste : seule l'image manque
@@ -1154,14 +1106,13 @@ async def test_the_ladder_goes_up_to_shared_memory_display_and_stops_there(
 
 async def test_a_good_display_is_left_alone(fakes, fast):
     s, box = session(fakes), Mailbox()
-    await s.handle(live_message(37), box)
+    await s.handle(video_message(37), box)
     await box.wait(
         lambda m: m["t"] == "state" and m["job"] == 37 and m["state"] == "playing", timeout=15
     )
     await asyncio.sleep(1.5)
     try:
         assert launches(fakes) == 1
-        assert s.live_profile == 0
         assert "--avcodec-hw=none" not in json.loads(fakes.log.read_text())["args"]
     finally:
         await s._stop_playback()
@@ -1192,30 +1143,6 @@ async def test_a_crash_of_vlc_names_the_signal(fakes, fast, monkeypatch):
     assert "--avcodec-hw=none" in error
 
 
-async def test_what_ffmpeg_says_when_the_channel_does_not_answer_is_shown(fakes, fast, monkeypatch):
-    monkeypatch.setenv(
-        "FAKE_FFMPEG_ERROR", "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream: Connection timed out"
-    )
-    monkeypatch.setenv("FAKE_VLC_FAIL", "1")
-    monkeypatch.setenv("FAKE_VLC_STDERR", "main input error: Your input can't be opened\n")
-    s, box = session(fakes), Mailbox()
-    await s.handle(
-        {
-            "t": "cmd",
-            "name": "play",
-            "job": 7,
-            "url": "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201",
-            "live": True,
-            "volume": 70,
-        },
-        box,
-    )
-    await box.wait(lambda m: m["t"] == "ended")
-    error = box.of("ended")[0]["error"]
-    assert "La chaîne ne répond pas" in error
-    assert "ffmpeg : rtsp://mafreebox.freebox.fr/fbxtv_pub/stream: Connection timed out" in error
-
-
 # --- les tentatives : VLC d'abord, puis une autre façon de lire quand VLC n'ouvre rien ------------------------------
 
 
@@ -1239,28 +1166,13 @@ def smb_message(job, **extra):
 def test_the_ways_of_reading_are_planned_in_order():
     src = ps.SmbSource("nas", "Freebox", ("Films", "a.mkv"))
     plan = ps.plan_attempts
-    assert plan(
-        "smb://nas/a", live555=False, ffmpeg=None, smbclient="/usr/bin/smbclient", smb=src
-    ) == ["direct", "smbclient"]
-    assert plan("smb://nas/a", live555=False, ffmpeg=None, smbclient=None, smb=src) == ["direct"]
-    assert plan(
-        "smb://nas/a", live555=False, ffmpeg=None, smbclient="/usr/bin/smbclient", smb=None
-    ) == ["direct"]
+    assert plan("smb://nas/a", smbclient="/usr/bin/smbclient", smb=src) == ["direct", "smbclient"]
+    assert plan("smb://nas/a", smbclient=None, smb=src) == ["direct"]
+    assert plan("smb://nas/a", smbclient="/usr/bin/smbclient", smb=None) == ["direct"]
     unsafe = ps.SmbSource("nas", "Freebox", ("Films", 'a";rm "b.mkv'))
-    assert plan(
-        "smb://nas/a", live555=False, ffmpeg=None, smbclient="/usr/bin/smbclient", smb=unsafe
-    ) == ["direct"]
-    assert plan(
-        "rtsp://box/x", live555=False, ffmpeg="/usr/bin/ffmpeg", smbclient=None, smb=None
-    ) == ["ffmpeg"]
-    assert plan(
-        "rtsp://box/x", live555=True, ffmpeg="/usr/bin/ffmpeg", smbclient=None, smb=None
-    ) == ["direct", "ffmpeg"]
-    assert plan("rtsp://box/x", live555=True, ffmpeg=None, smbclient=None, smb=None) == ["direct"]
-    assert plan("rtsp://box/x", live555=False, ffmpeg=None, smbclient=None, smb=None) == [
-        "ffmpeg"
-    ]  # le message dira « ffmpeg manque »
-    assert plan("/tmp/a.mkv", live555=False, ffmpeg=None, smbclient=None, smb=None) == ["direct"]
+    assert plan("smb://nas/a", smbclient="/usr/bin/smbclient", smb=unsafe) == ["direct"]
+    assert plan("/tmp/a.mkv", smbclient=None, smb=None) == ["direct"]
+    assert plan("http://h/a.mkv", smbclient="/usr/bin/smbclient", smb=src) == ["direct"]
 
 
 def test_the_share_the_dock_names_is_checked_again_by_the_helper():
@@ -1475,14 +1387,12 @@ async def test_no_second_attempt_when_the_share_file_is_unknown_to_the_helper(
     assert not Path(str(fakes.log) + ".smbclient").exists()  # smbclient n'a jamais été lancé
 
 
-async def test_vlc_and_ffmpeg_speak_english_whatever_the_language_of_the_session(fakes, fast):
+async def test_vlc_speaks_english_whatever_the_language_of_the_session(fakes, fast):
     """VLC traduit ses messages et sa réponse « status » : l'assistant ne reconnaît que l'anglais."""
     s = Session(
         "ws://unused",
         vlc=fakes.vlc,
-        ffmpeg=fakes.ffmpeg,
         smbclient=fakes.smbclient,
-        live555=False,
         runtime_dir=fakes.run,
         extra_vlc_args=[],
         env={
@@ -1506,21 +1416,6 @@ async def test_vlc_and_ffmpeg_speak_english_whatever_the_language_of_the_session
     finally:
         await s._stop_playback()
     assert ps.session_environment({"LANG": "fr_FR.UTF-8"})["LC_ALL"] == "C.UTF-8"
-
-
-def test_the_bridge_copies_only_the_picture_and_the_sound():
-    command = ps.ffmpeg_bridge_command(
-        "ffmpeg", "rtsp://mafreebox.freebox.fr/fbxtv_pub/stream?namespace=1&service=201"
-    )
-    maps = [command[i + 1] for i, word in enumerate(command) if word == "-map"]
-    assert maps == [
-        "0:v?",
-        "0:a?",
-    ]  # ni télétexte ni données (un copie brut ne sait pas les écrire)
-    assert "0" not in maps
-    assert (
-        command[command.index("-loglevel") + 1] == "info"
-    )  # le journal garde tout ce que ffmpeg dit
 
 
 async def test_a_new_play_replaces_the_current_one(fakes, fast):
@@ -1581,7 +1476,7 @@ async def test_junk_commands_are_ignored(fakes):
 
 
 async def test_the_demo_playback_advances_pauses_and_seeks():
-    pb = DemoPlayback("x", live=False, volume=70)
+    pb = DemoPlayback("x", volume=70)
     await pb.start()
     await asyncio.sleep(0.05)
     assert (await pb.status())["state"] == "playing"
@@ -1596,13 +1491,6 @@ async def test_the_demo_playback_advances_pauses_and_seeks():
     assert (await pb.status())["state"] == "playing"
     await pb.stop()
     assert pb.finished
-
-
-async def test_the_demo_channel_is_live():
-    pb = DemoPlayback("x", live=True, volume=70)
-    await pb.start()
-    status = await pb.status()
-    assert (status["position"], status["length"]) == (None, None)
 
 
 # --- avec le vrai VLC (si l'on n'est pas root : VLC refuse de tourner en root) ---------------------------------------------------
@@ -1646,16 +1534,13 @@ def clip(tmp_path_factory):
     return path
 
 
-def real_playback(tmp_path, url, *, live=False, live555=False):
+def real_playback(tmp_path, url):
     run = tmp_path / "run"
     run.mkdir(exist_ok=True, mode=0o700)
     return VlcPlayback(
         url,
-        live=live,
         volume=0,
         vlc=ps.find_vlc(),
-        ffmpeg=shutil.which("ffmpeg"),
-        live555=live555,
         runtime_dir=run,
         env=dict(os.environ),
         extra=DUMMY,
@@ -1692,48 +1577,3 @@ async def test_the_real_vlc_reports_a_missing_file(tmp_path):
         assert pb.error() is not None
     finally:
         await pb.stop()
-
-
-@needs_real_vlc
-async def test_the_real_vlc_reads_an_rtsp_channel_through_the_bridge(tmp_path, clip):
-    """Un flux RTSP comme celui de la Freebox (du MPEG-TS sur RTP), servi par un autre VLC : le pont le recopie."""
-    import socket
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    server = subprocess.Popen(  # noqa: ASYNC220
-        [
-            ps.find_vlc(),
-            "-I",
-            "dummy",
-            "--no-video",
-            "--no-audio",
-            "--loop",
-            str(clip),
-            "--sout",
-            f"#rtp{{mux=ts,sdp=rtsp://127.0.0.1:{port}/fbxtv_pub/stream}}",
-            "--sout-keep",
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        await asyncio.sleep(2.0)
-        pb = real_playback(
-            tmp_path,
-            f"rtsp://127.0.0.1:{port}/fbxtv_pub/stream?namespace=1&service=201&flavour=sd",
-            live=True,
-        )
-        await pb.start()
-        try:
-            status = await settled(pb, timeout=25)
-            assert (status["position"], status["length"]) == (None, None)
-            await asyncio.sleep(1.5)
-            assert not pb.finished
-        finally:
-            await pb.stop()
-    finally:
-        server.terminate()
-        server.wait(5)

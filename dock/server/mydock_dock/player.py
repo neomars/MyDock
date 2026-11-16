@@ -1,4 +1,4 @@
-"""Le lecteur du dock : ce qui joue sur l'écran du Pi (Freetv, Kiosque), et la télécommande qui le pilote.
+"""Le lecteur du dock : ce qui occupe l'écran du Pi (Kiosque, Retrogame, Free TV), et la télécommande qui le pilote.
 
 VLC ne tourne pas dans ce service : celui-ci est isolé (pas d'écran, pas de session graphique). C'est « l'assistant de
 lecture » (player_session.py), lancé par le compositeur dans la session de l'écran, qui démarre VLC en plein écran et le
@@ -8,7 +8,7 @@ commande. Il se connecte ici par `/ws/player` (en local seulement) et :
   * rend compte de ce qui se passe (VLC joue, position, durée, VLC s'est arrêté, pourquoi).
 
 Ce module garde l'état de lecture, que l'interface lit par le thème « player », et décide de ce qui est permis : l'écran
-n'envoie jamais d'adresse de flux, seulement l'identifiant d'une chaîne ou un partage et un chemin que le dock a vus.
+n'envoie jamais d'adresse de flux, seulement un partage et un chemin que le dock a vus, ou l'identifiant d'un jeu.
 """
 
 from __future__ import annotations
@@ -76,6 +76,8 @@ class PlayerHub:
         self.length: float | None = None
         self.volume = DEFAULT_VOLUME
         self.front = "dock"
+        #: Le clavier à l'écran de Free TV est-il montré ? (l'assistant le dit à chaque rapport)
+        self.keyboard_open = False
         self.seekable = (
             True  # faux quand le fichier arrive par un tube (smbclient) : pas d'avance rapide
         )
@@ -110,20 +112,29 @@ class PlayerHub:
             "kind": media.get("kind"),
             "title": media.get("title"),
             "subtitle": media.get("subtitle"),
-            "live": bool(media.get("live")),
-            "engine": "mame" if media.get("kind") == "game" else "vlc",
+            "engine": {"game": "mame", "freetv": "freetv"}.get(media.get("kind") or "", "vlc"),
             "game": media.get("game"),
             "button": self.button,
             "position": self.position,
             "length": self.length,
             "volume": self.volume,
             "front": self.front,
+            "keyboard": self.keyboard_open,
             "seekable": self.seekable,
             "error": self.error,
             "audio": self.audio_snapshot(),
             "helper": {
                 k: helper.get(k)
-                for k in ("vlc", "live555", "ffmpeg", "touch", "demo", "mame", "gpio")
+                for k in (
+                    "vlc",
+                    "touch",
+                    "demo",
+                    "mame",
+                    "chromium",
+                    "widevine",
+                    "keyboard",
+                    "gpio",
+                )
             }
             if helper
             else None,
@@ -200,11 +211,12 @@ class PlayerHub:
         if kind == "hello":
             conn.info = {
                 "vlc": bool(message.get("vlc")),
-                "live555": bool(message.get("live555")),
-                "ffmpeg": bool(message.get("ffmpeg")),
                 "touch": bool(message.get("touch")),
                 "demo": bool(message.get("demo")),
                 "mame": bool(message.get("mame")),
+                "chromium": bool(message.get("chromium")),
+                "widevine": bool(message.get("widevine")),
+                "keyboard": bool(message.get("keyboard")),
                 "gpio": str(message.get("gpio") or "")[:120] or None,
             }
             self._changed()
@@ -236,6 +248,8 @@ class PlayerHub:
             self.volume = round(volume)
         if message.get("front") in ("video", "dock"):
             self.front = message["front"]
+        if isinstance(message.get("keyboard"), bool):
+            self.keyboard_open = message["keyboard"]
         self.seekable = message.get("seekable") is not False
         if self.state == "playing":
             self._cancel_watchdog()
@@ -246,6 +260,7 @@ class PlayerHub:
         self._cancel_watchdog()
         self._audio_end()
         self.front = "dock"
+        self.keyboard_open = False
         if isinstance(reason, str) and reason:
             self.state, self.error = "error", reason[:420]
         else:
@@ -256,6 +271,7 @@ class PlayerHub:
     def _fail(self, text: str) -> None:
         self._cancel_watchdog()
         self.state, self.error, self.front = "error", text, "dock"
+        self.keyboard_open = False
         self.position = self.length = None
 
     # --- ce que demande l'écran -------------------------------------------------------------------
@@ -276,7 +292,7 @@ class PlayerHub:
         secrets: dict[str, str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> None:
-        """Lance `url` sur l'écran du dock. `media` : de quoi l'afficher (kind, title, subtitle, live).
+        """Lance `url` sur l'écran du dock. `media` : de quoi l'afficher (kind, title, subtitle).
 
         `extra` : ce qui est propre au moteur (un jeu de MAME : son nom et le dossier des ROMs ; jamais une commande)."""
         helper = self._require_helper()
@@ -284,6 +300,14 @@ class PlayerHub:
         if engine == "mame":
             if not helper.info.get("mame", False):
                 raise PlayerError("MAME est absent du Pi : sudo apt install mame.")
+        elif engine == "freetv":
+            if not helper.info.get("chromium", False):
+                raise PlayerError("Chromium est absent du Pi : sudo apt install chromium.")
+            if not helper.info.get("widevine", False):
+                raise PlayerError(
+                    "Widevine est absent du Pi (Free TV lit des flux protégés) : sudo apt install libwidevinecdm0, "
+                    "puis redémarre l'écran du dock."
+                )
         else:
             if not helper.info.get("vlc", False):
                 raise PlayerError(
@@ -295,11 +319,12 @@ class PlayerHub:
                     "sudo apt install swayidle wlrctl (la vidéo plein écran garderait l'écran)."
                 )
         self.job += 1
-        self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "live", "game")}
+        self.media = {k: media.get(k) for k in ("kind", "title", "subtitle", "game")}
         self.state, self.error = "starting", None
         self.position = self.length = None
         self.seekable = True
         self.front = "video"
+        self.keyboard_open = False
         self._started_at = self._clock()
         helper.send(
             {
@@ -307,7 +332,6 @@ class PlayerHub:
                 "name": "play",
                 "job": self.job,
                 "url": url,
-                "live": bool(media.get("live")),
                 "volume": self.volume,
                 # Où est le fichier d'un partage (jamais le mot de passe : voir `secrets`) : de quoi le lire par smbclient.
                 **({"smb": media["smb"]} if isinstance(media.get("smb"), dict) else {}),
@@ -319,7 +343,7 @@ class PlayerHub:
         self._changed()
 
     def command(self, name: str, **params: Any) -> None:
-        """Une commande de télécommande (pause, resume, toggle, seek, volume, stop, front)."""
+        """Une commande de télécommande (pause, resume, toggle, seek, volume, stop, front, keyboard)."""
         helper = self._require_helper()
         if name == "volume":
             value = _number(params.get("value"), 0, 100)
@@ -339,6 +363,16 @@ class PlayerHub:
                 self.front = "video"
             elif params["to"] == "dock":
                 self.front = "dock"
+        elif name == "keyboard":
+            if self.media is None or self.media.get("kind") != "freetv" or not self.active:
+                raise PlayerError("Le clavier à l'écran ne sert que pendant Free TV.")
+            if not isinstance(params.get("on"), bool):
+                raise PlayerError("Demande de clavier invalide.")
+            if params["on"] and not helper.info.get("keyboard", False):
+                raise PlayerError(
+                    "Il n'y a pas de clavier à l'écran sur le Pi : sudo apt install wvkbd, puis redémarre l'écran du dock."
+                )
+            params = {"on": params["on"]}
         elif name == "stop":
             self._cancel_watchdog()
             self._audio_end()
@@ -346,6 +380,7 @@ class PlayerHub:
                 self.state, self.error, self.media = "idle", None, None
                 self.position = self.length = None
                 self.front = "dock"
+                self.keyboard_open = False
         elif name not in ("pause", "resume", "toggle"):
             raise PlayerError("Commande inconnue.")
         helper.send({"t": "cmd", "name": name, "job": self.job, **params})
@@ -383,8 +418,13 @@ class PlayerHub:
                 self._fail(
                     "Le jeu n'a pas démarré : MAME n'a pas ouvert sa fenêtre en 40 secondes."
                 )
+            elif (self.media or {}).get("kind") == "freetv":
+                self._fail(
+                    "Free TV ne s'est pas ouvert : Chromium n'a pas affiché sa fenêtre en 40 secondes "
+                    "(voir /var/log/mydock/player.log, ou « mydock-dock doctor »)."
+                )
             else:
-                self._fail("La lecture n'a pas démarré (la chaîne ou le fichier ne répond pas).")
+                self._fail("La lecture n'a pas démarré (le fichier ne répond pas).")
             self._changed()
 
     def shutdown(self) -> None:

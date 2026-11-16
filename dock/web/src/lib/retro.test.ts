@@ -42,7 +42,7 @@ const pads = (devices: PadDevice[], over: Partial<PadsSnapshot> = {}): PadsSnaps
   available: true, reason: null, powered: true, blocked: false, scanning: false, scan_until: null, pairing: null, devices, ...over,
 }) // prettier-ignore
 const player = (over: Partial<PlayerSnapshot> = {}): PlayerSnapshot => ({
-  available: true, state: 'idle', kind: null, title: null, subtitle: null, live: false, position: null, length: null, volume: 70, front: 'dock', error: null, helper: null, ...over,
+  available: true, state: 'idle', kind: null, title: null, subtitle: null, position: null, length: null, volume: 70, front: 'dock', error: null, helper: null, ...over,
 }) // prettier-ignore
 const retro = (over: Partial<RetroSnapshot> = {}): RetroSnapshot => ({ mame: true, roms_dir: '/var/lib/mydock/roms', readable: true, state: 'idle', done: 0, total: 0, error: null, skipped: [], games: GAMES, ...over })
 
@@ -207,7 +207,7 @@ describe('le lancement', () => {
     expect(retroBlocker(null, null)).toBeNull()
     expect(retroBlocker(player(), retro({ mame: false }))).toContain('sudo apt install mame')
     expect(retroBlocker(player({ available: false }), retro())).toContain('assistant')
-    const helper = { vlc: true, live555: false, ffmpeg: true, touch: true, demo: false, mame: false }
+    const helper = { vlc: true, touch: true, demo: false, mame: false }
     expect(retroBlocker(player({ helper }), retro())).toContain('sudo apt install mame')
     expect(retroBlocker(player({ helper: { ...helper, mame: true } }), retro())).toBeNull()
   })

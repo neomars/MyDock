@@ -23,13 +23,18 @@
     [markets]
     finnhub_key = ""            # facultatif : clé gratuite finnhub.io, cotation de secours des actions
 
-    [media]                     # Divertissement : Freetv (chaînes de la Freebox) et Kiosque (partages Samba)
-    playlist_url = "http://mafreebox.freebox.fr/freeboxtv/playlist.m3u"
+    [media]                     # Divertissement : le Kiosque (partages Samba)
     smb_host = "mafreebox.freebox.fr"
     smb_user = ""               # vide = accès sans identifiant
     smb_password = ""
     pc_audio = true             # le son des vidéos, de la TV et des jeux sort sur le PC (le Pi n'a pas d'enceintes)
     audio_advance_ms = 150      # de combien le son des vidéos est avancé, pour rattraper le temps du trajet jusqu'au PC
+
+    [freetv]                    # Free TV : tv.free.fr dans une fenêtre de Chromium sur l'écran du dock
+    user_agent = "auto"         # "auto" : un Chromium de bureau x86_64 de la même version ; "" : l'identité d'origine de Chromium
+    scale = 0.7                 # le zoom de la page (le site est pensé pour un grand écran)
+    corner = "top-left"         # le coin où l'appui long (1,5 s) ramène le dock : top-left, top-right, bottom-left, bottom-right
+    fullscreen = true           # false : fenêtre maximisée (avec sa barre de titre), si le clavier à l'écran reste caché derrière Free TV
 
     [retrogame]                 # Retrogame : des jeux d'arcade MAME sur l'écran du dock
     roms_dir = "/var/lib/mydock/roms"   # vide = le dossier « roms » de l'état du dock
@@ -45,6 +50,7 @@ from __future__ import annotations
 
 import copy
 import ipaddress
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -53,7 +59,6 @@ from typing import Any
 
 from mydock_common.auth import is_valid_token_format
 from mydock_common.config import ConfigError, load_toml, write_toml_private
-from mydock_dock.freebox import DEFAULT_PLAYLIST_URL, valid_playlist_url
 from mydock_dock.validation import ValidationFailure, normalize_mac, validate_host, validate_port
 
 DEFAULT_PORT = 8080
@@ -62,11 +67,25 @@ DEFAULT_AGENT_PORT = 8765
 DEFAULT_STATE_DIR = Path("/var/lib/mydock")
 DEFAULT_CLIENTS_DIR = Path("/usr/share/mydock/clients")
 DEFAULT_SMB_HOST = "mafreebox.freebox.fr"
+DEFAULT_FREETV_USER_AGENT = "auto"  # voir freetv_playback.compute_user_agent
+DEFAULT_FREETV_SCALE = 0.7
+DEFAULT_FREETV_CORNER = "top-left"
+FREETV_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+MIN_FREETV_SCALE, MAX_FREETV_SCALE = 0.25, 3.0
+MAX_USER_AGENT_LENGTH = 300
 DEFAULT_BUTTON_GPIO = 17  # broche physique 11 (la masse est sur la broche 9)
 DEFAULT_AUDIO_ADVANCE_MS = 150  # le trajet du son du Pi jusqu'au PC (capture, réseau, lecteur du PC) : un peu plus d'un dixième de seconde
 MAX_AUDIO_ADVANCE_MS = 1000
 GPIO_PINS = range(2, 28)  # les GPIO 2 à 27 de l'en-tête de 40 broches
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+#: Les clés d'avant l'étape n (Freetv, la liste M3U de la Freebox), ignorées : { (section, clé) : ce qui les remplace }.
+OBSOLETE_KEYS = {
+    (
+        "media",
+        "playlist_url",
+    ): "Free TV (tv.free.fr) remplace Freetv, la liste des chaînes de la Freebox n'est plus lue",
+}
+log = logging.getLogger(__name__)
 API_KEY_RE = re.compile(r"^[A-Za-z0-9_.~-]{8,128}$")
 
 HEADER = (
@@ -99,7 +118,6 @@ class DockConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     web_dir: Path | None = None
     finnhub_key: str = field(default="", repr=False)  # un secret : jamais dans un affichage
-    playlist_url: str = DEFAULT_PLAYLIST_URL
     smb_host: str = DEFAULT_SMB_HOST
     smb_user: str = ""
     smb_password: str = field(default="", repr=False)  # un secret : jamais dans un affichage
@@ -111,6 +129,14 @@ class DockConfig:
     pc_audio: bool = True
     #: Les vidéos avancent leur son de ce temps (ms) : le trajet jusqu'au PC le retarde, l'image ne doit pas arriver avant lui.
     audio_advance_ms: int = DEFAULT_AUDIO_ADVANCE_MS
+    #: Free TV : l'identité (« user agent ») de Chromium — « auto » (un Chromium de bureau x86_64 de la même version), vide
+    #: (celle d'origine) ou une chaîne ({major} y est remplacé par la version de Chromium) — et le zoom de la page.
+    freetv_user_agent: str = DEFAULT_FREETV_USER_AGENT
+    freetv_scale: float = DEFAULT_FREETV_SCALE
+    #: Le coin de l'écran où un appui long ramène le dock pendant Free TV (un toucher simple navigue dans la page).
+    freetv_corner: str = DEFAULT_FREETV_CORNER
+    #: Free TV en plein écran ; faux : une fenêtre maximisée (le clavier à l'écran se montre alors au-dessus d'elle, voir freetv_playback.py).
+    freetv_fullscreen: bool = True
     demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
     demo_retro: bool = False  # idem : de faux jeux, de fausses manettes (essais et captures)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -145,6 +171,8 @@ class DockConfig:
         markets = _section(raw, "markets")
         media = _section(raw, "media")
         retro = _section(raw, "retrogame")
+        freetv = _section(raw, "freetv")
+        _note_obsolete_keys(raw)
         try:
             listen_host = str(ipaddress.IPv4Address(str(server.get("listen_host", "127.0.0.1"))))
             port = validate_port(server.get("port", DEFAULT_PORT), "server.port")
@@ -170,7 +198,6 @@ class DockConfig:
                 "markets.finnhub_key est invalide (8 à 128 caractères : lettres, chiffres, . _ ~ -)."
             )
         try:
-            playlist_url = valid_playlist_url(media.get("playlist_url") or DEFAULT_PLAYLIST_URL)
             raw_smb_host = media.get("smb_host", DEFAULT_SMB_HOST)
             smb_host = validate_host(raw_smb_host) if raw_smb_host else ""
             smb_user = clean_smb_user(media.get("smb_user", ""))
@@ -181,6 +208,15 @@ class DockConfig:
             )
         except (ValueError, ValidationFailure) as exc:
             raise ConfigError(f"[media] : {exc}") from None
+        try:
+            freetv_user_agent = clean_user_agent(
+                freetv.get("user_agent", DEFAULT_FREETV_USER_AGENT)
+            )
+            freetv_scale = clean_freetv_scale(freetv.get("scale", DEFAULT_FREETV_SCALE))
+            freetv_corner = clean_freetv_corner(freetv.get("corner", DEFAULT_FREETV_CORNER))
+            freetv_fullscreen = clean_flag(freetv.get("fullscreen", True), "fullscreen")
+        except ValidationFailure as exc:
+            raise ConfigError(f"[freetv] : {exc}") from None
         try:
             roms_dir = clean_roms_dir(retro.get("roms_dir", ""))
             button_gpio = clean_gpio(retro.get("button_gpio", DEFAULT_BUTTON_GPIO))
@@ -206,7 +242,6 @@ class DockConfig:
             state_dir=Path(paths.get("state_dir", DEFAULT_STATE_DIR)),
             web_dir=Path(paths["web_dir"]) if paths.get("web_dir") else None,
             finnhub_key=finnhub_key,
-            playlist_url=playlist_url,
             smb_host=smb_host,
             smb_user=smb_user,
             smb_password=smb_password,
@@ -215,6 +250,10 @@ class DockConfig:
             upload_without_code=bool(retro.get("upload_without_code", True)),
             pc_audio=pc_audio,
             audio_advance_ms=audio_advance_ms,
+            freetv_user_agent=freetv_user_agent,
+            freetv_scale=freetv_scale,
+            freetv_corner=freetv_corner,
+            freetv_fullscreen=freetv_fullscreen,
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:
@@ -238,10 +277,16 @@ class DockConfig:
 
     def to_dict(self) -> dict[str, Any]:
         raw = copy.deepcopy(self._raw)
-        server, pc, paths, portal, media, retro = (
+        server, pc, paths, portal, media, retro, freetv = (
             raw.setdefault(name, {})
-            for name in ("server", "pc", "paths", "portal", "media", "retrogame")
+            for name in ("server", "pc", "paths", "portal", "media", "retrogame", "freetv")
         )
+        for (
+            section,
+            key,
+        ) in OBSOLETE_KEYS:  # une clé d'avant Free TV : elle ne revient pas dans le fichier
+            if isinstance(raw.get(section), dict):
+                raw[section].pop(key, None)
         server["listen_host"] = self.listen_host
         server["port"] = self.port
         portal["enabled"] = self.portal_enabled
@@ -252,12 +297,15 @@ class DockConfig:
         pc["port"] = self.agent_port
         pc["token"] = self.token
         pc["wol_mac"] = self.wol_mac
-        media["playlist_url"] = self.playlist_url
         media["smb_host"] = self.smb_host
         media["smb_user"] = self.smb_user
         media["smb_password"] = self.smb_password
         media["pc_audio"] = self.pc_audio
         media["audio_advance_ms"] = self.audio_advance_ms
+        freetv["user_agent"] = self.freetv_user_agent
+        freetv["scale"] = self.freetv_scale
+        freetv["corner"] = self.freetv_corner
+        freetv["fullscreen"] = self.freetv_fullscreen
         retro["roms_dir"] = self.roms_dir
         retro["button_gpio"] = self.button_gpio
         retro["upload_without_code"] = self.upload_without_code
@@ -304,19 +352,12 @@ class DockConfig:
     def set_media(
         self,
         *,
-        playlist_url: object = None,
         smb_host: object = None,
         smb_user: object = None,
         smb_password: object = None,
     ) -> None:
-        """Divertissement : l'adresse de la liste des chaînes, le serveur de fichiers et son identifiant (tout est
-        validé avant d'être gardé ; un champ absent (None) ne change pas)."""
-        try:
-            url = (
-                valid_playlist_url(playlist_url) if playlist_url is not None else self.playlist_url
-            )
-        except ValueError as exc:
-            raise ValidationFailure(str(exc)) from None
+        """Divertissement : le serveur de fichiers du Kiosque et son identifiant (tout est validé avant d'être
+        gardé ; un champ absent (None) ne change pas)."""
         host = self.smb_host
         if smb_host is not None:
             host = validate_host(smb_host) if str(smb_host).strip() else ""
@@ -324,12 +365,7 @@ class DockConfig:
         password = (
             clean_smb_password(smb_password) if smb_password is not None else self.smb_password
         )
-        self.playlist_url, self.smb_host, self.smb_user, self.smb_password = (
-            url,
-            host,
-            user,
-            password,
-        )
+        self.smb_host, self.smb_user, self.smb_password = host, user, password
         self.save()
 
     def set_sound(self, *, pc_audio: object = None, audio_advance_ms: object = None) -> None:
@@ -382,6 +418,56 @@ def clean_audio_advance(value: object) -> int:
             f"L'avance du son doit être un nombre entier de millisecondes, de 0 à {MAX_AUDIO_ADVANCE_MS}."
         )
     return value
+
+
+def clean_user_agent(value: object) -> str:
+    """L'identité de Chromium pour Free TV : « auto », vide (celle d'origine) ou une ligne imprimable (300 caractères au plus)."""
+    if value is None:
+        return DEFAULT_FREETV_USER_AGENT
+    if (
+        not isinstance(value, str)
+        or len(value.strip()) > MAX_USER_AGENT_LENGTH
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+    ):
+        raise ValidationFailure(
+            f"user_agent doit être « auto », vide ou une ligne de {MAX_USER_AGENT_LENGTH} caractères au plus."
+        )
+    return value.strip()
+
+
+def clean_freetv_scale(value: object) -> float:
+    """Le zoom de la page de Free TV : un nombre de 0,25 à 3."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or value != value
+        or not MIN_FREETV_SCALE <= value <= MAX_FREETV_SCALE
+    ):
+        raise ValidationFailure(
+            f"scale doit être un nombre de {MIN_FREETV_SCALE} à {MAX_FREETV_SCALE}."
+        )
+    return float(value)
+
+
+def clean_freetv_corner(value: object) -> str:
+    """Le coin du retour au dock pendant Free TV."""
+    if value not in FREETV_CORNERS:
+        raise ValidationFailure(f"corner doit être l'un de : {', '.join(FREETV_CORNERS)}.")
+    return str(value)
+
+
+_NOTED: set[tuple[str, str]] = set()
+
+
+def _note_obsolete_keys(raw: dict[str, Any]) -> None:
+    """Une clé qui ne sert plus (d'un dock.toml d'avant Free TV) est ignorée, et on le dit une fois dans le journal."""
+    for (section, key), why in OBSOLETE_KEYS.items():
+        found = raw.get(section)
+        if isinstance(found, dict) and key in found and (section, key) not in _NOTED:
+            _NOTED.add((section, key))
+            log.warning(
+                "dock.toml : [%s] %s n'est plus utilisée et est ignorée (%s)", section, key, why
+            )
 
 
 def clean_roms_dir(value: object) -> str:
@@ -465,7 +551,6 @@ def init_config(
     clients_dir: Path | str | None = None,
     state_dir: Path | str | None = None,
     web_dir: Path | str | None = None,
-    playlist_url: str | None = None,
     smb_host: str | None = None,
     roms_dir: str | None = None,
     button_gpio: int | None = None,
@@ -494,9 +579,9 @@ def init_config(
         config.state_dir = Path(state_dir)
     if web_dir is not None:
         config.web_dir = Path(web_dir)
-    if playlist_url is not None or smb_host is not None:
+    if smb_host is not None:
         try:
-            config.set_media(playlist_url=playlist_url, smb_host=smb_host)
+            config.set_media(smb_host=smb_host)
         except ValidationFailure as exc:
             raise ConfigError(f"Divertissement : {exc}") from None
     if roms_dir is not None or button_gpio is not None:
