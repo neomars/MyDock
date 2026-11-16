@@ -232,6 +232,8 @@ def test_freetv_defaults_follow_the_chromium_of_the_pi_and_scale_the_page_down()
     config = DockConfig.from_dict({}, Path("/x/dock.toml"))
     assert config.freetv_user_agent == "auto"
     assert config.freetv_scale == 0.7
+    assert config.freetv_corner == "top-left"
+    assert config.freetv_fullscreen is True
 
 
 def test_the_freetv_section_is_read_and_written_back(tmp_path):
@@ -245,7 +247,12 @@ def test_the_freetv_section_is_read_and_written_back(tmp_path):
     config.save()
     again = DockConfig.load(path)
     assert (again.freetv_user_agent, again.freetv_scale) == ("", 1.0)
-    assert load_toml(path)["freetv"] == {"user_agent": "", "scale": 1.0}
+    assert load_toml(path)["freetv"] == {
+        "user_agent": "",
+        "scale": 1.0,
+        "corner": "top-left",
+        "fullscreen": True,
+    }
 
 
 @pytest.mark.parametrize(
@@ -258,6 +265,9 @@ def test_the_freetv_section_is_read_and_written_back(tmp_path):
         ({"user_agent": 12}, "user_agent"),
         ({"user_agent": "x" * 301}, "user_agent"),
         ({"user_agent": "Mozilla\n/5.0"}, "user_agent"),
+        ({"corner": "milieu"}, "corner"),
+        ({"corner": 3}, "corner"),
+        ({"fullscreen": "oui"}, "fullscreen"),
     ],
 )
 def test_an_invalid_freetv_section_is_explained(freetv, message):

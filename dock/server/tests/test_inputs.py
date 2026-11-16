@@ -334,3 +334,244 @@ def test_the_event_layout_matches_the_kernel_on_this_machine():
     assert EVENT.size == struct.calcsize("@llHHi")
     assert inputs.READ_EVENTS * EVENT.size > 0
     assert errno.ENODEV  # le noyau le rend quand une manette Bluetooth s'éteint
+
+
+# --- l'appui long dans un coin de l'écran (Free TV : un toucher simple navigue dans la page) --------------------------------
+
+RANGES = ((0, 4095), (0, 4095))
+SYN = (0, 0, 0)
+SLOT, TRACKING, POS_X, POS_Y = 0x2F, ABS_MT_TRACKING_ID, 0x35, 0x36
+
+
+def down(x, y, slot=0, tracking=5):
+    return [
+        (EV_ABS, SLOT, slot),
+        (EV_ABS, TRACKING, tracking),
+        (EV_ABS, POS_X, x),
+        (EV_ABS, POS_Y, y),
+        SYN,
+    ]
+
+
+def move(x, y, slot=0):
+    return [(EV_ABS, SLOT, slot), (EV_ABS, POS_X, x), (EV_ABS, POS_Y, y), SYN]
+
+
+def lift(slot=0):
+    return [(EV_ABS, SLOT, slot), (EV_ABS, TRACKING, -1), SYN]
+
+
+class CornerRig(Rig):
+    def __init__(self, tmp_path, ranges=RANGES):
+        super().__init__(tmp_path)
+        self.corners: list[int] = []
+        self.read = 0
+
+        def reader(fd):
+            self.read += 1
+            return ranges
+
+        self.watcher = InputWatcher(
+            on_touch=lambda: self.touches.append(1),
+            on_combo=lambda: self.combos.append(1),
+            on_corner=lambda: self.corners.append(1),
+            combo_seconds=0.15,
+            corner_seconds=0.1,
+            rescan_seconds=0.05,
+            devices_file=str(self.file),
+            opener=self.open,
+            clock=lambda: self.now,
+            abs_reader=reader,
+        )
+
+    def press(self, events):
+        self.send(TOUCH, *events)
+
+
+@pytest.fixture
+async def corner(tmp_path):
+    r = CornerRig(tmp_path)
+    r.watcher.start(asyncio.get_running_loop())
+    r.watcher.arm(0)
+    yield r
+    r.close()
+
+
+def test_the_ioctl_numbers_are_the_kernels():
+    assert inputs.eviocgabs(0) == 0x80184540  # EVIOCGABS(ABS_X)
+    assert inputs.eviocgabs(0x35) == 0x80184575  # EVIOCGABS(ABS_MT_POSITION_X)
+
+
+def test_the_screen_bounds_are_read_with_the_kernel_ioctl(monkeypatch):
+    axes: dict[int, tuple[int, int]] = {
+        inputs.eviocgabs(0x35): (0, 1023),
+        inputs.eviocgabs(0x36): (10, 599),
+    }
+
+    def fake_ioctl(fd, request, buffer):
+        if request not in axes:
+            raise OSError(errno.ENOTTY, "pas cet axe")
+        low, high = axes[request]
+        buffer[:] = struct.pack("@6i", 0, low, high, 0, 0, 0)
+
+    monkeypatch.setattr(inputs.fcntl, "ioctl", fake_ioctl)
+    assert inputs.read_abs_ranges(3) == ((0, 1023), (10, 599))
+    axes.clear()  # un écran qui ne donne ni X ni Y multi-touch : on essaie les axes simples
+    axes.update({inputs.eviocgabs(0): (0, 4095), inputs.eviocgabs(1): (0, 4095)})
+    assert inputs.read_abs_ranges(3) == ((0, 4095), (0, 4095))
+    axes.clear()
+    assert inputs.read_abs_ranges(3) is None  # sans position, pas de geste
+    axes.update({inputs.eviocgabs(0x35): (5, 5), inputs.eviocgabs(0x36): (0, 600)})
+    assert inputs.read_abs_ranges(3) is None  # des bornes qui n'en sont pas
+
+
+def test_the_pipe_of_a_test_has_no_screen_bounds():
+    read, write = os.pipe()
+    try:
+        assert inputs.read_abs_ranges(read) is None
+    finally:
+        os.close(read)
+        os.close(write)
+
+
+@pytest.mark.parametrize(
+    ("corner_name", "inside", "outside"),
+    [
+        ("top-left", [(0, 0), (500, 400)], [(700, 100), (100, 1000), (4095, 4095)]),
+        ("top-right", [(4095, 0), (3600, 400)], [(0, 0), (3000, 100)]),
+        ("bottom-left", [(0, 4095), (500, 3300)], [(0, 0), (800, 3000)]),
+        ("bottom-right", [(4095, 4095), (3600, 3300)], [(0, 0), (3000, 3000)]),
+    ],
+)
+def test_each_corner_is_a_finger_sized_zone_of_the_screen(corner_name, inside, outside):
+    for x, y in inside:
+        assert inputs.in_corner(x, y, RANGES, corner_name), (x, y)
+    for x, y in outside:
+        assert not inputs.in_corner(x, y, RANGES, corner_name), (x, y)
+    assert not inputs.in_corner(0, 0, RANGES, "milieu")
+
+
+def test_the_zone_follows_the_bounds_of_the_screen_not_zero():
+    ranges = ((100, 1123), (50, 650))  # un écran de 1024 × 600 dont le repère ne part pas de 0
+    assert inputs.in_corner(110, 60, ranges, "top-left")
+    assert not inputs.in_corner(600, 60, ranges, "top-left")
+    assert inputs.in_corner(1120, 640, ranges, "bottom-right")
+
+
+def test_the_corners_of_the_watcher_are_those_of_dock_toml():
+    from mydock_dock.config import FREETV_CORNERS
+
+    assert inputs.CORNERS == FREETV_CORNERS
+    assert inputs.DEFAULT_CORNER == "top-left"
+
+
+async def test_a_finger_held_in_the_corner_brings_the_dock_back_once(corner):
+    corner.press(down(100, 100))
+    await corner.settle(0.04)
+    assert corner.corners == []  # pas encore : il faut tenir
+    await corner.settle(0.15)
+    assert corner.corners == [1]
+    await corner.settle(0.3)
+    assert corner.corners == [1]  # un seul retour par appui, même si le doigt reste
+    assert corner.touches == [
+        1
+    ]  # le toucher lui-même est compté comme d'habitude (Free TV l'ignore)
+    corner.press(lift())
+    corner.press(down(120, 90))
+    await corner.settle(0.2)
+    assert corner.corners == [1, 1]  # levé puis reposé : un nouvel appui
+
+
+async def test_a_finger_lifted_early_or_slid_out_of_the_corner_does_nothing(corner):
+    corner.press(down(100, 100))
+    await corner.settle(0.04)
+    corner.press(lift())
+    await corner.settle(0.2)
+    assert corner.corners == []
+    corner.press(down(100, 100))
+    await corner.settle(0.04)
+    corner.press(move(2000, 2000))  # le doigt glisse vers le milieu de l'écran
+    await corner.settle(0.2)
+    assert corner.corners == []
+
+
+async def test_a_touch_anywhere_else_never_brings_the_dock_back(corner):
+    corner.press(down(2000, 2000))
+    await corner.settle(0.25)
+    corner.press(lift())
+    corner.press(down(3900, 3900))  # le coin d'en face
+    await corner.settle(0.25)
+    assert corner.corners == []
+
+
+async def test_another_finger_in_the_corner_does_not_count(corner):
+    corner.press(down(2000, 2000))  # le premier doigt, au milieu
+    corner.press(down(100, 100, slot=1, tracking=6))  # un second, dans le coin
+    await corner.settle(0.25)
+    assert corner.corners == []
+
+
+async def test_a_single_touch_screen_works_too(corner):
+    corner.press([(EV_KEY, BTN_TOUCH, 1), (3, 0, 100), (3, 1, 120), SYN])
+    await corner.settle(0.25)
+    assert corner.corners == [1]
+
+
+async def test_the_gesture_is_ignored_until_armed(tmp_path):
+    r = CornerRig(tmp_path)
+    r.watcher.start(asyncio.get_running_loop())
+    try:
+        r.watcher.arm(1.5)  # le doigt qui vient d'ouvrir Free TV est encore sur l'écran
+        r.press(down(100, 100))
+        await r.settle(0.25)
+        assert r.corners == []
+        r.press(lift())
+        r.now += 2.0
+        r.press(down(100, 100))
+        await r.settle(0.25)
+        assert r.corners == [1]
+    finally:
+        r.close()
+
+
+async def test_another_corner_can_be_chosen(corner):
+    corner.watcher.corner = "bottom-right"
+    corner.press(down(100, 100))
+    await corner.settle(0.25)
+    assert corner.corners == []
+    corner.press(lift())
+    corner.press(down(4000, 4000))
+    await corner.settle(0.25)
+    assert corner.corners == [1]
+
+
+async def test_without_the_bounds_of_the_screen_there_is_no_gesture_and_it_is_said(tmp_path):
+    r = CornerRig(tmp_path, ranges=None)
+    r.watcher.start(asyncio.get_running_loop())
+    try:
+        r.watcher.arm(0)
+        assert not r.watcher.corner_ready
+        r.press(down(100, 100))
+        await r.settle(0.25)
+        assert r.corners == []
+    finally:
+        r.close()
+
+
+async def test_the_bounds_are_only_read_when_a_corner_gesture_is_wanted(rig, tmp_path):
+    assert rig.watcher.corner_ready is False  # le jeu n'en a pas besoin : rien n'a été lu
+    r = CornerRig(tmp_path)
+    r.watcher.start(asyncio.get_running_loop())
+    try:
+        assert r.read == 1  # un écran tactile, ses bornes lues une fois
+        assert r.watcher.corner_ready
+    finally:
+        r.close()
+
+
+async def test_stopping_cancels_a_press_in_progress(corner):
+    corner.press(down(100, 100))
+    await corner.settle(0.04)
+    corner.watcher.stop()
+    await corner.settle(0.2)
+    assert corner.corners == []

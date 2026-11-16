@@ -611,6 +611,102 @@ async def test_a_dock_window_with_any_other_name_is_still_found(tmp_path, only_t
     assert calls(tmp_path, "wlrctl")[-1] == "toplevel focus app_id:super-kiosque"
 
 
+@pytest.mark.parametrize(
+    ("app_id", "title", "kind"),
+    [
+        ("chromium", "MyDock", "dock"),
+        ("chromium-browser", "MyDock", "dock"),
+        ("Chromium", "MyDock", "dock"),
+        ("chrome", "MyDock", "dock"),
+        ("google-chrome", "MyDock", "dock"),
+        (
+            "chrome-tv.free.fr__-Default",
+            "Free TV",
+            "freetv",
+        ),  # --app : l'identifiant porte l'adresse ouverte
+        (
+            "chromium-tv.free.fr__-Default",
+            "Free TV",
+            "freetv",
+        ),  # le préfixe change selon le paquet, pas l'adresse
+        ("Chromium-browser-tv.free.fr__-Default", "x", "freetv"),
+        ("vlc", "VLC media player", "video"),
+        ("org.videolan.VLC", "x", "video"),
+        ("mame", "MAME: Pong", "game"),
+        ("xterm", "MAME: Pong [pong]", "game"),
+        ("foot", "terminal", "other"),
+    ],
+)
+def test_each_window_belongs_to_one_occupant_of_the_screen(app_id, title, kind):
+    assert ps.classify_window(app_id, title) == kind
+
+
+@pytest.mark.parametrize("order", ["dock-first", "free-tv-first"])
+def test_free_tv_is_never_taken_for_the_dock_whatever_the_order_of_the_windows(order):
+    dock, freetv, vlc = (
+        ("chromium", "MyDock"),
+        ("chrome-tv.free.fr__-Default", "Free TV"),
+        ("vlc", "v"),
+    )
+    windows = [dock, freetv, vlc] if order == "dock-first" else [freetv, vlc, dock]
+    assert ps.pick_window(windows, "dock") == "chromium"
+    assert ps.pick_window(windows, "freetv") == "chrome-tv.free.fr__-Default"
+    assert ps.pick_window(windows, "video") == "vlc"
+    assert ps.pick_window([freetv], "dock") is None  # Free TV seul : il n'est pas le dock
+    assert ps.pick_window([dock], "freetv") is None
+    assert ps.pick_window([], "dock") is None
+
+
+def test_a_dock_with_any_other_name_is_still_found_but_never_free_tv_nor_vlc():
+    assert ps.pick_window([("vlc", "v"), ("super-kiosque", "Dock")], "dock") == "super-kiosque"
+    assert ps.pick_window([("vlc", "v"), ("chrome-tv.free.fr__-Default", "x")], "dock") is None
+
+
+async def test_the_windows_of_the_three_occupants_are_brought_forward_by_their_exact_names(
+    tmp_path, only_tools
+):
+    fake_tool(
+        tmp_path,
+        "wlrctl",
+        'case "$1 $2" in "toplevel list") printf "chrome-tv.free.fr__-Default: Free TV\nchromium: Dock\nVlc: v\nmame: Pong\n";; esac',
+    )
+    windows = ps.Windows({})
+    assert await windows.focus("freetv")
+    assert await windows.focus("dock")
+    assert await windows.focus("video")
+    assert await windows.focus("game")
+    focused = [c for c in calls(tmp_path, "wlrctl") if c.startswith("toplevel focus")]
+    assert focused == [
+        "toplevel focus app_id:chrome-tv.free.fr__-Default",
+        "toplevel focus app_id:chromium",
+        "toplevel focus app_id:Vlc",
+        "toplevel focus app_id:mame",
+    ]
+
+
+async def test_free_tv_has_no_xwayland_fallback_and_is_not_found_when_closed(tmp_path, only_tools):
+    fake_tool(
+        tmp_path, "wlrctl", 'case "$1 $2" in "toplevel list") printf "chromium: Dock\n";; esac'
+    )
+    fake_tool(tmp_path, "xdotool", 'case "$1" in search) printf "42\n";; esac')
+    assert not await ps.Windows({}).focus("freetv")
+    assert calls(tmp_path, "xdotool") == []  # Chromium n'est pas une fenêtre X11 : rien à tenter
+
+
+async def test_a_window_can_be_put_in_full_screen_and_closed_by_its_address(tmp_path, only_tools):
+    fake_tool(
+        tmp_path,
+        "wlrctl",
+        'case "$1 $2" in "toplevel list") printf "chrome-tv.free.fr__-Default: Free TV\nchromium: Dock\n";; esac',
+    )
+    windows = ps.Windows({})
+    assert await windows.fullscreen("chrome-tv.free.fr__-Default")
+    assert calls(tmp_path, "wlrctl")[-1] == "toplevel fullscreen app_id:chrome-tv.free.fr__-Default"
+    assert await windows.close_app("tv.free.fr") == 1  # le dock n'est pas touché
+    closed = [c for c in calls(tmp_path, "wlrctl") if c.startswith("toplevel close")]
+    assert closed == ["toplevel close app_id:chrome-tv.free.fr__-Default"]
+
+
 async def test_without_wlrctl_xdotool_hides_and_shows_the_video_window(tmp_path, only_tools):
     fake_tool(tmp_path, "xdotool", 'case "$1" in search) printf "8388608\\n8388610\\n";; esac')
     windows = ps.Windows({})
@@ -709,8 +805,9 @@ class Mailbox:
                 await asyncio.sleep(0.02)
 
 
-async def test_hello_says_what_the_screen_can_do(fakes):
-    s = session(fakes)
+async def test_hello_says_what_the_screen_can_do(fakes, monkeypatch):
+    monkeypatch.setattr(ps, "has_widevine", lambda: False)
+    s = session(fakes, chromium="", keyboard=type("K", (), {"available": False})())
     assert s.hello() == {
         "t": "hello",
         "v": 1,
@@ -719,6 +816,9 @@ async def test_hello_says_what_the_screen_can_do(fakes):
         "touch": True,
         "demo": False,
         "mame": False,
+        "chromium": False,  # Free TV : ni Chromium, ni Widevine, ni clavier à l'écran
+        "widevine": False,
+        "keyboard": False,
         "gpio": None,
     }
     s.touch = type("T", (), {"available": False})()

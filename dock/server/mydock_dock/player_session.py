@@ -1,4 +1,4 @@
-"""L'assistant de lecture : il tourne dans la session de l'écran du dock et y pilote VLC.
+"""L'assistant de lecture : il tourne dans la session de l'écran du dock et y pilote VLC, MAME et Chromium (Free TV).
 
 Le service du dock est isolé (aucun accès à l'écran) : VLC doit donc être lancé depuis la session graphique du Pi, par
 le compositeur (labwc, voir deploy/pi/labwc/autostart). Cet assistant s'y connecte au dock par `/ws/player` et :
@@ -7,6 +7,7 @@ le compositeur (labwc, voir deploy/pi/labwc/autostart). Cet assistant s'y connec
     Unix propre à l'assistant : rien n'écoute sur le réseau) ;
   * lit un fichier d'un partage Samba par smbclient quand ce VLC n'a pas le module Samba : smbclient donne le fichier
     à VLC par un tube ;
+  * ouvre Free TV (tv.free.fr) dans une fenêtre de Chromium, avec un clavier virtuel à la demande (freetv_playback.py) ;
   * ramène le dock au premier plan quand on touche l'écran pendant la vidéo (`swayidle` voit le toucher, `wlrctl`
     change la fenêtre active) : le dock montre alors la télécommande, et la vidéo continue derrière ;
   * rend compte au dock : en lecture, position, durée, fin, ou ce qui a échoué.
@@ -40,8 +41,21 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from mydock_dock import playerlog, samba
+from mydock_dock.freetv_playback import (
+    FREETV_HOST,
+    DemoFreeTvPlayback,
+    FreeTvPlayback,
+    chromium_version,
+    find_chromium,
+    has_widevine,
+    host_resolves,
+    kill_stale,
+    profile_dir,
+    widevine_info,
+)
+from mydock_dock.freetv_playback import read_flags as read_freetv_flags
 from mydock_dock.gpio_button import DEFAULT_PIN, GpioButton, LibgpiodBackend, describe_pin
-from mydock_dock.inputs import InputWatcher
+from mydock_dock.inputs import CORNERS, DEFAULT_CORNER, InputWatcher
 from mydock_dock.mame_playback import (
     GAME_RE,
     DemoGamePlayback,
@@ -51,6 +65,7 @@ from mydock_dock.mame_playback import (
 from mydock_dock.mame_playback import read_flags as read_mame_flags
 from mydock_dock.pc_audio import DemoSound, PcSound, usable_environment
 from mydock_dock.retrogame import find_mame
+from mydock_dock.virtual_keyboard import NoKeyboard, VirtualKeyboard, find_keyboard
 
 log = logging.getLogger("mydock.player")
 
@@ -64,6 +79,9 @@ RC_WAIT = 20.0  # temps laissé à VLC pour ouvrir son socket de commande
 TOUCH_GRACE = 1.5
 #: Pendant un jeu, un toucher quitte : celui qui a lancé le jeu (et le doigt qui s'attarde) ne doit pas compter.
 GAME_TOUCH_GRACE = 2.0
+#: Pendant Free TV, le geste de coin ne compte pas non plus tout de suite (le doigt qui vient d'ouvrir Free TV est encore là).
+FREETV_TOUCH_GRACE = 2.0
+DEFAULT_FREETV_SCALE = 0.7
 #: Les fichiers qui, en mode démo, tiennent lieu du bouton et de l'écran tactile (le test les crée dans XDG_RUNTIME_DIR).
 DEMO_BUTTON = "mydock-demo-button"
 DEMO_TOUCH = "mydock-demo-touch"
@@ -959,8 +977,37 @@ class DemoPlayback:
 # --- fenêtres et toucher -----------------------------------------------------------------------------------------------
 
 
+def classify_window(app_id: str, title: str = "") -> str:
+    """À quel occupant de l'écran appartient une fenêtre : « freetv », « video » (VLC), « game » (MAME), « dock » ou « other ».
+
+    Le dock et Free TV sont tous deux Chromium : le dock s'appelle « chromium » (ou « chromium-browser », « chrome »…), alors que
+    Free TV, ouvert en mode application, porte dans son identifiant l'adresse qu'il ouvre (« chrome-tv.free.fr__-Default »).
+    Free TV se reconnaît donc d'abord, puis le reste de ce qui ressemble à Chromium est le dock."""
+    low = app_id.lower()
+    if FREETV_HOST in low:
+        return "freetv"
+    if low in ("vlc", "org.videolan.vlc"):
+        return "video"
+    if "mame" in low or "mame" in title.lower():
+        return "game"
+    if "chrom" in low:
+        return "dock"
+    return "other"
+
+
+def pick_window(windows: Sequence[tuple[str, str]], which: str) -> str | None:
+    """L'identifiant de la fenêtre à mettre devant pour `which` (« dock », « video », « game » ou « freetv »), ou rien."""
+    kinds = [(app_id, classify_window(app_id, title)) for app_id, title in windows]
+    wanted = next((a for a, kind in kinds if kind == which), None)
+    if wanted is None and which == "dock":
+        wanted = next(
+            (a for a, kind in kinds if kind == "other"), None
+        )  # un autre navigateur : le dock a peut-être un autre nom
+    return wanted
+
+
 class Windows:
-    """Quelle fenêtre est devant : la vidéo (VLC) ou le dock (Chromium).
+    """Quelle fenêtre est devant : la vidéo (VLC), le jeu (MAME), Free TV (Chromium) ou le dock (Chromium).
 
     Par `wlrctl` (le protocole « foreign-toplevel » de labwc) ; à défaut, par `xdotool` sur la fenêtre de VLC, qui passe
     par XWayland : le dock revient devant en la réduisant, la vidéo revient en l'activant.
@@ -989,6 +1036,7 @@ class Windows:
         return process.returncode or 0, out.decode("utf-8", "replace")
 
     async def toplevels(self) -> list[tuple[str, str]]:
+        """Les fenêtres que labwc connaît : (identifiant, titre). Vide si `wlrctl` manque ou ne répond pas."""
         code, out = await self._run(self._wlrctl, "toplevel", "list")
         found = []
         for line in out.splitlines():
@@ -998,29 +1046,32 @@ class Windows:
         return found if code == 0 else []
 
     async def focus(self, which: str) -> bool:
-        """`video` : la fenêtre de VLC ; `game` : celle de MAME ; `dock` : celle du navigateur du dock."""
+        """`video` : la fenêtre de VLC ; `game` : celle de MAME ; `freetv` : celle de Free TV ; `dock` : celle du dock."""
         if self._wlrctl is not None and await self._focus_wayland(which):
             return True
-        if which == "game":
-            return False  # MAME est une fenêtre Wayland : pas de repli par XWayland
+        if which in ("game", "freetv"):
+            return False  # MAME et Chromium sont des fenêtres Wayland : pas de repli par XWayland
         return self._xdotool is not None and await self._focus_x11(which)
 
     async def _focus_wayland(self, which: str) -> bool:
-        windows = await self.toplevels()
-        known = ("vlc", "org.videolan.vlc", "mame")
-        if which == "video":
-            wanted = next((a for a, _ in windows if a.lower() in ("vlc", "org.videolan.vlc")), None)
-        elif which == "game":
-            wanted = next(
-                (a for a, t in windows if "mame" in a.lower() or "mame" in t.lower()), None
-            )
-        else:
-            wanted = next((a for a, _ in windows if "chrom" in a.lower()), None) or next(
-                (a for a, _ in windows if a.lower() not in known), None
-            )
+        wanted = pick_window(await self.toplevels(), which)
         if wanted is None:
             return False
         code, _ = await self._run(self._wlrctl, "toplevel", "focus", f"app_id:{wanted}")
+        return code == 0
+
+    async def maximize(self, app_id: str) -> bool:
+        """Maximise cette fenêtre (idempotent), sans la mettre en plein écran."""
+        if self._wlrctl is None:
+            return False
+        code, _ = await self._run(self._wlrctl, "toplevel", "maximize", f"app_id:{app_id}")
+        return code == 0
+
+    async def fullscreen(self, app_id: str) -> bool:
+        """Met cette fenêtre en plein écran (idempotent) : le repli quand `--start-fullscreen` n'a pas été respecté."""
+        if self._wlrctl is None:
+            return False
+        code, _ = await self._run(self._wlrctl, "toplevel", "fullscreen", f"app_id:{app_id}")
         return code == 0
 
     async def close_app(self, word: str) -> int:
@@ -1164,12 +1215,17 @@ class Session:
         vlc: str | None = None,
         smbclient: str | None = None,
         mame: str | None = None,
+        chromium: str | None = None,
+        keyboard: Any = None,
         gpio_backend: Callable[[], Any] | None = None,
         button_pin: int = DEFAULT_PIN,
         sound: PcSound | None = None,
     ) -> None:
         self.url = url
         self.demo = demo
+        self.base_env = dict(
+            os.environ if env is None else env
+        )  # sans le « C.UTF-8 » de VLC : Chromium se met en français
         self.env = session_environment(env)
         self.runtime_dir = runtime_dir or Path(
             self.env.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
@@ -1178,6 +1234,12 @@ class Session:
         self.vlc = vlc if vlc is not None else find_vlc()
         self.smbclient = smbclient if smbclient is not None else shutil.which("smbclient")
         self.mame = mame if mame is not None else find_mame()
+        self.chromium = chromium if chromium is not None else find_chromium()
+        #: Les réglages de Free TV que le dock transmet (voir `_configure`) : l'identité de Chromium, le zoom, le coin du retour.
+        self.freetv_user_agent = "auto"
+        self.freetv_scale = DEFAULT_FREETV_SCALE
+        self.freetv_corner = DEFAULT_CORNER
+        self.freetv_fullscreen = True
         self.windows: Any = Windows(self.env)
         self.touch: Any = TouchWatcher(self.env, self._touched)
         #: Le bouton physique (GPIO) et la lecture directe de l'écran tactile et des manettes pendant un jeu.
@@ -1186,11 +1248,14 @@ class Session:
         self.button = GpioButton(
             self._button_edge, backend=gpio_backend or LibgpiodBackend, on_status=self._gpio_changed
         )
-        self.inputs = InputWatcher(on_touch=self._game_touched, on_combo=self._game_combo)
+        self.inputs = InputWatcher(
+            on_touch=self._game_touched, on_combo=self._game_combo, on_corner=self._freetv_corner
+        )
         self.wake_screen: Callable[[], Any] = lambda: wake_screen(self.env)
-        self._engine: str | None = None  # « vlc » ou « mame » : ce qui occupe l'écran
+        self._engine: str | None = None  # « vlc », « mame » ou « freetv » : ce qui occupe l'écran
         self._quitting = False
         self._demo_task: asyncio.Task[None] | None = None
+        self.keyboard: Any = keyboard or (NoKeyboard() if demo else VirtualKeyboard(self.base_env))
         if demo:  # pas d'écran réel : ni fenêtres à ordonner ni toucher à guetter
             self.windows, self.touch = _NoWindows(), _NoTouch()
             self.gpio_status = f"{describe_pin(button_pin)} : démonstration."
@@ -1221,6 +1286,10 @@ class Session:
             "touch": True if self.demo else (self.touch.available and self.windows.available),
             "demo": self.demo,
             "mame": True if self.demo else bool(self.mame),
+            # Free TV : Chromium et Widevine (il lit des flux protégés) ; et un clavier à l'écran pour la première connexion.
+            "chromium": True if self.demo else bool(self.chromium),
+            "widevine": True if self.demo else has_widevine(),
+            "keyboard": True if self.demo else bool(self.keyboard.available),
             "gpio": self.gpio_status,
         }
 
@@ -1242,6 +1311,8 @@ class Session:
                 await self._stop_playback()
         elif name == "front":
             await self._set_front(str(message.get("to")))
+        elif name == "keyboard":
+            await self._keyboard(message.get("on"))
         elif name in ("pause", "resume", "toggle", "seek", "volume") and self._playback is not None:
             if name != "volume":  # le curseur du volume enverrait des dizaines de lignes
                 playerlog.event(f"lecture {self._job} : commande du dock « {name} »")
@@ -1253,6 +1324,9 @@ class Session:
         self._job = int(message.get("job", 0))
         if message.get("engine") == "mame":
             await self._play_game(message)
+            return
+        if message.get("engine") == "freetv":
+            await self._play_freetv()
             return
         self._engine = "vlc"
         url = str(message.get("url", ""))
@@ -1319,8 +1393,11 @@ class Session:
                     ) is not None and await recover():
                         continue  # VLC n'a rien lu : une autre façon de lire est lancée (journal : « tentative »)
                     await self._ended(job, playback.error(), playback)
-                    if isinstance(playback, MamePlayback | DemoGamePlayback):
-                        await playback.stop()  # le jeu a fini seul : on range ce qu'il laisse (drapeau, lecture de sa sortie)
+                    if isinstance(
+                        playback,
+                        MamePlayback | DemoGamePlayback | FreeTvPlayback | DemoFreeTvPlayback,
+                    ):
+                        await playback.stop()  # le jeu ou Free TV a fini seul : on range ce qu'il laisse (drapeau, sortie, enfants)
                     return
                 if (fix := getattr(playback, "fix_display", None)) is not None and await fix():
                     focused = False  # la fenêtre de VLC est une nouvelle : la remettre devant quand elle joue
@@ -1332,7 +1409,7 @@ class Session:
                     return
                 if not focused and status["state"] == "playing" and self.front == "video":
                     focused = True
-                    await self.windows.focus("game" if self._engine == "mame" else "video")
+                    await self.windows.focus(self._occupant_window())
                 await self._report(job, status)
                 await asyncio.sleep(POLL_SECONDS)
         except asyncio.CancelledError:
@@ -1353,6 +1430,7 @@ class Session:
                 "length": status.get("length"),
                 "volume": getattr(playback, "volume", None),
                 "front": self.front,
+                **({"keyboard": bool(self.keyboard.visible)} if self._engine == "freetv" else {}),
                 **({"seekable": False} if status.get("seekable") is False else {}),
             }
         )
@@ -1366,6 +1444,7 @@ class Session:
         self.inputs.stop()
         await self.sound.end()
         await self.touch.stop()
+        await self.keyboard.close()
         await self.windows.focus("dock")
         await self._emit({"t": "ended", "job": job, "error": error})
 
@@ -1382,8 +1461,13 @@ class Session:
             self.front = "dock"
             self.inputs.stop()
             await self.touch.stop()
+            await self.keyboard.close()
             await self.windows.focus("dock")
         await self.sound.end()
+
+    def _occupant_window(self) -> str:
+        """La fenêtre de ce qui occupe l'écran : « game » (MAME), « freetv » (Chromium) ou « video » (VLC)."""
+        return {"mame": "game", "freetv": "freetv"}.get(self._engine or "", "video")
 
     async def _set_front(self, to: str) -> None:
         if to not in ("video", "dock"):
@@ -1393,12 +1477,18 @@ class Session:
         self.front = to
         if to == "video":
             self._front_since = time.monotonic()
-        await self.windows.focus("game" if to == "video" and self._engine == "mame" else to)
+        else:
+            await self.keyboard.hide()  # le dock a son clavier à lui, dans sa page
+        await self.windows.focus(self._occupant_window() if to == "video" else "dock")
 
     def _touched(self) -> None:
-        """Un toucher pendant la vidéo : le dock revient devant (la vidéo continue derrière) ; pendant un jeu : on le quitte."""
+        """Un toucher pendant la vidéo : le dock revient devant (la vidéo continue derrière) ; pendant un jeu : on le quitte.
+
+        Pendant Free TV, un toucher navigue dans la page : il ne ramène jamais le dock (voir `_freetv_corner`)."""
         if self._engine == "mame":
             self._game_touched()
+            return
+        if self._engine == "freetv":
             return
         if (
             self.front == "video"
@@ -1463,6 +1553,86 @@ class Session:
                 await self.touch.start()
         self._monitor = asyncio.create_task(self._watch(playback, job))
 
+    async def _play_freetv(self) -> None:
+        """Ouvre Free TV. Le dock ne dit que « ouvre Free TV » : l'adresse, l'identité et les options sont décidées ici."""
+        job = self._job
+        if self.demo:
+            playback: Any = DemoFreeTvPlayback()
+        else:
+            if not self.chromium:
+                await self._ended(job, "Chromium est absent du Pi : sudo apt install chromium")
+                return
+            if not has_widevine():
+                await self._ended(
+                    job,
+                    "Widevine est absent du Pi (Free TV lit des flux protégés) : sudo apt install libwidevinecdm0, "
+                    "puis redémarre l'écran du dock.",
+                )
+                return
+            info = widevine_info()
+            playerlog.event(
+                f"free tv {job} : demandé par le dock — Chromium {self.chromium}, Widevine {info[1] if info else '?'} "
+                f"({info[0] if info else '?'}), identité « {self.freetv_user_agent or 'd’origine'} », zoom {self.freetv_scale:g}"
+            )
+            if not await host_resolves():
+                playerlog.event(
+                    f"free tv {job} : {FREETV_HOST} est introuvable par le DNS du Pi (Chromium montrera sa page d'erreur)"
+                )
+            routed = await self.sound.begin()  # avant Chromium : le début du son n'est pas perdu
+            env = dict(self.base_env)
+            if routed:  # le son sort sur le PC : Chromium joue dans le puits virtuel
+                env.update(self.sound.route_env())
+            playback = FreeTvPlayback(
+                chromium=self.chromium, windows=self.windows, env=env,
+                runtime_dir=self.runtime_dir, job=job,
+                user_agent_setting=self.freetv_user_agent, scale=self.freetv_scale,
+                fullscreen=self.freetv_fullscreen,
+            )  # fmt: skip
+        self._engine = "freetv"
+        if self.demo:
+            await self.sound.begin()
+        try:
+            await playback.start()
+        except (OSError, RuntimeError) as exc:
+            await playback.stop()
+            await self.sound.end()
+            self._engine = None
+            await self._ended(
+                job,
+                str(exc)
+                if isinstance(exc, RuntimeError)
+                else f"Chromium ne démarre pas ({exc.strerror}).",
+            )
+            return
+        self._playback = playback
+        self.front = "video"
+        self._front_since = time.monotonic()
+        if not self.demo:
+            # Un toucher simple navigue dans Free TV : seul l'appui long dans le coin (et Select + Start) ramène le dock.
+            self.inputs.start(self._loop)
+            self.inputs.corner = self.freetv_corner
+            self.inputs.arm(FREETV_TOUCH_GRACE)
+            if not self.inputs.corner_ready:
+                playerlog.event(
+                    f"free tv {job} : le geste de coin est impossible ({self.inputs.summary()}) : "
+                    "retour au dock par le bouton physique ou Select + Start"
+                )
+        self._monitor = asyncio.create_task(self._watch(playback, job))
+
+    async def _keyboard(self, on: Any) -> None:
+        """Montre ou cache le clavier à l'écran (seulement pendant Free TV, devant)."""
+        if self._engine != "freetv" or not isinstance(on, bool):
+            return
+        if on:
+            if self.front != "video":
+                return
+            if not await self.keyboard.show():
+                playerlog.event(
+                    "clavier : il ne démarre pas (sudo apt install wvkbd, ou le compositeur n'en veut pas)"
+                )
+        else:
+            await self.keyboard.hide()
+
     async def _quit_game(self, why: str) -> None:
         """Quitte le jeu en cours (toucher, bouton, Select+Start) et le dit au dock : l'écran revient à la liste des jeux."""
         playback, job = self._playback, self._job
@@ -1485,8 +1655,22 @@ class Session:
             self._loop.create_task(self._quit_game("toucher de l'écran"))
 
     def _game_combo(self) -> None:
-        if self._engine == "mame" and self._loop is not None:
+        """Select + Start tenus : on quitte le jeu ; pendant Free TV, le dock revient devant (Free TV reste ouvert derrière)."""
+        if self._loop is None:
+            return
+        if self._engine == "mame":
             self._loop.create_task(self._quit_game("Select + Start tenus"))
+        elif self._engine == "freetv":
+            playerlog.event("free tv : retour au dock demandé (Select + Start tenus)")
+            self._loop.create_task(self._set_front("dock"))
+
+    def _freetv_corner(self) -> None:
+        """Un appui long dans le coin de l'écran pendant Free TV : le dock revient devant (Free TV reste ouvert derrière)."""
+        if self._engine == "freetv" and self._loop is not None:
+            playerlog.event(
+                f"free tv : retour au dock demandé (appui long dans le coin {self.inputs.corner})"
+            )
+            self._loop.create_task(self._set_front("dock"))
 
     # --- le bouton physique --------------------------------------------------------------------------------
 
@@ -1525,6 +1709,19 @@ class Session:
             self.sound.enabled = enabled
         if isinstance(advance, int) and not isinstance(advance, bool) and 0 <= advance <= 1000:
             self.sound.advance_ms = advance
+        agent, scale, corner = (
+            message.get("freetv_user_agent"),
+            message.get("freetv_scale"),
+            message.get("freetv_corner"),
+        )
+        if isinstance(agent, str) and len(agent) <= 300 and not any(ord(c) < 32 for c in agent):
+            self.freetv_user_agent = agent.strip()
+        if isinstance(scale, int | float) and not isinstance(scale, bool) and 0.25 <= scale <= 3:
+            self.freetv_scale = float(scale)
+        if corner in CORNERS:
+            self.freetv_corner = corner
+        if isinstance(message.get("freetv_fullscreen"), bool):
+            self.freetv_fullscreen = message["freetv_fullscreen"]
         pin = message.get("button_gpio")
         if (
             isinstance(pin, int)
@@ -1610,6 +1807,18 @@ class Session:
         playerlog.event(
             f"MAME : {self.mame or '-'} ({version}) — options en plus : {read_mame_flags() or 'aucune'}"
         )
+        chromium_info = await chromium_version(self.chromium) if self.chromium else "absent"
+        widevine = widevine_info()
+        playerlog.event(
+            f"Chromium (Free TV) : {self.chromium or '-'} ({chromium_info}) — options en plus : "
+            f"{read_freetv_flags() or 'aucune'} — Widevine : "
+            + (
+                f"{widevine[0]} (version {widevine[1] or '?'})"
+                if widevine
+                else "ABSENT (sudo apt install libwidevinecdm0)"
+            )
+            + f" — clavier à l'écran : {find_keyboard() or 'absent'}"
+        )
         playerlog.event(
             f"bouton physique : {describe_pin(self.button_pin)} (libgpiod {'oui' if LibgpiodBackend().available else 'NON'})"
         )
@@ -1630,6 +1839,8 @@ class Session:
         self._loop = asyncio.get_running_loop()
         with contextlib.suppress(Exception):  # le journal ne doit jamais empêcher de lire une vidéo
             await self.log_startup()
+        with contextlib.suppress(Exception):
+            await self._close_stale_freetv()
         # Le bouton physique est lu ici, pas par le dock : il marche même si le dock redémarre ou si Chromium est bloqué.
         self._start_button()
         if self.demo:
@@ -1639,8 +1850,19 @@ class Session:
         finally:
             self.button.stop()
             self.inputs.stop()
+            await self.keyboard.close()
             if self._demo_task is not None:
                 self._demo_task.cancel()
+
+    async def _close_stale_freetv(self) -> None:
+        """Un Chromium de Free TV resté d'un assistant précédent (arrêté ou redémarré) est refermé : il occuperait l'écran."""
+        profile = profile_dir(self.base_env)
+        if self.demo or profile is None:
+            return
+        if found := await kill_stale(profile):
+            playerlog.event(
+                f"free tv : un Chromium resté ouvert d'avant le démarrage de l'assistant a été refermé ({found})"
+            )
 
     async def _serve_dock(self) -> None:
         from websockets.asyncio.client import connect

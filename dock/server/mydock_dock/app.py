@@ -143,9 +143,9 @@ class UiSetParams(_Strict):
 
 
 class PlayParams(_Strict):
-    """Ce qu'on peut demander de lire : un fichier d'un partage, un jeu que MAME a listé. Jamais une adresse."""
+    """Ce qu'on peut demander de lire : un fichier d'un partage, un jeu que MAME a listé, ou Free TV. Jamais une adresse."""
 
-    kind: Literal["file", "game"]
+    kind: Literal["file", "game", "freetv"]
     id: str | None = Field(default=None, max_length=24)
     share: str | None = Field(default=None, max_length=255)
     path: str | None = Field(default=None, max_length=1000)
@@ -161,6 +161,10 @@ class PlayerVolumeParams(_Strict):
 
 class PlayerFrontParams(_Strict):
     to: Literal["video", "dock"]
+
+
+class PlayerKeyboardParams(_Strict):
+    on: StrictBool
 
 
 class MediaSetParams(_Strict):
@@ -478,6 +482,10 @@ class DockServer:
             "button_gpio": self.config.button_gpio,
             "pc_audio": self.config.pc_audio,
             "audio_advance_ms": self.config.audio_advance_ms,
+            "freetv_user_agent": self.config.freetv_user_agent,
+            "freetv_scale": self.config.freetv_scale,
+            "freetv_corner": self.config.freetv_corner,
+            "freetv_fullscreen": self.config.freetv_fullscreen,
         }
 
     def media_info(self) -> dict[str, Any]:
@@ -709,6 +717,7 @@ class DockServer:
         reg.register("dock.media.set", self._act_media_set, params=MediaSetParams)
         reg.register("dock.media.test", self._act_media_test, timeout=45.0)
         reg.register("dock.player.play", self._act_player_play, params=PlayParams, timeout=20.0)
+        reg.register("dock.player.keyboard", self._act_player_keyboard, params=PlayerKeyboardParams)
         reg.register("dock.player.pause", self._act_player_pause)
         reg.register("dock.player.stop", self._act_player_stop)
         reg.register("dock.player.seek", self._act_player_seek, params=PlayerSeekParams)
@@ -1009,6 +1018,18 @@ class DockServer:
 
     async def _act_player_play(self, _ctx: ActionContext, params: PlayParams) -> dict[str, Any]:
         try:
+            if params.kind == "freetv":
+                # Free TV : le dock ne donne ni adresse ni option, seulement « ouvre Free TV » (l'assistant a l'adresse).
+                if params.id or params.share or params.path:
+                    raise ActionError(
+                        proto.ErrorCode.BAD_PARAMS, "Free TV ne prend aucun paramètre."
+                    )
+                media = {"kind": "freetv", "title": "Free TV", "subtitle": "tv.free.fr"}
+                self.player.play(media, "", extra={"engine": "freetv"})
+                media_log.info(
+                    "Ouverture de Free TV demandée à l'assistant (job %d)", self.player.job
+                )
+                return {"started": media["title"]}
             if params.kind == "game":
                 media, extra = self._game_request(params)
                 self.player.play(media, "", extra=extra)
@@ -1103,6 +1124,11 @@ class DockServer:
         self, _ctx: ActionContext, params: PlayerFrontParams
     ) -> dict[str, Any]:
         return await self._player_command("front", to=params.to)
+
+    async def _act_player_keyboard(
+        self, _ctx: ActionContext, params: PlayerKeyboardParams
+    ) -> dict[str, Any]:
+        return await self._player_command("keyboard", on=params.on)
 
     async def _act_player_dismiss(self, _ctx: ActionContext, _params: NoParams) -> dict[str, Any]:
         self.player.reset_error()

@@ -33,6 +33,8 @@
     [freetv]                    # Free TV : tv.free.fr dans une fenêtre de Chromium sur l'écran du dock
     user_agent = "auto"         # "auto" : un Chromium de bureau x86_64 de la même version ; "" : l'identité d'origine de Chromium
     scale = 0.7                 # le zoom de la page (le site est pensé pour un grand écran)
+    corner = "top-left"         # le coin où l'appui long (1,5 s) ramène le dock : top-left, top-right, bottom-left, bottom-right
+    fullscreen = true           # false : fenêtre maximisée (avec sa barre de titre), si le clavier à l'écran reste caché derrière Free TV
 
     [retrogame]                 # Retrogame : des jeux d'arcade MAME sur l'écran du dock
     roms_dir = "/var/lib/mydock/roms"   # vide = le dossier « roms » de l'état du dock
@@ -67,6 +69,8 @@ DEFAULT_CLIENTS_DIR = Path("/usr/share/mydock/clients")
 DEFAULT_SMB_HOST = "mafreebox.freebox.fr"
 DEFAULT_FREETV_USER_AGENT = "auto"  # voir freetv_playback.compute_user_agent
 DEFAULT_FREETV_SCALE = 0.7
+DEFAULT_FREETV_CORNER = "top-left"
+FREETV_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 MIN_FREETV_SCALE, MAX_FREETV_SCALE = 0.25, 3.0
 MAX_USER_AGENT_LENGTH = 300
 DEFAULT_BUTTON_GPIO = 17  # broche physique 11 (la masse est sur la broche 9)
@@ -129,6 +133,10 @@ class DockConfig:
     #: (celle d'origine) ou une chaîne ({major} y est remplacé par la version de Chromium) — et le zoom de la page.
     freetv_user_agent: str = DEFAULT_FREETV_USER_AGENT
     freetv_scale: float = DEFAULT_FREETV_SCALE
+    #: Le coin de l'écran où un appui long ramène le dock pendant Free TV (un toucher simple navigue dans la page).
+    freetv_corner: str = DEFAULT_FREETV_CORNER
+    #: Free TV en plein écran ; faux : une fenêtre maximisée (le clavier à l'écran se montre alors au-dessus d'elle, voir freetv_playback.py).
+    freetv_fullscreen: bool = True
     demo_markets: bool = False  # option de la ligne de commande, jamais écrite dans le fichier
     demo_retro: bool = False  # idem : de faux jeux, de fausses manettes (essais et captures)
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -205,6 +213,8 @@ class DockConfig:
                 freetv.get("user_agent", DEFAULT_FREETV_USER_AGENT)
             )
             freetv_scale = clean_freetv_scale(freetv.get("scale", DEFAULT_FREETV_SCALE))
+            freetv_corner = clean_freetv_corner(freetv.get("corner", DEFAULT_FREETV_CORNER))
+            freetv_fullscreen = clean_flag(freetv.get("fullscreen", True), "fullscreen")
         except ValidationFailure as exc:
             raise ConfigError(f"[freetv] : {exc}") from None
         try:
@@ -242,6 +252,8 @@ class DockConfig:
             audio_advance_ms=audio_advance_ms,
             freetv_user_agent=freetv_user_agent,
             freetv_scale=freetv_scale,
+            freetv_corner=freetv_corner,
+            freetv_fullscreen=freetv_fullscreen,
             _raw=copy.deepcopy(raw),
         )
         if not config.loopback_only and not config.allow_remote:
@@ -292,6 +304,8 @@ class DockConfig:
         media["audio_advance_ms"] = self.audio_advance_ms
         freetv["user_agent"] = self.freetv_user_agent
         freetv["scale"] = self.freetv_scale
+        freetv["corner"] = self.freetv_corner
+        freetv["fullscreen"] = self.freetv_fullscreen
         retro["roms_dir"] = self.roms_dir
         retro["button_gpio"] = self.button_gpio
         retro["upload_without_code"] = self.upload_without_code
@@ -433,6 +447,13 @@ def clean_freetv_scale(value: object) -> float:
             f"scale doit être un nombre de {MIN_FREETV_SCALE} à {MAX_FREETV_SCALE}."
         )
     return float(value)
+
+
+def clean_freetv_corner(value: object) -> str:
+    """Le coin du retour au dock pendant Free TV."""
+    if value not in FREETV_CORNERS:
+        raise ValidationFailure(f"corner doit être l'un de : {', '.join(FREETV_CORNERS)}.")
+    return str(value)
 
 
 _NOTED: set[tuple[str, str]] = set()
