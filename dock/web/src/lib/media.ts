@@ -141,6 +141,21 @@ export const ADVANCE_MAX_MS = 1_000
 export const stepAdvance = (current: number, direction: 1 | -1): number =>
   Math.min(ADVANCE_MAX_MS, Math.max(0, Math.round(current / ADVANCE_STEP_MS) * ADVANCE_STEP_MS + direction * ADVANCE_STEP_MS))
 
+/** La taille de la page de Free TV : de 50 % à 300 %, par pas de 25 % (1,5 par défaut : le texte est lisible sur le 7 pouces). */
+export const FREETV_SCALE_DEFAULT = 1.5
+export const FREETV_SCALE_STEP = 0.25
+export const FREETV_SCALE_MIN = 0.5
+export const FREETV_SCALE_MAX = 3
+
+/** Un pas de plus ou de moins sur la taille de Free TV, ramenée d'abord au pas le plus proche et bornée. */
+export const stepScale = (current: number, direction: 1 | -1): number => {
+  const steps = Math.round(current / FREETV_SCALE_STEP) + direction
+  return Math.min(FREETV_SCALE_MAX, Math.max(FREETV_SCALE_MIN, steps * FREETV_SCALE_STEP))
+}
+
+/** « 150 % » : la taille de la page de Free TV, lisible. */
+export const scaleText = (scale: number): string => `${Math.round(scale * 100)} %`
+
 /** « 150 ms », « 1,0 s » : l'avance du son, lisible. */
 export const advanceText = (ms: number): string => (ms >= 1_000 ? `${(ms / 1_000).toFixed(1).replace('.', ',')} s` : `${ms} ms`)
 

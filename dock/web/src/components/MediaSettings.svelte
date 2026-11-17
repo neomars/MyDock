@@ -5,7 +5,7 @@
   import PlugZap from '@lucide/svelte/icons/plug-zap'
   import Plus from '@lucide/svelte/icons/plus'
   import { editText } from '../lib/keyboard.svelte'
-  import { advanceText, stepAdvance } from '../lib/media'
+  import { FREETV_SCALE_DEFAULT, advanceText, freetvActive, scaleText, stepAdvance, stepScale } from '../lib/media'
   import { media } from '../lib/media.svelte'
   import type { MediaTestPart } from '../lib/protocol'
   import { sock } from '../lib/socket.svelte'
@@ -47,6 +47,15 @@
   async function stepSound(direction: 1 | -1): Promise<void> {
     const next = stepAdvance(advance, direction)
     if (next !== advance && (await media.saveSound({ audio_advance_ms: next }))) notify(`Son avancé de ${advanceText(next)}.`, 'good')
+  }
+
+  // Free TV : la taille de la page. Chromium ne change pas son zoom en route : elle s'applique à la prochaine ouverture.
+  const scale = $derived(info?.freetv_scale ?? FREETV_SCALE_DEFAULT)
+  const freeTvOpen = $derived(freetvActive(sock.player))
+
+  async function stepFreeTv(direction: 1 | -1): Promise<void> {
+    const next = stepScale(scale, direction)
+    if (next !== scale && (await media.saveFreeTvScale(next))) notify(`Free TV à ${scaleText(next)}.`, 'good')
   }
 
   async function test(): Promise<void> {
@@ -94,6 +103,15 @@
       Le Pi n’a pas d’enceintes : le son des vidéos, de la TV et des jeux sort sur le PC. Si le son des vidéos est en retard sur l’image, augmente l’avance ; en avance, diminue-la (appliqué à la prochaine lecture).
     </p>
   {/if}
+  <div class="setting">
+    <span class="label">Free TV</span>
+    <span class="value mono" data-testid="freetv-scale">{scaleText(scale)}</span>
+    <button class="btn icon" aria-label="Free TV plus petit" data-testid="freetv-scale-down" onclick={() => stepFreeTv(-1)}><Minus size={30} aria-hidden="true" /></button>
+    <button class="btn icon" aria-label="Free TV plus grand" data-testid="freetv-scale-up" onclick={() => stepFreeTv(1)}><Plus size={30} aria-hidden="true" /></button>
+  </div>
+  <p class="dim small" data-testid="freetv-scale-help">
+    Taille du texte de Free TV (100 % = normale). Plus grand = plus lisible, mais moins de place dans la page. {freeTvOpen ? 'Free TV est ouvert : ferme-le et rouvre-le pour voir la nouvelle taille.' : 'Appliqué à la prochaine ouverture de Free TV.'}
+  </p>
   {#if info && !info.smbclient}
     <p class="warn small" data-testid="media-no-smbclient">smbclient manque sur le Pi : le Kiosque ne pourra pas lister le partage (sudo apt install smbclient).</p>
   {/if}
@@ -112,7 +130,7 @@
       {/each}
     </ul>
   {/if}
-  <p class="dim small">Kiosque : un partage Samba (Windows) de la Freebox. Les vidéos se lisent avec VLC sur cet écran. Free TV (tv.free.fr) s’ouvre dans Chromium ; son identité, son zoom et le coin du retour au dock se règlent dans dock.toml ([freetv]).</p>
+  <p class="dim small">Kiosque : un partage Samba (Windows) de la Freebox. Les vidéos se lisent avec VLC sur cet écran. Free TV (tv.free.fr) s’ouvre dans Chromium ; son identité, le plein écran et le coin du retour au dock se règlent dans dock.toml ([freetv]).</p>
 </section>
 
 <style>

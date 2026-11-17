@@ -32,7 +32,7 @@
 
     [freetv]                    # Free TV : tv.free.fr dans une fenêtre de Chromium sur l'écran du dock
     user_agent = "auto"         # "auto" : un Chromium de bureau x86_64 de la même version ; "" : l'identité d'origine de Chromium
-    scale = 0.7                 # le zoom de la page (le site est pensé pour un grand écran)
+    scale = 1.5                 # la taille de la page (1 = taille normale ; 1,5 ≈ 2 × plus gros qu'avant la 1.9.1) : se règle aussi dans Réglages
     corner = "top-left"         # le coin où l'appui long (1,5 s) ramène le dock : top-left, top-right, bottom-left, bottom-right
     fullscreen = true           # false : fenêtre maximisée (avec sa barre de titre), si le clavier à l'écran reste caché derrière Free TV
 
@@ -68,10 +68,14 @@ DEFAULT_STATE_DIR = Path("/var/lib/mydock")
 DEFAULT_CLIENTS_DIR = Path("/usr/share/mydock/clients")
 DEFAULT_SMB_HOST = "mafreebox.freebox.fr"
 DEFAULT_FREETV_USER_AGENT = "auto"  # voir freetv_playback.compute_user_agent
-DEFAULT_FREETV_SCALE = 0.7
+DEFAULT_FREETV_SCALE = (
+    1.5  # un écran de 7 pouces en 1024 × 600 : 1 rend le texte de Free TV trop petit pour être lu
+)
+LEGACY_FREETV_SCALE = 0.7  # l'ancien réglage par défaut (1.9.0), écrit dans dock.toml à la première sauvegarde : remplacé
 DEFAULT_FREETV_CORNER = "top-left"
 FREETV_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 MIN_FREETV_SCALE, MAX_FREETV_SCALE = 0.25, 3.0
+FREETV_SCALE_STEP = 0.25
 MAX_USER_AGENT_LENGTH = 300
 DEFAULT_BUTTON_GPIO = 17  # broche physique 11 (la masse est sur la broche 9)
 DEFAULT_AUDIO_ADVANCE_MS = 150  # le trajet du son du Pi jusqu'au PC (capture, réseau, lecteur du PC) : un peu plus d'un dixième de seconde
@@ -213,6 +217,11 @@ class DockConfig:
                 freetv.get("user_agent", DEFAULT_FREETV_USER_AGENT)
             )
             freetv_scale = clean_freetv_scale(freetv.get("scale", DEFAULT_FREETV_SCALE))
+            if (
+                freetv_scale == LEGACY_FREETV_SCALE
+            ):  # 0,7 rendait le texte illisible : le nouveau réglage par défaut le remplace
+                _note_legacy_scale()
+                freetv_scale = DEFAULT_FREETV_SCALE
             freetv_corner = clean_freetv_corner(freetv.get("corner", DEFAULT_FREETV_CORNER))
             freetv_fullscreen = clean_flag(freetv.get("fullscreen", True), "fullscreen")
         except ValidationFailure as exc:
@@ -383,6 +392,12 @@ class DockConfig:
         self.pc_audio, self.audio_advance_ms = flag, advance
         self.save()
 
+    def set_freetv(self, *, scale: object = None) -> None:
+        """Free TV : la taille de la page (validée avant d'être gardée ; None ne change rien)."""
+        if scale is not None:
+            self.freetv_scale = clean_freetv_scale(scale)
+        self.save()
+
     def set_retrogame(
         self,
         *,
@@ -457,6 +472,19 @@ def clean_freetv_corner(value: object) -> str:
 
 
 _NOTED: set[tuple[str, str]] = set()
+
+
+def _note_legacy_scale() -> None:
+    """Le zoom 0,7 (l'ancien défaut) est remplacé : dit une fois dans le journal."""
+    key = ("freetv", "scale")
+    if key not in _NOTED:
+        _NOTED.add(key)
+        log.warning(
+            "dock.toml : [freetv] scale = %g (l'ancien réglage par défaut, texte trop petit) est remplacé par %g ; "
+            "la taille se règle dans Réglages → Divertissement",
+            LEGACY_FREETV_SCALE,
+            DEFAULT_FREETV_SCALE,
+        )
 
 
 def _note_obsolete_keys(raw: dict[str, Any]) -> None:

@@ -32,7 +32,7 @@ tape « Free TV » ──► dock ──► assistant de l'écran (session labwc
 ```
 
 - **Un troisième occupant** : `freetv_playback.py` suit le même contrat que VLC et MAME (`start`, `status`, `stop`, `finished`, `error`), si bien que le chien de garde de 40 s, le retour au dock, le journal et l'économie de veille servent aux trois.
-- **Chromium en mode application** (`--app`), avec : `--ozone-platform=wayland`, `--password-store=basic` (sans lui, Chromium demande de créer un trousseau gnome-keyring), `--force-device-scale-factor=0.7`, `--lang=fr-FR`, `--start-fullscreen`, l'identité ci-dessous, puis `/etc/mydock-kiosk/freetv.flags`. L'environnement est celui de la session, **sans** le `C.UTF-8` que l'assistant impose à VLC, avec `LANGUAGE=fr`.
+- **Chromium en mode application** (`--app`), avec : `--ozone-platform=wayland`, `--password-store=basic` (sans lui, Chromium demande de créer un trousseau gnome-keyring), `--force-device-scale-factor=1.5` (0.7 en 1.9.0 : corrigé en 1.9.1, voir l'addendum), `--lang=fr-FR`, `--kiosk --start-fullscreen`, l'identité ci-dessous, puis `/etc/mydock-kiosk/freetv.flags`. L'environnement est celui de la session, **sans** le `C.UTF-8` que l'assistant impose à VLC, avec `LANGUAGE=fr`.
 - **Un profil à lui**, `~/.config/mydock-freetv` (droits 700, utilisateur de l'écran), **séparé** de celui du dock (`~/.cache/mydock-chromium`) : la connexion à Free y reste d'un démarrage à l'autre, et l'interface du dock n'en voit jamais rien. Le nom est choisi pour qu'aucun `pkill -f` du lanceur du dock ne puisse l'atteindre (un test le vérifie).
 - **Ce que le dock envoie** : « ouvre Free TV », **sans aucun paramètre** (une adresse, un identifiant, un chemin, une identité sont refusés : `bad_params`). L'adresse, l'identité et les options sont décidées par l'assistant.
 - **Un second Chromium sur le même profil** ne ferait que transmettre sa demande au premier (et ouvrir une autre fenêtre) : on ne lance donc jamais deux fois, et un Chromium resté ouvert (assistant redémarré) est refermé avant, et au démarrage de l'assistant.
@@ -116,3 +116,45 @@ C'est la partie importante : **je n'ai ni ton Pi, ni ton abonnement, et je ne pe
 3. Divertissement → **Free TV** → se connecter (bouton **Clavier**, ou un clavier USB), puis lancer une chaîne.
 4. Tester le retour au dock (bouton, Select + Start, appui long haut-gauche), le son sur le PC, puis **redémarrer** pour voir si la connexion est gardée.
 5. Un problème : `sudo grep -i "free tv\|chromium" /var/log/mydock/player.log | tail -40` et la sortie du `doctor`.
+
+## Addendum 1 : retours de l'essai sur le Pi (version 1.9.1)
+
+Ton premier essai (photo de l'écran : un message d'erreur de lecture d'une chaîne, minuscule, dans une page qui ne semblait pas
+occuper tout l'écran) a donné trois remarques.
+
+**3 et 2 : le texte, et ce message d'erreur, étaient illisibles.** C'était le zoom de **0,7** de la 1.9.0 : sur le 7 pouces en
+1024 × 600, la page de Free TV est rendue à 70 % de sa taille normale, donc tout est plus petit que sur un ordinateur, message
+d'erreur compris. Le zoom par défaut passe à **1,5** (150 %), soit **2,1 fois** plus gros qu'avant ; tu demandais « × 2 ou × 3 » :
+**× 3 correspond à 2,1**. Plutôt que de t'imposer un nombre, la taille se règle maintenant **à l'écran** : Réglages →
+Divertissement → **Free TV**, avec − et + par pas de 25 %, de 50 % à 300 %. Chromium ne change pas son zoom en route : la taille
+choisie s'applique **à la prochaine ouverture** de Free TV (l'écran le dit, et dit de fermer puis rouvrir si Free TV est ouvert).
+Un `dock.toml` qui avait déjà `scale = 0.7` (la 1.9.0 l'écrit à la première sauvegarde) est lu comme « l'ancien défaut » et
+remplacé par 1,5, ce que le journal dit une fois. Il reste plus à voir dans la page quand c'est plus petit : si 150 % est trop
+grand pour une page donnée, 125 % ou 100 % sont à un toucher.
+
+Le même message d'erreur, sur une page factice qui reproduit sa taille (la bande blanche du haut est propre à Chrome for
+Testing, que j'utilise ici ; le Chromium de Debian n'en a pas) : à gauche **70 %** (1.9.0, ce que montrait ta photo), à droite
+**150 %** (1.9.1) :
+
+| 70 % (avant) | 150 % (après) |
+|---|---|
+| ![70 %](10-taille-avant-70-pourcent.png) | ![150 %](11-taille-apres-150-pourcent.png) |
+
+Et le réglage, dans les Réglages du Divertissement : ![réglage de la taille](09-reglages-taille-free-tv.png)
+
+**1 : la fenêtre ne semblait pas occuper tout l'écran.** Voici ce que je sais et ce que je ne sais pas.
+
+- **Ce que j'ai mesuré** (labwc sans écran réglé en 1024 × 600, une page d'essai aux quatre coins marqués, capture `grim`) : la
+  fenêtre de Free TV couvre **toute la surface**, à 0,7 comme à 1,5 ; les quatre coins de la page sont ceux de l'écran, avec
+  `--start-fullscreen` seul. Je n'ai donc **pas reproduit** une fenêtre plus petite que l'écran.
+- **Ce que je ne peux pas voir** : ton labwc est plus récent que le mien (0.7.1), et ton Chromium est celui de Debian (156), pas
+  Chrome for Testing (153). En mode application, `--start-fullscreen` n'est pas toujours respecté selon les versions.
+- **Ce que j'ai fait quand même, par prudence** : (a) Free TV se lance avec **`--kiosk`** en plus de `--start-fullscreen`, comme le
+  dock lui-même, qui est en plein écran sur ce même Pi ; (b) la demande de plein écran à labwc (`wlrctl`, idempotente) n'est plus
+  faite une seule fois à l'apparition de la fenêtre, mais **quatre fois** (à 0, 1,5, 4 et 9 s), pour rattraper une fenêtre qui
+  n'aurait pas fini de s'ouvrir. Avec `[freetv] fullscreen = false`, rien de tout cela : fenêtre maximisée, sans `--kiosk`.
+- **Si la page ne remplit toujours pas l'écran** : dis-moi ce que tu vois (des bandes noires ? lesquelles ? la fenêtre est-elle plus
+  petite, avec le dock derrière ?) et envoie la sortie de `sudo -u mydock mydock-dock doctor` et de
+  `sudo grep -i "free tv" /var/log/mydock/player.log | tail -20` : le journal dit l'identifiant de la fenêtre et ses demandes de
+  plein écran. Ce peut aussi être la page de Free TV elle-même (un lecteur qui ne passe pas en « plein écran » dans la page) : son
+  bouton plein écran est alors à toucher dans la page.

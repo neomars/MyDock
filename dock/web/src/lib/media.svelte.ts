@@ -127,6 +127,13 @@ class MediaStore {
     return ack.ok
   }
 
+  /** Réglages → Divertissement → Free TV : la taille de la page (prise en compte à la prochaine ouverture de Free TV). */
+  async saveFreeTvScale(scale: number): Promise<boolean> {
+    const ack = await sock.act('dock.freetv.set', { scale })
+    if (!ack.ok) notify(ack.e?.msg ?? 'Taille de Free TV non enregistrée.', 'bad', 6_000)
+    return ack.ok
+  }
+
   /** Essaie le serveur de fichiers et le lecteur ; dit lequel ne va pas. */
   async test(): Promise<{ files: MediaTestPart; player: MediaTestPart } | null> {
     const ack = await sock.act('dock.media.test', {}, { timeoutMs: 50_000 })

@@ -184,3 +184,47 @@ test('Réglages : la carte Divertissement parle de Free TV et de dock.toml, plus
   await dock.waitForTimeout(300)
   await shot(dock, '06-reglages-divertissement', 'n')
 })
+
+test('Réglages : la taille de Free TV se règle (150 % par défaut), est gardée par le dock et se remet', async ({ dock }) => {
+  await openPage(dock, 'settings')
+  await dock.getByTestId('settings-media').scrollIntoViewIfNeeded()
+  const size = dock.getByTestId('freetv-scale')
+  await expect(size).toHaveText('150 %') // le texte de Free TV était illisible à 70 %
+  await expect(dock.getByTestId('freetv-scale-help')).toContainText('Appliqué à la prochaine ouverture')
+  await dock.getByTestId('freetv-scale-help').scrollIntoViewIfNeeded()
+  await expect(dock.getByTestId('toast')).toHaveCount(0, { timeout: 8_000 })
+  await dock.waitForTimeout(300)
+  await shot(dock, '09-reglages-taille-free-tv', 'n') // 150 %, l'aide entière sous les boutons
+  await dock.getByTestId('freetv-scale-up').tap()
+  await expect(size).toHaveText('175 %')
+  await dock.getByTestId('freetv-scale-up').tap()
+  await expect(size).toHaveText('200 %')
+  await dock.getByTestId('freetv-scale-up').tap()
+  await dock.getByTestId('freetv-scale-up').tap()
+  await expect(size).toHaveText('250 %')
+
+  // Gardé par le dock : il survit à un rechargement de l'écran. On remet 150 %.
+  await dock.reload()
+  await openPage(dock, 'settings')
+  await dock.getByTestId('settings-media').scrollIntoViewIfNeeded()
+  await expect(dock.getByTestId('freetv-scale')).toHaveText('250 %')
+  for (let i = 0; i < 4; i++) await dock.getByTestId('freetv-scale-down').tap()
+  await expect(dock.getByTestId('freetv-scale')).toHaveText('150 %')
+})
+
+test('Réglages : Free TV ouvert, la taille dit qu’elle s’applique après réouverture ; les bornes tiennent', async ({ dock }) => {
+  await helperReady(dock)
+  await openFreeTv(dock)
+  await openPage(dock, 'settings')
+  await dock.getByTestId('settings-media').scrollIntoViewIfNeeded()
+  await expect(dock.getByTestId('freetv-scale-help')).toContainText('ferme-le et rouvre-le')
+  const size = dock.getByTestId('freetv-scale')
+  for (let i = 0; i < 12; i++) await dock.getByTestId('freetv-scale-down').tap()
+  await expect(size).toHaveText('50 %') // jamais en dessous
+  for (let i = 0; i < 14; i++) await dock.getByTestId('freetv-scale-up').tap()
+  await expect(size).toHaveText('300 %') // jamais au-delà
+  for (let i = 0; i < 6; i++) await dock.getByTestId('freetv-scale-down').tap()
+  await expect(size).toHaveText('150 %')
+  await openPage(dock, 'media')
+  await dock.getByTestId('freetv-close').tap()
+})
